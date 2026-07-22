@@ -67,6 +67,8 @@
   }
 
   .section-title{font-family:var(--font-display); font-size:22px; margin:0 0 12px; font-weight:400; letter-spacing:0.01em;}
+  .settings-header-row{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;}
+  .settings-header-row .section-title{margin-bottom:0;}
   .member-count{font-family:var(--font-body); font-size:15px; font-weight:600; color:var(--muted);}
   .section-title-small{font-family:var(--font-display); font-size:17px; margin:0 0 10px; font-weight:400; letter-spacing:0.01em;}
 
@@ -120,8 +122,6 @@
   input[type="date"]{ min-height:44px; }
   input[type="date"]::-webkit-date-and-time-value{ text-align:left; }
 
-  .form-row{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:10px;}
-  .form-row > div{flex:1; min-width:140px;}
   .form-error{color:var(--wine); font-size:13px; min-height:18px; margin:6px 0;}
 
   .member-row{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px dashed var(--line);}
@@ -395,7 +395,7 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.8 · Stand 22.07.2026</p>
+      <p class="version-footer">Version 0.9 · Stand 22.07.2026</p>
     `;
   }
 
@@ -424,29 +424,15 @@
   function viewSettings(){
     const sortedMembers = state.members.slice().sort((a,b)=> a.firstName.localeCompare(b.firstName,'de'));
     const membersHtml = state.members.length===0
-      ? `<p class="empty-state">Noch keine Mitglieder angelegt. Füge unten das erste hinzu.</p>`
+      ? `<p class="empty-state">Noch keine Mitglieder angelegt. Füge oben rechts das erste hinzu.</p>`
       : sortedMembers.map(memberRowHtml).join('');
     return `
       <div class="card">
-        <h2 class="section-title">Mitglieder <span class="member-count">(${state.members.length})</span></h2>
-        ${membersHtml}
-      </div>
-      <div class="card">
-        <h3 class="section-title-small">Neues Mitglied</h3>
-        <div class="form-row">
-          <div>
-            <label for="new-first-name">Vorname</label>
-            <input type="text" id="new-first-name" placeholder="Vorname">
-          </div>
-          <div>
-            <label for="new-last-name">Nachname</label>
-            <input type="text" id="new-last-name" placeholder="Nachname">
-          </div>
+        <div class="settings-header-row">
+          <h2 class="section-title">Mitglieder <span class="member-count">(${state.members.length})</span></h2>
+          <button type="button" class="btn-icon-add" id="open-add-member-btn" aria-label="Mitglied hinzufügen">+</button>
         </div>
-        <label for="new-nickname">Spitzname (optional)</label>
-        <input type="text" id="new-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt">
-        <p class="form-error" id="member-form-error"></p>
-        <button type="button" class="btn-primary" id="add-member-btn">Mitglied hinzufügen</button>
+        ${membersHtml}
       </div>
     `;
   }
@@ -655,18 +641,8 @@
         render();
       });
     });
-    const addBtn = document.getElementById('add-member-btn');
-    if(addBtn) addBtn.addEventListener('click', async ()=>{
-      const fn = document.getElementById('new-first-name').value.trim();
-      const ln = document.getElementById('new-last-name').value.trim();
-      const nick = document.getElementById('new-nickname').value.trim();
-      const errEl = document.getElementById('member-form-error');
-      if(!fn || !ln){ if(errEl) errEl.textContent='Bitte Vor- und Nachnamen angeben.'; return; }
-      addBtn.disabled = true; addBtn.textContent = 'Wird hinzugefügt…';
-      state.members.push({id:uid('m'), firstName:fn, lastName:ln, nickname:nick});
-      await setJSON('members', state.members, true);
-      render();
-    });
+    const openAddMemberBtn = document.getElementById('open-add-member-btn');
+    if(openAddMemberBtn) openAddMemberBtn.addEventListener('click', showAddMemberModal);
   }
 
   function renderGuestList(){
@@ -775,6 +751,37 @@
       const yesBtn = document.getElementById('confirm-delete-member-modal-yes');
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.members = state.members.filter(m=>m.id!==member.id);
+      await setJSON('members', state.members, true);
+      closeGenericModal();
+      render();
+    });
+  }
+  function showAddMemberModal(){
+    showModal(`
+      <h3>Neues Mitglied</h3>
+      <label for="new-first-name">Vorname</label>
+      <input type="text" id="new-first-name" placeholder="Vorname">
+      <label for="new-last-name">Nachname</label>
+      <input type="text" id="new-last-name" placeholder="Nachname">
+      <label for="new-nickname">Spitzname (optional)</label>
+      <input type="text" id="new-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt">
+      <p class="form-error" id="member-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="add-member-btn">Hinzufügen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('new-first-name').focus();
+    document.getElementById('add-member-btn').addEventListener('click', async ()=>{
+      const fn = document.getElementById('new-first-name').value.trim();
+      const ln = document.getElementById('new-last-name').value.trim();
+      const nick = document.getElementById('new-nickname').value.trim();
+      const errEl = document.getElementById('member-form-error');
+      if(!fn || !ln){ if(errEl) errEl.textContent='Bitte Vor- und Nachnamen angeben.'; return; }
+      const addBtn = document.getElementById('add-member-btn');
+      addBtn.disabled = true; addBtn.textContent = 'Wird hinzugefügt…';
+      state.members.push({id:uid('m'), firstName:fn, lastName:ln, nickname:nick});
       await setJSON('members', state.members, true);
       closeGenericModal();
       render();
