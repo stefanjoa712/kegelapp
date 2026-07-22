@@ -115,6 +115,15 @@
   .evening-row .date{font-family:var(--font-display); font-size:17px;}
   .evening-row .meta{font-family:var(--font-mono); font-size:12px; color:var(--muted);}
 
+  .year-group{border-bottom:1px solid var(--line);}
+  .year-group:last-child{border-bottom:none;}
+  .year-header{display:flex; justify-content:space-between; align-items:center; padding:12px 2px; cursor:pointer; font-family:var(--font-display); font-size:19px; color:var(--ink);}
+  .year-header .chevron{font-family:var(--font-mono); font-size:15px; color:var(--muted); transition:transform 0.18s ease;}
+  .year-group.expanded .year-header .chevron{transform:rotate(90deg);}
+  .year-evenings{display:none; padding-bottom:6px;}
+  .year-group.expanded .year-evenings{display:block;}
+  .year-evenings .evening-row{padding-left:10px;}
+
   label{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-soft); display:block; margin-bottom:6px;}
   input[type="text"], input[type="date"], input[type="password"]{
     font-family:var(--font-body); font-size:15px; padding:10px 12px; border:1px solid var(--line);
@@ -178,6 +187,13 @@
   .side-label-text{font-family:var(--font-mono); font-size:13px; font-weight:700; letter-spacing:0.1em; fill:var(--wood-dark);}
   .chair-tick{stroke:var(--wood-dark); stroke-width:1.5;}
   .chair-body{fill:var(--wood); stroke:var(--wood-dark); stroke-width:2.5;}
+  .chair-clickable{cursor:pointer;}
+  .chair-clickable:hover .chair-body{filter:brightness(1.12);}
+  .chair-clickable:hover .name-plate-rect{filter:brightness(0.96);}
+
+  .stat-row{display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--bg); border:1px solid var(--line); border-radius:8px; margin-bottom:6px;}
+  .stat-row .stat-count{font-weight:800; font-family:var(--font-mono);}
+  .stat-total{display:flex; justify-content:space-between; font-weight:800; font-size:16px; padding-top:10px; margin-top:6px; border-top:2px solid var(--ink);}
   .chair-body.empty{fill:var(--surface); stroke:var(--muted); stroke-width:2; stroke-dasharray:5 4;}
   .seat-label-text{font-family:var(--font-mono); font-size:15px; font-weight:700; letter-spacing:0.05em; fill:var(--brass-light);}
   .seat-label-text.empty{fill:var(--ink-soft);}
@@ -253,7 +269,8 @@
     editingMemberId:null,
     confirmDeleteEveningId:null,
     justCreated:false,
-    mainError:''
+    mainError:'',
+    expandedYears: new Set([String(new Date().getFullYear())])
   };
   let currentGuests = [];
 
@@ -385,9 +402,30 @@
 
   function viewMain(){
     const sorted = state.eveningsIndex.slice().sort((a,b)=> b.date.localeCompare(a.date));
-    const listHtml = sorted.length===0
-      ? `<p class="empty-state">Noch keine Kegelabende eingetragen. Leg oben den ersten an.</p>`
-      : sorted.map(e=>`<div class="evening-row" data-id="${e.id}"><span class="date">${formatDateDE(e.date)}</span><span class="meta">ansehen →</span></div>`).join('');
+    let listHtml;
+    if(sorted.length===0){
+      listHtml = `<p class="empty-state">Noch keine Kegelabende eingetragen. Leg oben den ersten an.</p>`;
+    }else{
+      const byYear = {};
+      sorted.forEach(e=>{
+        const year = e.date.slice(0,4);
+        (byYear[year] = byYear[year] || []).push(e);
+      });
+      const years = Object.keys(byYear).sort((a,b)=> b.localeCompare(a));
+      listHtml = years.map(year=>{
+        const expanded = state.expandedYears.has(year);
+        const rows = byYear[year].map(e=>`<div class="evening-row" data-id="${e.id}"><span class="date">${formatDateDE(e.date)}</span><span class="meta">ansehen →</span></div>`).join('');
+        return `
+          <div class="year-group${expanded?' expanded':''}" data-year="${year}">
+            <div class="year-header">
+              <span>${year}</span>
+              <span class="chevron">▸</span>
+            </div>
+            <div class="year-evenings">${rows}</div>
+          </div>
+        `;
+      }).join('');
+    }
     return `
       <div class="card" style="text-align:center;">
         <button type="button" class="btn-primary" id="new-evening-btn">+ Neuer Kegelabend</button>
@@ -397,7 +435,7 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.10 · Stand 22.07.2026</p>
+      <p class="version-footer">Version 0.11 · Stand 22.07.2026</p>
     `;
   }
 
@@ -512,7 +550,8 @@
       const estW = nameRaw.length * fontSize * 0.56;
       const textLenAttr = estW>availW ? ` textLength="${availW}" lengthAdjust="spacingAndGlyphs"` : '';
       const plateCenterY = cy+10;
-      return `<g class="reveal-group" style="animation-delay:${idx*45}ms">
+      const clickable = !empty && !seat.isGuest;
+      return `<g class="reveal-group${clickable?' chair-clickable':''}" style="animation-delay:${idx*45}ms"${clickable?` data-member-name="${escapeHtml(seat.name)}"`:''}>
         <line class="chair-tick" x1="${e.x}" y1="${e.y}" x2="${tickX2}" y2="${cy}" />
         <rect class="chair-body${empty?' empty':''}" x="${rectX}" y="${rectY}" width="${chairW}" height="${chairH}" rx="16" />
         <text class="seat-label-text${empty?' empty':''}" x="${cx}" y="${rectY+24}" text-anchor="middle">${shortLabel}</text>
@@ -594,6 +633,15 @@
   function attachMainListeners(){
     const newBtn = document.getElementById('new-evening-btn');
     if(newBtn) newBtn.addEventListener('click', goToNew);
+    document.querySelectorAll('.year-header').forEach(header=>{
+      header.addEventListener('click', ()=>{
+        const group = header.closest('.year-group');
+        if(!group) return;
+        const year = group.dataset.year;
+        const isExpanded = group.classList.toggle('expanded');
+        if(isExpanded) state.expandedYears.add(year); else state.expandedYears.delete(year);
+      });
+    });
     document.querySelectorAll('.evening-row').forEach(row=>{
       row.addEventListener('click', async ()=>{
         const id = row.dataset.id;
@@ -758,6 +806,41 @@
       render();
     });
   }
+  async function showMemberStatsModal(name){
+    showModal(`
+      <h3>${escapeHtml(name)}</h3>
+      <p class="empty-state">Statistik wird geladen…</p>
+    `);
+    const freshIndex = await getJSON('evenings-index', true, state.eveningsIndex);
+    const details = await Promise.all(freshIndex.map(e=>getJSON('evening-'+e.id, true, null)));
+    const countsByYear = {};
+    let total = 0;
+    details.forEach(d=>{
+      if(!d || !d.seating) return;
+      const attended = d.seating.some(s=>!s.isGuest && s.name===name);
+      if(attended){
+        const year = d.date.slice(0,4);
+        countsByYear[year] = (countsByYear[year]||0) + 1;
+        total++;
+      }
+    });
+    const years = Object.keys(countsByYear).sort((a,b)=> b.localeCompare(a));
+    const rowsHtml = years.length===0
+      ? `<p class="empty-state">Keine Anwesenheiten gefunden.</p>`
+      : years.map(y=>`<div class="stat-row"><span>${y}</span><span class="stat-count">${countsByYear[y]}×</span></div>`).join('');
+    showModal(`
+      <h3>${escapeHtml(name)}</h3>
+      <p>Anwesenheiten pro Jahr</p>
+      ${rowsHtml}
+      ${years.length>0 ? `<div class="stat-total"><span>Gesamt</span><span>${total}×</span></div>` : ''}
+      <div class="confirm-row-buttons" style="margin-top:14px;">
+        <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+      </div>
+    `);
+    const closeBtn = document.getElementById('modal-cancel-btn');
+    if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
+  }
+
   function showAddMemberModal(){
     showModal(`
       <h3>Neues Mitglied</h3>
@@ -864,6 +947,9 @@
   function attachDetailListeners(){
     const backBtn = document.getElementById('back-to-main-btn');
     if(backBtn) backBtn.addEventListener('click', goToMain);
+    document.querySelectorAll('[data-member-name]').forEach(el=>{
+      el.addEventListener('click', ()=>{ showMemberStatsModal(el.dataset.memberName); });
+    });
     const delBtn = document.getElementById('delete-evening-btn');
     if(delBtn) delBtn.addEventListener('click', ()=>{ state.confirmDeleteEveningId = state.currentEveningDetail.id; render(); });
     const backdrop = document.getElementById('delete-modal-backdrop');
