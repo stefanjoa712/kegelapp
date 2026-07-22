@@ -186,11 +186,22 @@
   .detail-actions .confirm-row{flex-direction:column; align-items:stretch; gap:10px;}
   .confirm-row-buttons{display:flex; gap:10px;}
   .confirm-row-buttons > button{flex:1;}
+
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(22,22,22,0.6);
+    display:flex; align-items:center; justify-content:center; padding:20px; z-index:1000;
+  }
+  .modal-card{
+    background:var(--surface); border:2.5px solid var(--ink); border-radius:14px;
+    padding:22px 20px; max-width:360px; width:100%; box-shadow:6px 6px 0 var(--ink);
+  }
+  .modal-card h3{font-family:var(--font-display); font-size:20px; margin:0 0 10px; font-weight:400;}
+  .modal-card p{margin:0 0 14px; font-size:14px; color:var(--ink-soft);}
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div class="version-footer">Version 0.4 · Stand 22.07.2026</div>
+<div class="version-footer">Version 0.5 · Stand 22.07.2026</div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
@@ -548,20 +559,28 @@
     </svg>`;
   }
 
-  function viewDetail(detail){
-    if(!detail) return `<p class="empty-state">Konnte diesen Abend nicht laden.</p>`;
-    const occupied = detail.seating.filter(s=>s.name).length;
-    const deleteBlock = state.confirmDeleteEveningId===detail.id
-      ? `<div class="confirm-row">
-          <span>Diesen Abend wirklich löschen?</span>
+  function buildDeleteModal(detail){
+    if(state.confirmDeleteEveningId!==detail.id) return '';
+    return `
+      <div class="modal-backdrop" id="delete-modal-backdrop">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+          <h3 id="delete-modal-title">Kegelabend löschen</h3>
+          <p>Diesen Abend wirklich löschen? Das kann nicht rückgängig gemacht werden.</p>
+          <label for="delete-password-input">Kennwort</label>
           <input type="password" id="delete-password-input" placeholder="Kennwort" autocomplete="off">
           <p class="form-error" id="delete-password-error"></p>
           <div class="confirm-row-buttons">
             <button type="button" class="btn-danger" id="confirm-delete-evening-yes">Ja, löschen</button>
             <button type="button" class="btn-secondary" id="confirm-delete-evening-no">Abbrechen</button>
           </div>
-        </div>`
-      : `<button type="button" class="btn-danger" id="delete-evening-btn">Kegelabend löschen</button>`;
+        </div>
+      </div>
+    `;
+  }
+
+  function viewDetail(detail){
+    if(!detail) return `<p class="empty-state">Konnte diesen Abend nicht laden.</p>`;
+    const occupied = detail.seating.filter(s=>s.name).length;
     return `
       <div class="card detail-header">
         <div class="eyebrow">Kegelabend</div>
@@ -574,8 +593,9 @@
       </div>
       <div class="detail-actions">
         <button type="button" class="btn-secondary" id="back-to-main-btn">← Zurück zur Übersicht</button>
-        ${deleteBlock}
+        <button type="button" class="btn-danger" id="delete-evening-btn">Kegelabend löschen</button>
       </div>
+      ${buildDeleteModal(detail)}
     `;
   }
 
@@ -803,8 +823,13 @@
     if(backBtn) backBtn.addEventListener('click', goToMain);
     const delBtn = document.getElementById('delete-evening-btn');
     if(delBtn) delBtn.addEventListener('click', ()=>{ state.confirmDeleteEveningId = state.currentEveningDetail.id; render(); });
+    const backdrop = document.getElementById('delete-modal-backdrop');
+    if(backdrop) backdrop.addEventListener('click', e=>{ if(e.target===backdrop){ state.confirmDeleteEveningId=null; render(); } });
     const pwInput = document.getElementById('delete-password-input');
-    if(pwInput) pwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const yb=document.getElementById('confirm-delete-evening-yes'); if(yb) yb.click(); } });
+    if(pwInput){
+      pwInput.focus();
+      pwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const yb=document.getElementById('confirm-delete-evening-yes'); if(yb) yb.click(); } });
+    }
     const yesBtn = document.getElementById('confirm-delete-evening-yes');
     if(yesBtn) yesBtn.addEventListener('click', async ()=>{
       const pwInputEl = document.getElementById('delete-password-input');
