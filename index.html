@@ -130,8 +130,11 @@
   .row-actions{display:flex; gap:4px;}
   .nickname-tag{color:var(--brass); font-style:italic; font-weight:400;}
   .icon-btn{background:none; border:none; font-size:15px; cursor:pointer; color:var(--muted); padding:3px 6px; border-radius:3px;}
+  .icon-btn:disabled{opacity:0.4; cursor:not-allowed;}
   .edit-member-btn:hover{color:var(--felt); background:var(--line);}
   .delete-member-btn:hover{color:var(--wine); background:var(--line);}
+  .save-member-btn:hover{color:var(--felt); background:var(--line);}
+  .cancel-edit-btn:hover{color:var(--wine); background:var(--line);}
   .confirm-row{display:flex; align-items:center; gap:8px; font-size:13px; flex-wrap:wrap;}
 
   .member-edit-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:9px 0; border-bottom:1px dashed var(--line);}
@@ -201,7 +204,7 @@
 </head>
 <body>
 <div id="app"></div>
-<div class="version-footer">Version 0.6 · Stand 22.07.2026</div>
+<div class="version-footer">Version 0.7 · Stand 22.07.2026</div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
@@ -248,7 +251,6 @@
     eveningsIndex:[],
     currentEveningDetail:null,
     editingMemberId:null,
-    confirmDeleteMemberId:null,
     confirmDeleteEveningId:null,
     justCreated:false,
     mainError:''
@@ -338,7 +340,6 @@
     renderLoading('Mitglieder werden geladen…');
     state.members = await getJSON('members', true, []);
     state.editingMemberId = null;
-    state.confirmDeleteMemberId = null;
     state.view = 'settings';
     render();
   }
@@ -406,17 +407,9 @@
         <input type="text" class="edit-first-name" value="${escapeHtml(m.firstName)}" placeholder="Vorname">
         <input type="text" class="edit-last-name" value="${escapeHtml(m.lastName)}" placeholder="Nachname">
         <input type="text" class="edit-nickname" value="${escapeHtml(m.nickname||'')}" placeholder="Spitzname (optional)">
-        <button type="button" class="btn-text save-member-btn" data-id="${m.id}">Speichern</button>
-        <button type="button" class="btn-text cancel-edit-btn">Abbrechen</button>
-      </div>`;
-    }
-    if(state.confirmDeleteMemberId===m.id){
-      return `<div class="member-row">
-        <span>${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)}</span>
-        <span class="confirm-row">
-          <span>Löschen?</span>
-          <button type="button" class="btn-danger-text confirm-delete-member-yes" data-id="${m.id}">Ja</button>
-          <button type="button" class="btn-text confirm-delete-member-no">Nein</button>
+        <span class="row-actions">
+          <button type="button" class="icon-btn save-member-btn" data-id="${m.id}" aria-label="Speichern">✓</button>
+          <button type="button" class="icon-btn cancel-edit-btn" aria-label="Abbrechen">✕</button>
         </span>
       </div>`;
     }
@@ -638,16 +631,16 @@
 
   function attachSettingsListeners(){
     document.querySelectorAll('.edit-member-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{ state.editingMemberId=b.dataset.id; state.confirmDeleteMemberId=null; render(); });
+      b.addEventListener('click', ()=>{ state.editingMemberId=b.dataset.id; render(); });
     });
     document.querySelectorAll('.delete-member-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{ state.confirmDeleteMemberId=b.dataset.id; state.editingMemberId=null; render(); });
+      b.addEventListener('click', ()=>{
+        const m = state.members.find(x=>x.id===b.dataset.id);
+        if(m) showDeleteMemberModal(m);
+      });
     });
     document.querySelectorAll('.cancel-edit-btn').forEach(b=>{
       b.addEventListener('click', ()=>{ state.editingMemberId=null; render(); });
-    });
-    document.querySelectorAll('.confirm-delete-member-no').forEach(b=>{
-      b.addEventListener('click', ()=>{ state.confirmDeleteMemberId=null; render(); });
     });
     document.querySelectorAll('.save-member-btn').forEach(b=>{
       b.addEventListener('click', async ()=>{
@@ -656,20 +649,11 @@
         const ln = row.querySelector('.edit-last-name').value.trim();
         const nick = row.querySelector('.edit-nickname').value.trim();
         if(!fn || !ln) return;
-        b.disabled = true; b.textContent = 'Speichert…';
+        b.disabled = true;
         const m = state.members.find(x=>x.id===b.dataset.id);
         if(m){ m.firstName=fn; m.lastName=ln; m.nickname=nick; }
         await setJSON('members', state.members, true);
         state.editingMemberId=null;
-        render();
-      });
-    });
-    document.querySelectorAll('.confirm-delete-member-yes').forEach(b=>{
-      b.addEventListener('click', async ()=>{
-        b.disabled = true; b.textContent = 'Löscht…';
-        state.members = state.members.filter(m=>m.id!==b.dataset.id);
-        await setJSON('members', state.members, true);
-        state.confirmDeleteMemberId=null;
         render();
       });
     });
@@ -735,26 +719,32 @@
     const existing = document.getElementById('generic-modal-root');
     if(existing) existing.remove();
   }
-  function showDuplicateDateModal(date, existingId){
+  function showModal(cardInnerHtml){
     closeGenericModal();
     const div = document.createElement('div');
     div.id = 'generic-modal-root';
     div.innerHTML = `
-      <div class="modal-backdrop" id="duplicate-date-backdrop">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="duplicate-date-title">
-          <h3 id="duplicate-date-title">Abend bereits vorhanden</h3>
-          <p>Für den ${escapeHtml(formatDateDE(date))} gibt es bereits einen Kegelabend.</p>
-          <div class="confirm-row-buttons">
-            <button type="button" class="btn-primary" id="open-existing-evening-btn">Diesen Abend öffnen</button>
-            <button type="button" class="btn-secondary" id="duplicate-date-cancel-btn">Abbrechen</button>
-          </div>
+      <div class="modal-backdrop" id="generic-modal-backdrop">
+        <div class="modal-card" role="dialog" aria-modal="true">
+          ${cardInnerHtml}
         </div>
       </div>
     `;
     document.body.appendChild(div);
-    const backdrop = document.getElementById('duplicate-date-backdrop');
-    backdrop.addEventListener('click', e=>{ if(e.target===backdrop) closeGenericModal(); });
-    document.getElementById('duplicate-date-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('generic-modal-backdrop').addEventListener('click', e=>{
+      if(e.target.id==='generic-modal-backdrop') closeGenericModal();
+    });
+  }
+  function showDuplicateDateModal(date, existingId){
+    showModal(`
+      <h3>Abend bereits vorhanden</h3>
+      <p>Für den ${escapeHtml(formatDateDE(date))} gibt es bereits einen Kegelabend.</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="open-existing-evening-btn">Diesen Abend öffnen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
     document.getElementById('open-existing-evening-btn').addEventListener('click', async ()=>{
       closeGenericModal();
       renderLoading('Kegelabend wird geladen…');
@@ -770,6 +760,25 @@
       state.confirmDeleteEveningId = null;
       state.detailTab = 'sitzplan';
       state.view = 'detail';
+      render();
+    });
+  }
+  function showDeleteMemberModal(member){
+    showModal(`
+      <h3>Mitglied löschen</h3>
+      <p>${escapeHtml(member.firstName)} ${escapeHtml(member.lastName)} wirklich löschen?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-member-modal-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-member-modal-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-member-modal-yes');
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      state.members = state.members.filter(m=>m.id!==member.id);
+      await setJSON('members', state.members, true);
+      closeGenericModal();
       render();
     });
   }
