@@ -201,7 +201,7 @@
 </head>
 <body>
 <div id="app"></div>
-<div class="version-footer">Version 0.5 · Stand 22.07.2026</div>
+<div class="version-footer">Version 0.6 · Stand 22.07.2026</div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
@@ -729,6 +729,51 @@
     input.focus();
   }
 
+  // Generisches Modal, das direkt ins DOM eingefügt wird (nicht über render()),
+  // damit z.B. das Formular für einen neuen Abend dabei nicht zurückgesetzt wird.
+  function closeGenericModal(){
+    const existing = document.getElementById('generic-modal-root');
+    if(existing) existing.remove();
+  }
+  function showDuplicateDateModal(date, existingId){
+    closeGenericModal();
+    const div = document.createElement('div');
+    div.id = 'generic-modal-root';
+    div.innerHTML = `
+      <div class="modal-backdrop" id="duplicate-date-backdrop">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="duplicate-date-title">
+          <h3 id="duplicate-date-title">Abend bereits vorhanden</h3>
+          <p>Für den ${escapeHtml(formatDateDE(date))} gibt es bereits einen Kegelabend.</p>
+          <div class="confirm-row-buttons">
+            <button type="button" class="btn-primary" id="open-existing-evening-btn">Diesen Abend öffnen</button>
+            <button type="button" class="btn-secondary" id="duplicate-date-cancel-btn">Abbrechen</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(div);
+    const backdrop = document.getElementById('duplicate-date-backdrop');
+    backdrop.addEventListener('click', e=>{ if(e.target===backdrop) closeGenericModal(); });
+    document.getElementById('duplicate-date-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('open-existing-evening-btn').addEventListener('click', async ()=>{
+      closeGenericModal();
+      renderLoading('Kegelabend wird geladen…');
+      const detail = await getJSON('evening-'+existingId, true, null);
+      if(!detail){
+        state.mainError = 'Konnte diesen Abend nicht laden.';
+        state.view = 'main';
+        render();
+        return;
+      }
+      state.currentEveningDetail = detail;
+      state.justCreated = false;
+      state.confirmDeleteEveningId = null;
+      state.detailTab = 'sitzplan';
+      state.view = 'detail';
+      render();
+    });
+  }
+
   async function handleConfirmNewEvening(){
     const dateInput = document.getElementById('date-input');
     const date = (dateInput && dateInput.value) ? dateInput.value : todayISO();
@@ -755,25 +800,7 @@
     const existing = state.eveningsIndex.find(e=>e.date===date);
     if(existing){
       if(btn){ btn.disabled = false; btn.textContent = originalBtnText; }
-      if(errEl){
-        errEl.innerHTML = `Für den ${escapeHtml(formatDateDE(date))} gibt es bereits einen Kegelabend. <button type="button" class="btn-text" id="open-existing-evening-btn">Diesen Abend stattdessen öffnen</button>`;
-        const openBtn = document.getElementById('open-existing-evening-btn');
-        if(openBtn) openBtn.addEventListener('click', async ()=>{
-          renderLoading('Kegelabend wird geladen…');
-          const detail = await getJSON('evening-'+existing.id, true, null);
-          if(!detail){
-            state.mainError = 'Konnte diesen Abend nicht laden.';
-            state.view = 'main';
-            render();
-            return;
-          }
-          state.currentEveningDetail = detail;
-          state.justCreated = false;
-          state.confirmDeleteEveningId = null;
-          state.view = 'detail';
-          render();
-        });
-      }
+      showDuplicateDateModal(date, existing.id);
       return;
     }
 
