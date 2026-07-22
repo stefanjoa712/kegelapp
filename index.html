@@ -45,7 +45,7 @@
     flex-wrap:wrap;
     gap:12px;
   }
-  .header-brand{display:flex; flex-direction:column; gap:2px;}
+  .header-brand{display:flex; flex-direction:column; gap:2px; background:none; border:none; padding:0; margin:0; text-align:left; cursor:pointer; font:inherit;}
   .brand-logo{height:46px; width:auto; display:block;}
   .app-header .tagline{font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:0.14em; color:var(--muted);}
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
@@ -391,11 +391,11 @@
       ? `<a href="#" id="settings-link">Mitglieder</a>`
       : `<a href="#" id="home-link">← Übersicht</a>`;
     return `<header class="app-header">
-      <div class="header-brand">
+      <button type="button" class="header-brand" id="logo-home-btn">
         <h1 class="sr-only">Die Pudolfs</h1>
         <img src="${LOGO_DATA_URI}" alt="Die Pudolfs Kegelclub" class="brand-logo">
         <div class="tagline">Kegelabende &amp; Sitzordnung</div>
-      </div>
+      </button>
       <nav>${navLink}</nav>
     </header>`;
   }
@@ -435,7 +435,7 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.12 · Stand 22.07.2026</p>
+      <p class="version-footer">Version 0.13 · Stand 22.07.2026</p>
     `;
   }
 
@@ -619,6 +619,8 @@
 
   // ---------- Event-Listener ----------
   function attachListeners(){
+    const logoBtn = document.getElementById('logo-home-btn');
+    if(logoBtn) logoBtn.addEventListener('click', goToMain);
     const settingsLink = document.getElementById('settings-link');
     if(settingsLink) settingsLink.addEventListener('click', e=>{ e.preventDefault(); goToSettings(); });
     const homeLink = document.getElementById('home-link');
