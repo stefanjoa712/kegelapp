@@ -116,7 +116,10 @@
   input[type="text"], input[type="date"]{
     font-family:var(--font-body); font-size:15px; padding:10px 12px; border:1px solid var(--line);
     border-radius:8px; background:#fff; color:var(--ink); width:100%;
+    -webkit-appearance:none; appearance:none; box-sizing:border-box; margin:0;
   }
+  input[type="date"]{ min-height:44px; }
+  input[type="date"]::-webkit-date-and-time-value{ text-align:left; }
 
   .form-row{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:10px;}
   .form-row > div{flex:1; min-width:140px;}
@@ -142,6 +145,14 @@
   .remove-guest-btn{background:none; border:none; color:var(--wine); cursor:pointer; font-size:15px;}
   .guest-input-row{display:flex; gap:8px; margin-top:8px;}
   .guest-input-row input{flex:1;}
+  .btn-icon-add{
+    width:44px; height:44px; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+    background:var(--surface); color:var(--ink); border:2px solid var(--ink); border-radius:8px;
+    font-size:22px; font-weight:800; line-height:1; cursor:pointer; padding:0;
+    box-shadow:2px 2px 0 var(--ink); transition:transform .08s ease, box-shadow .08s ease, background .15s ease;
+  }
+  .btn-icon-add:hover{background:var(--bg);}
+  .btn-icon-add:active{transform:translate(2px,2px); box-shadow:0 0 0 var(--ink);}
 
   .seat-counter{font-family:var(--font-mono); font-size:13px; padding:9px 12px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:inline-block; margin-bottom:10px;}
   .seat-counter.over{color:var(--wine); border-color:var(--wine); font-weight:700;}
@@ -179,7 +190,7 @@
 </head>
 <body>
 <div id="app"></div>
-<div class="version-footer">Version 0.2 · Stand 22.07.2026</div>
+<div class="version-footer">Version 0.3 · Stand 22.07.2026</div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
@@ -464,7 +475,7 @@
         <div id="guest-list"></div>
         <div class="guest-input-row">
           <input type="text" id="guest-name-input" placeholder="Name des Gasts">
-          <button type="button" class="btn-text" id="add-guest-btn">+ Gast hinzufügen</button>
+          <button type="button" class="btn-icon-add" id="add-guest-btn" aria-label="Gast hinzufügen">+</button>
         </div>
       </div>
       <div class="card" style="text-align:center;">
