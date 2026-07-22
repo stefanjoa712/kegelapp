@@ -55,7 +55,20 @@
   }
   .app-header nav a:hover{color:var(--wood-dark); border-color:var(--wood-dark);}
 
-  .container{max-width:640px; margin:0 auto; padding:24px 16px 60px;}
+  .container{max-width:640px; margin:0 auto; padding:24px 16px 100px;}
+
+  .bottom-nav{
+    position:fixed; left:0; right:0; bottom:0; z-index:900;
+    display:flex; background:var(--surface); border-top:3px solid var(--ink);
+    padding:6px 8px calc(6px + env(safe-area-inset-bottom));
+  }
+  .bottom-nav-item{
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;
+    background:none; border:none; padding:6px 4px; cursor:pointer;
+    color:var(--muted); font-family:var(--font-body); font-size:11px; font-weight:700;
+  }
+  .bottom-nav-item svg{width:22px; height:22px; display:block;}
+  .bottom-nav-item.active{color:var(--felt);}
 
   .loading{padding:60px 20px; text-align:center; font-family:var(--font-mono); color:var(--ink-soft);}
 
@@ -369,6 +382,32 @@
   }
 
   // ---------- Rendering ----------
+  function bottomNavHtml(){
+    const activeTab = state.view==='settings' ? 'members' : 'overview';
+    return `
+      <nav class="bottom-nav">
+        <button type="button" class="bottom-nav-item${activeTab==='overview'?' active':''}" id="nav-overview-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="17" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="7" y1="2" x2="7" y2="6"/>
+            <line x1="17" y1="2" x2="17" y2="6"/>
+          </svg>
+          <span>Übersicht</span>
+        </button>
+        <button type="button" class="bottom-nav-item${activeTab==='members'?' active':''}" id="nav-members-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="8" r="3.2"/>
+            <path d="M3.5 20c0-3.5 2.7-6 5.5-6s5.5 2.5 5.5 6"/>
+            <circle cx="17" cy="9" r="2.6"/>
+            <path d="M15 20c0-2.8 1-5 3.8-5.4"/>
+          </svg>
+          <span>Mitglieder</span>
+        </button>
+      </nav>
+    `;
+  }
+
   function render(){
     const app = document.getElementById('app');
     let body = '';
@@ -376,14 +415,14 @@
     else if(state.view==='settings') body = viewSettings();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
-    app.innerHTML = headerHtml() + `<main class="container">${body}</main>`;
+    app.innerHTML = headerHtml() + `<main class="container">${body}</main>` + bottomNavHtml();
     attachListeners();
   }
 
   // Zeigt sofort eine Ladeanzeige, bevor auf eine Firestore-Antwort gewartet wird –
   // so wirkt ein Klick nie so, als wäre nichts passiert.
   function renderLoading(message){
-    document.getElementById('app').innerHTML = headerHtml() + `<main class="container"><div class="loading">${escapeHtml(message)}</div></main>`;
+    document.getElementById('app').innerHTML = headerHtml() + `<main class="container"><div class="loading">${escapeHtml(message)}</div></main>` + bottomNavHtml();
   }
 
   function headerHtml(){
@@ -435,7 +474,7 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.13 · Stand 22.07.2026</p>
+      <p class="version-footer">Version 0.14 · Stand 22.07.2026</p>
     `;
   }
 
@@ -619,6 +658,10 @@
 
   // ---------- Event-Listener ----------
   function attachListeners(){
+    const navOverviewBtn = document.getElementById('nav-overview-btn');
+    if(navOverviewBtn) navOverviewBtn.addEventListener('click', goToMain);
+    const navMembersBtn = document.getElementById('nav-members-btn');
+    if(navMembersBtn) navMembersBtn.addEventListener('click', goToSettings);
     const logoBtn = document.getElementById('logo-home-btn');
     if(logoBtn) logoBtn.addEventListener('click', goToMain);
     const settingsLink = document.getElementById('settings-link');
