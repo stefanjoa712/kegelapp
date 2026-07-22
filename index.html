@@ -147,12 +147,7 @@
   .icon-btn:disabled{opacity:0.4; cursor:not-allowed;}
   .edit-member-btn:hover{color:var(--felt); background:var(--line);}
   .delete-member-btn:hover{color:var(--wine); background:var(--line);}
-  .save-member-btn:hover{color:var(--felt); background:var(--line);}
-  .cancel-edit-btn:hover{color:var(--wine); background:var(--line);}
   .confirm-row{display:flex; align-items:center; gap:8px; font-size:13px; flex-wrap:wrap;}
-
-  .member-edit-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:9px 0; border-bottom:1px dashed var(--line);}
-  .member-edit-row input{flex:1; min-width:110px;}
 
   .member-check-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--line); cursor:pointer;}
   .member-check-row:last-child{border-bottom:none;}
@@ -270,7 +265,6 @@
     members:[],
     eveningsIndex:[],
     currentEveningDetail:null,
-    editingMemberId:null,
     confirmDeleteEveningId:null,
     justCreated:false,
     mainError:'',
@@ -360,7 +354,6 @@
   async function goToSettings(){
     renderLoading('Mitglieder werden geladen…');
     state.members = await getJSON('members', true, []);
-    state.editingMemberId = null;
     state.view = 'settings';
     render();
   }
@@ -460,22 +453,11 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.15 · Stand 22.07.2026</p>
+      <p class="version-footer">Version 0.16 · Stand 22.07.2026</p>
     `;
   }
 
   function memberRowHtml(m){
-    if(state.editingMemberId===m.id){
-      return `<div class="member-edit-row" data-id="${m.id}">
-        <input type="text" class="edit-first-name" value="${escapeHtml(m.firstName)}" placeholder="Vorname">
-        <input type="text" class="edit-last-name" value="${escapeHtml(m.lastName)}" placeholder="Nachname">
-        <input type="text" class="edit-nickname" value="${escapeHtml(m.nickname||'')}" placeholder="Spitzname (optional)">
-        <span class="row-actions">
-          <button type="button" class="icon-btn save-member-btn" data-id="${m.id}" aria-label="Speichern">✓</button>
-          <button type="button" class="icon-btn cancel-edit-btn" aria-label="Abbrechen">✕</button>
-        </span>
-      </div>`;
-    }
     const nicknameHtml = m.nickname ? ` <span class="nickname-tag">– ${escapeHtml(m.nickname)}</span>` : '';
     return `<div class="member-row">
       <span>${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)}${nicknameHtml}</span>
@@ -635,7 +617,6 @@
         ${buildSeatingSVG(detail)}
       </div>
       <div class="detail-actions">
-        <button type="button" class="btn-secondary" id="back-to-main-btn">← Zurück zur Übersicht</button>
         <button type="button" class="btn-danger" id="delete-evening-btn">Kegelabend löschen</button>
       </div>
       ${buildDeleteModal(detail)}
@@ -692,7 +673,10 @@
 
   function attachSettingsListeners(){
     document.querySelectorAll('.edit-member-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{ state.editingMemberId=b.dataset.id; render(); });
+      b.addEventListener('click', ()=>{
+        const m = state.members.find(x=>x.id===b.dataset.id);
+        if(m) showMemberFormModal(m);
+      });
     });
     document.querySelectorAll('.delete-member-btn').forEach(b=>{
       b.addEventListener('click', ()=>{
@@ -700,26 +684,8 @@
         if(m) showDeleteMemberModal(m);
       });
     });
-    document.querySelectorAll('.cancel-edit-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{ state.editingMemberId=null; render(); });
-    });
-    document.querySelectorAll('.save-member-btn').forEach(b=>{
-      b.addEventListener('click', async ()=>{
-        const row = b.closest('.member-edit-row');
-        const fn = row.querySelector('.edit-first-name').value.trim();
-        const ln = row.querySelector('.edit-last-name').value.trim();
-        const nick = row.querySelector('.edit-nickname').value.trim();
-        if(!fn || !ln) return;
-        b.disabled = true;
-        const m = state.members.find(x=>x.id===b.dataset.id);
-        if(m){ m.firstName=fn; m.lastName=ln; m.nickname=nick; }
-        await setJSON('members', state.members, true);
-        state.editingMemberId=null;
-        render();
-      });
-    });
     const openAddMemberBtn = document.getElementById('open-add-member-btn');
-    if(openAddMemberBtn) openAddMemberBtn.addEventListener('click', showAddMemberModal);
+    if(openAddMemberBtn) openAddMemberBtn.addEventListener('click', ()=>showMemberFormModal());
   }
 
   function renderGuestList(){
@@ -868,18 +834,19 @@
     if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
   }
 
-  function showAddMemberModal(){
+  function showMemberFormModal(existingMember){
+    const isEdit = !!existingMember;
     showModal(`
-      <h3>Neues Mitglied</h3>
+      <h3>${isEdit ? 'Mitglied bearbeiten' : 'Neues Mitglied'}</h3>
       <label for="new-first-name">Vorname</label>
-      <input type="text" id="new-first-name" placeholder="Vorname">
+      <input type="text" id="new-first-name" placeholder="Vorname" value="${isEdit?escapeHtml(existingMember.firstName):''}">
       <label for="new-last-name">Nachname</label>
-      <input type="text" id="new-last-name" placeholder="Nachname">
+      <input type="text" id="new-last-name" placeholder="Nachname" value="${isEdit?escapeHtml(existingMember.lastName):''}">
       <label for="new-nickname">Spitzname (optional)</label>
-      <input type="text" id="new-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt">
+      <input type="text" id="new-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt" value="${isEdit?escapeHtml(existingMember.nickname||''):''}">
       <p class="form-error" id="member-form-error"></p>
       <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="add-member-btn">Hinzufügen</button>
+        <button type="button" class="btn-primary" id="add-member-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
         <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
       </div>
     `);
@@ -891,9 +858,14 @@
       const nick = document.getElementById('new-nickname').value.trim();
       const errEl = document.getElementById('member-form-error');
       if(!fn || !ln){ if(errEl) errEl.textContent='Bitte Vor- und Nachnamen angeben.'; return; }
-      const addBtn = document.getElementById('add-member-btn');
-      addBtn.disabled = true; addBtn.textContent = 'Wird hinzugefügt…';
-      state.members.push({id:uid('m'), firstName:fn, lastName:ln, nickname:nick});
+      const submitBtn = document.getElementById('add-member-btn');
+      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+      if(isEdit){
+        const m = state.members.find(x=>x.id===existingMember.id);
+        if(m){ m.firstName=fn; m.lastName=ln; m.nickname=nick; }
+      }else{
+        state.members.push({id:uid('m'), firstName:fn, lastName:ln, nickname:nick});
+      }
       await setJSON('members', state.members, true);
       closeGenericModal();
       render();
@@ -972,8 +944,6 @@
   }
 
   function attachDetailListeners(){
-    const backBtn = document.getElementById('back-to-main-btn');
-    if(backBtn) backBtn.addEventListener('click', goToMain);
     document.querySelectorAll('[data-member-name]').forEach(el=>{
       el.addEventListener('click', ()=>{ showMemberStatsModal(el.dataset.memberName); });
     });
