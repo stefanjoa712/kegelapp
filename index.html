@@ -292,7 +292,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.25';
+  const APP_VERSION = '0.26';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -403,6 +403,23 @@
     state.view = 'main';
     render();
   }
+  async function goToTodayEvening(){
+    const eve = todayEvening();
+    if(!eve) return;
+    renderLoading('Kegelabend wird geladen…');
+    const detail = await getJSON('evening-'+eve.id, true, null);
+    if(!detail){
+      state.mainError = 'Konnte diesen Abend nicht laden.';
+      state.view = 'main';
+      render();
+      return;
+    }
+    state.currentEveningDetail = detail;
+    state.justCreated = false;
+    state.confirmDeleteEveningId = null;
+    state.view = 'detail';
+    render();
+  }
   async function goToSettings(){
     state.view = 'settings';
     renderLoading('Mitglieder werden geladen…');
@@ -419,8 +436,23 @@
   }
 
   // ---------- Rendering ----------
+  function todayEvening(){
+    const today = todayISO();
+    return state.eveningsIndex.find(e=>e.date===today) || null;
+  }
+
   function bottomNavHtml(){
-    const activeTab = state.view==='settings' ? 'members' : 'overview';
+    const todayEve = todayEvening();
+    const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
+    const activeTab = state.view==='settings' ? 'members' : (isTodayActive ? 'today' : 'overview');
+    const todayButtonHtml = todayEve ? `
+        <button type="button" class="bottom-nav-item${activeTab==='today'?' active':''}" id="nav-today-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 14.9 8.6 22 9.3 16.5 14 18.2 21 12 17.3 5.8 21 7.5 14 2 9.3 9.1 8.6 12 2"/>
+          </svg>
+          <span>Heute</span>
+        </button>
+      ` : '';
     return `
       <nav class="bottom-nav">
         <button type="button" class="bottom-nav-item${activeTab==='overview'?' active':''}" id="nav-overview-btn">
@@ -432,6 +464,7 @@
           </svg>
           <span>Übersicht</span>
         </button>
+        ${todayButtonHtml}
         <button type="button" class="bottom-nav-item${activeTab==='members'?' active':''}" id="nav-members-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="9" cy="8" r="3.2"/>
@@ -522,7 +555,7 @@
       </header>`;
     }
     let title = '';
-    if(state.view==='settings') title = 'Mitglieder';
+    if(state.view==='settings') title = 'Mitgliederverwaltung';
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail') title = 'Kegelabend';
     return `<header class="app-header">
@@ -758,6 +791,8 @@
   function attachListeners(){
     const navOverviewBtn = document.getElementById('nav-overview-btn');
     if(navOverviewBtn) navOverviewBtn.addEventListener('click', goToMain);
+    const navTodayBtn = document.getElementById('nav-today-btn');
+    if(navTodayBtn) navTodayBtn.addEventListener('click', goToTodayEvening);
     const navMembersBtn = document.getElementById('nav-members-btn');
     if(navMembersBtn) navMembersBtn.addEventListener('click', goToSettings);
     const logoBtn = document.getElementById('logo-home-btn');
