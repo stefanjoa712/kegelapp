@@ -43,6 +43,9 @@
     position:sticky; top:0; z-index:800;
     background:var(--ink);
     border-bottom:4px solid var(--wood);
+    box-sizing:border-box;
+  }
+  .app-header-top{
     padding:14px 18px;
     padding-top:calc(14px + env(safe-area-inset-top));
     display:flex;
@@ -56,7 +59,17 @@
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
   .header-back-btn{background:none; border:none; padding:6px; margin:0 0 0 -6px; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
   .header-back-btn svg{width:26px; height:26px; display:block;}
-  .header-title{font-family:var(--font-display); font-size:19px; font-weight:700; margin:0; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:38px; line-height:38px; box-sizing:border-box;}
+  .header-delete-btn{background:none; border:none; padding:6px; margin:0 -6px 0 0; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
+  .header-delete-btn svg{width:22px; height:22px; display:block;}
+  .header-title{font-family:var(--font-display); font-size:19px; font-weight:700; margin:0; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:38px; line-height:38px; box-sizing:border-box; flex:1; min-width:0;}
+
+  .tab-bar{display:flex; gap:8px; padding:0 16px 14px;}
+  .tab-btn{
+    flex:1; text-align:center; padding:9px 10px; border-radius:8px; border:none;
+    background:rgba(255,255,255,0.12); font-family:var(--font-body); font-weight:800; font-size:14px;
+    cursor:pointer; color:rgba(255,255,255,0.75);
+  }
+  .tab-btn.active{background:var(--wood); color:#fff;}
 
   .container{max-width:640px; margin:0 auto; padding:24px 16px 100px; transition:transform 0.25s ease;}
   .container.pull-dragging{transition:none;}
@@ -235,12 +248,27 @@
   .seat-counter{font-family:var(--font-mono); font-size:13px; padding:9px 12px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:inline-block; margin-bottom:10px;}
   .seat-counter.over{color:var(--wine); border-color:var(--wine); font-weight:700;}
 
-  .detail-header{position:relative;}
-  .detail-header .eyebrow{font-family:var(--font-mono); text-transform:uppercase; letter-spacing:0.15em; font-size:11px; color:var(--brass);}
-  .delete-icon-btn{position:absolute; top:14px; right:14px; background:none; border:none; padding:6px; cursor:pointer; color:var(--muted); border-radius:6px;}
-  .delete-icon-btn svg{width:20px; height:20px; display:block;}
-  .delete-icon-btn:hover{color:var(--wine); background:var(--line);}
-  .detail-header h2{font-family:var(--font-display); font-size:25px; margin:4px 0; font-weight:700; letter-spacing:-0.01em;}
+  .fines-summary-header-row{display:flex; justify-content:space-between; padding:4px 2px 10px; font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); border-bottom:2px solid var(--ink); margin-bottom:4px;}
+  .fines-summary-row{display:flex; justify-content:space-between; align-items:center; padding:13px 2px; border-bottom:1px dashed var(--line); cursor:pointer;}
+  .fines-summary-row:last-child{border-bottom:none;}
+  .fines-summary-row:hover{background:var(--bg);}
+  .fines-summary-name{font-weight:700;}
+  .fines-summary-amount{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft);}
+
+  .fine-detail-row{display:flex; align-items:center; gap:10px; padding:13px 2px; border-bottom:1px dashed var(--line); cursor:pointer;}
+  .fine-detail-row:last-child{border-bottom:none;}
+  .fine-detail-row:hover{background:var(--bg);}
+  .fine-detail-icon{width:20px; height:20px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
+  .fine-detail-icon svg{width:16px; height:16px; display:block;}
+  .fine-detail-name{flex:1; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .fine-detail-controls{display:flex; align-items:center; gap:8px; flex-shrink:0;}
+  .fine-minus-btn{
+    width:28px; height:28px; border-radius:50%; border:1.5px solid var(--line); background:#fff;
+    color:var(--ink); font-size:16px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0;
+  }
+  .fine-minus-btn:hover{border-color:var(--wine); color:var(--wine);}
+  .fine-detail-count{font-family:var(--font-mono); font-weight:700; min-width:26px; text-align:center;}
+  .fine-detail-result{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft); min-width:66px; text-align:right; flex-shrink:0;}
   .muted{color:var(--muted); font-size:13px; margin:0;}
 
   .hint{background:var(--tint); border:1px solid var(--brass); color:var(--ink); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:6px;}
@@ -328,7 +356,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.35';
+  const APP_VERSION = '0.36';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -356,7 +384,10 @@
     confirmDeleteEveningId:null,
     justCreated:false,
     mainError:'',
-    expandedYears: new Set([String(new Date().getFullYear())])
+    expandedYears: new Set([String(new Date().getFullYear())]),
+    eveningTab:'sitzplan',
+    currentFineSeatId:null,
+    currentFineName:''
   };
   let currentGuests = [];
 
@@ -477,6 +508,7 @@
       state.currentEveningDetail = detail;
       state.justCreated = false;
       state.confirmDeleteEveningId = null;
+      state.eveningTab = 'sitzplan';
       state.view = 'detail';
       render();
     }catch(e){
@@ -511,6 +543,7 @@
   }
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement') goToSettingsMenu();
+    else if(state.view==='personFineDetail'){ state.view='detail'; render(); }
     else goToMain();
   }
   function goToNew(){
@@ -652,7 +685,7 @@
   let lastHistorySignature = null;
 
   function historySignature(){
-    if(state.view==='detail' && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
+    if((state.view==='detail' || state.view==='personFineDetail') && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
     return state.view;
   }
   function hashFor(sig){
@@ -673,6 +706,7 @@
     else if(state.view==='finesManagement') body = viewFinesManagement();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
+    else if(state.view==='personFineDetail') body = viewPersonFineDetail();
     app.innerHTML = headerHtml() + `<main class="container">${body}</main>` + bottomNavHtml();
     attachListeners();
 
@@ -710,31 +744,6 @@
   // so wirkt ein Klick nie so, als wäre nichts passiert.
   function renderLoading(message){
     document.getElementById('app').innerHTML = headerHtml() + `<main class="container"><div class="loading">${escapeHtml(message)}</div></main>` + bottomNavHtml();
-  }
-
-  function headerHtml(){
-    if(state.view==='main'){
-      return `<header class="app-header">
-        <button type="button" class="header-brand" id="logo-home-btn">
-          <h1 class="sr-only">Die Pudolfs</h1>
-          <img src="${LOGO_DATA_URI}" alt="Die Pudolfs Kegelclub" class="brand-logo">
-        </button>
-      </header>`;
-    }
-    let title = '';
-    if(state.view==='settingsMenu') title = 'Einstellungen';
-    else if(state.view==='settings') title = 'Mitgliederverwaltung';
-    else if(state.view==='finesManagement') title = 'Strafenverwaltung';
-    else if(state.view==='new') title = 'Neuer Kegelabend';
-    else if(state.view==='detail') title = 'Kegelabend';
-    return `<header class="app-header">
-      <button type="button" class="header-back-btn" id="header-back-btn" aria-label="Zurück zur Übersicht">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 6l-6 6 6 6"/>
-        </svg>
-      </button>
-      <h1 class="header-title">${escapeHtml(title)}</h1>
-    </header>`;
   }
 
   function viewMain(){
@@ -848,6 +857,83 @@
     `;
   }
 
+  function fineTotalForSeat(detail, seatId){
+    const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
+    let total = 0;
+    state.finesCatalog.forEach(f=>{
+      if(f.type==='fremdstrafe') return;
+      const count = entries[f.id] || 0;
+      total += count * f.amount;
+    });
+    return total;
+  }
+
+  function buildFinesSummary(detail){
+    const occupied = detail.seating.filter(s=>s.name);
+    const rowsHtml = occupied.length===0
+      ? `<p class="empty-state">Keine Teilnehmer für diesen Abend.</p>`
+      : occupied.map(s=>`
+        <div class="fines-summary-row" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
+          <span class="fines-summary-name">${escapeHtml(s.name)}</span>
+          <span class="fines-summary-amount">${fmtEuro(fineTotalForSeat(detail, s.seatId))}</span>
+        </div>
+      `).join('');
+    return `
+      <div class="card">
+        <div class="fines-summary-header-row"><span>Name</span><span>Aktuelle Strafen</span></div>
+        ${rowsHtml}
+      </div>
+    `;
+  }
+
+  function goToPersonFineDetail(seatId, name){
+    state.currentFineSeatId = seatId;
+    state.currentFineName = name;
+    state.view = 'personFineDetail';
+    render();
+  }
+
+  function viewPersonFineDetail(){
+    const detail = state.currentEveningDetail;
+    const seatId = state.currentFineSeatId;
+    const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
+    const catalog = state.finesCatalog.filter(f=>f.type!=='fremdstrafe');
+    let total = 0;
+    const rowsHtml = catalog.map(f=>{
+      const count = entries[f.id] || 0;
+      const result = count * f.amount;
+      total += result;
+      return `
+        <div class="fine-detail-row" data-fine-id="${f.id}">
+          <span class="fine-type-icon">${fineTypeIconSvg(f.type)}</span>
+          <span class="fine-detail-name">${escapeHtml(f.name)}</span>
+          <span class="fine-detail-controls">
+            <button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>
+            <span class="fine-detail-count">${count}×</span>
+          </span>
+          <span class="fine-detail-result">${fmtEuro(result)}</span>
+        </div>
+      `;
+    }).join('');
+    return `
+      <div class="card">
+        ${catalog.length===0 ? `<p class="empty-state">Noch keine Strafen in der Strafenverwaltung angelegt.</p>` : rowsHtml}
+        ${catalog.length>0 ? `<div class="stat-total"><span>Gesamt</span><span>${fmtEuro(total)}</span></div>` : ''}
+      </div>
+    `;
+  }
+
+  async function adjustFineCount(fineId, delta){
+    const detail = state.currentEveningDetail;
+    const seatId = state.currentFineSeatId;
+    if(!detail.finesBySeat) detail.finesBySeat = {};
+    if(!detail.finesBySeat[seatId]) detail.finesBySeat[seatId] = {};
+    const current = detail.finesBySeat[seatId][fineId] || 0;
+    detail.finesBySeat[seatId][fineId] = Math.max(0, current + delta);
+    render();
+    await setJSON('evening-'+detail.id, detail, true);
+  }
+
   function buildSeatingSVG(detail){
     const W = 760, H = 1020;
     const tableTopY = 130, tableBottomY = 970;
@@ -931,23 +1017,67 @@
     `;
   }
 
-  function viewDetail(detail){
-    if(!detail) return `<p class="empty-state">Konnte diesen Abend nicht laden.</p>`;
-    const occupied = detail.seating.filter(s=>s.name).length;
-    return `
-      <div class="card detail-header">
-        <button type="button" class="delete-icon-btn" id="delete-evening-btn" aria-label="Kegelabend löschen">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-            <path d="M10 11v6M14 11v6"/>
-            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+  function headerHtml(){
+    if(state.view==='main'){
+      return `<header class="app-header">
+        <div class="app-header-top">
+          <button type="button" class="header-brand" id="logo-home-btn">
+            <h1 class="sr-only">Die Pudolfs</h1>
+            <img src="${LOGO_DATA_URI}" alt="Die Pudolfs Kegelclub" class="brand-logo">
+          </button>
+        </div>
+      </header>`;
+    }
+    let title = '';
+    if(state.view==='settingsMenu') title = 'Einstellungen';
+    else if(state.view==='settings') title = 'Mitgliederverwaltung';
+    else if(state.view==='finesManagement') title = 'Strafenverwaltung';
+    else if(state.view==='new') title = 'Neuer Kegelabend';
+    else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
+    else if(state.view==='personFineDetail') title = state.currentFineName || '';
+
+    const deleteBtnHtml = state.view==='detail' ? `
+      <button type="button" class="header-delete-btn" id="header-delete-btn" aria-label="Kegelabend löschen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6M14 11v6"/>
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+      </button>
+    ` : '';
+
+    const tabsHtml = state.view==='detail' ? `
+      <div class="tab-bar">
+        <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
+        <button type="button" class="tab-btn${state.eveningTab==='strafen'?' active':''}" id="tab-strafen-btn">Strafen</button>
+      </div>
+    ` : '';
+
+    return `<header class="app-header">
+      <div class="app-header-top">
+        <button type="button" class="header-back-btn" id="header-back-btn" aria-label="Zurück">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 6l-6 6 6 6"/>
           </svg>
         </button>
-        <div class="eyebrow">Kegelabend</div>
-        <h2>${formatDateDE(detail.date)}</h2>
-        <p class="muted">${occupied} Teilnehmer ausgelost</p>
+        <h1 class="header-title">${escapeHtml(title)}</h1>
+        ${deleteBtnHtml}
       </div>
+      ${tabsHtml}
+    </header>`;
+  }
+
+  function viewDetail(detail){
+    if(!detail) return `<p class="empty-state">Konnte diesen Abend nicht laden.</p>`;
+    if(state.eveningTab==='strafen'){
+      return `
+        ${state.justCreated ? `<p class="hint">Die Sitzordnung wurde zufällig ausgelost und gespeichert. Sie kann nicht mehr geändert werden.</p>` : ''}
+        ${buildFinesSummary(detail)}
+        ${buildDeleteModal(detail)}
+      `;
+    }
+    return `
       ${state.justCreated ? `<p class="hint">Die Sitzordnung wurde zufällig ausgelost und gespeichert. Sie kann nicht mehr geändert werden.</p>` : ''}
       <div class="card">
         ${buildSeatingSVG(detail)}
@@ -979,6 +1109,7 @@
     else if(state.view==='finesManagement') attachFinesManagementListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
+    else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
   }
 
   function attachSettingsMenuListeners(){
@@ -1034,6 +1165,7 @@
       state.justCreated = false;
       state.confirmDeleteEveningId = null;
       state.mainError = '';
+      state.eveningTab = 'sitzplan';
       state.view = 'detail';
       render();
     }catch(e){
@@ -1381,7 +1513,7 @@
     });
 
     const id = uid('e');
-    const detail = { id, date, seating };
+    const detail = { id, date, seating, finesBySeat: {} };
     const newIndex = [...state.eveningsIndex, {id, date}];
     await Promise.all([
       setJSON('evening-'+id, detail, true),
@@ -1391,6 +1523,7 @@
 
     state.currentEveningDetail = detail;
     state.justCreated = true;
+    state.eveningTab = 'sitzplan';
     state.view = 'detail';
     render();
   }
@@ -1414,7 +1547,22 @@
     document.querySelectorAll('[data-member-name]').forEach(el=>{
       el.addEventListener('click', ()=>{ showMemberStatsModal(el.dataset.memberName); });
     });
-    const delBtn = document.getElementById('delete-evening-btn');
+    const tabSitzplanBtn = document.getElementById('tab-sitzplan-btn');
+    if(tabSitzplanBtn) tabSitzplanBtn.addEventListener('click', ()=>{ state.eveningTab='sitzplan'; render(); });
+    const tabStrafenBtn = document.getElementById('tab-strafen-btn');
+    if(tabStrafenBtn) tabStrafenBtn.addEventListener('click', async ()=>{
+      state.eveningTab='strafen';
+      render();
+      try{
+        const fresh = await getJSON('fines-catalog', true, state.finesCatalog);
+        state.finesCatalog = fresh;
+        if(state.eveningTab==='strafen') render();
+      }catch(e){}
+    });
+    document.querySelectorAll('.fines-summary-row').forEach(row=>{
+      row.addEventListener('click', ()=>{ goToPersonFineDetail(row.dataset.seatId, row.dataset.name); });
+    });
+    const delBtn = document.getElementById('header-delete-btn');
     if(delBtn) delBtn.addEventListener('click', ()=>{ state.confirmDeleteEveningId = state.currentEveningDetail.id; render(); });
     const backdrop = document.getElementById('delete-modal-backdrop');
     if(backdrop) backdrop.addEventListener('click', e=>{ if(e.target===backdrop){ state.confirmDeleteEveningId=null; render(); } });
@@ -1445,6 +1593,21 @@
     });
     const noBtn = document.getElementById('confirm-delete-evening-no');
     if(noBtn) noBtn.addEventListener('click', ()=>{ state.confirmDeleteEveningId=null; render(); });
+  }
+
+  function attachPersonFineDetailListeners(){
+    document.querySelectorAll('.fine-detail-row').forEach(row=>{
+      row.addEventListener('click', (e)=>{
+        if(e.target.closest('.fine-minus-btn')) return;
+        adjustFineCount(row.dataset.fineId, 1);
+      });
+    });
+    document.querySelectorAll('.fine-minus-btn').forEach(btn=>{
+      btn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        adjustFineCount(btn.dataset.fineId, -1);
+      });
+    });
   }
 
   // ---------- Pull-to-Refresh ----------
