@@ -113,6 +113,15 @@
 
   .section-title{font-family:var(--font-display); font-size:21px; margin:0 0 12px; font-weight:700; letter-spacing:-0.01em;}
   .settings-header-row{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;}
+  .settings-menu-list{display:flex; flex-direction:column; gap:10px;}
+  .settings-menu-item{
+    display:flex; justify-content:space-between; align-items:center;
+    background:var(--surface); border:1.5px solid var(--line); border-radius:10px;
+    padding:14px 16px; font-family:var(--font-body); font-size:16px; font-weight:700; color:var(--ink);
+    cursor:pointer;
+  }
+  .settings-menu-item svg{width:20px; height:20px; color:var(--muted);}
+  .settings-menu-item:hover{border-color:var(--wood); background:var(--bg);}
   .settings-header-row .section-title{margin-bottom:0;}
   .member-count{font-family:var(--font-body); font-size:15px; font-weight:600; color:var(--muted);}
   .section-title-small{font-family:var(--font-display); font-size:16px; margin:0 0 10px; font-weight:700; letter-spacing:-0.01em;}
@@ -302,7 +311,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.31';
+  const APP_VERSION = '0.32';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -467,12 +476,36 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToSettings);
     }
   }
+  function goToSettingsMenu(){
+    state.view = 'settingsMenu';
+    render();
+  }
+  function goBackFromHeader(){
+    if(state.view==='settings') goToSettingsMenu();
+    else goToMain();
+  }
   function goToNew(){
     currentGuests = [];
     state.view = 'new';
     state.view;
     state.formError = '';
     render();
+  }
+
+  function viewSettingsMenu(){
+    return `
+      <div class="card">
+        <h2 class="section-title">Einstellungen</h2>
+        <div class="settings-menu-list">
+          <button type="button" class="settings-menu-item" id="settings-menu-mitglieder-btn">
+            <span>Mitglieder</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    `;
   }
 
   // ---------- Rendering ----------
@@ -484,7 +517,8 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const activeTab = state.view==='settings' ? 'members' : (isTodayActive ? 'today' : 'overview');
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings';
+    const activeTab = isSettingsActive ? 'settings' : (isTodayActive ? 'today' : 'overview');
     const todayButtonHtml = todayEve ? `
         <button type="button" class="bottom-nav-item${activeTab==='today'?' active':''}" id="nav-today-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -505,14 +539,12 @@
           <span>Übersicht</span>
         </button>
         ${todayButtonHtml}
-        <button type="button" class="bottom-nav-item${activeTab==='members'?' active':''}" id="nav-members-btn">
+        <button type="button" class="bottom-nav-item${activeTab==='settings'?' active':''}" id="nav-settings-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="9" cy="8" r="3.2"/>
-            <path d="M3.5 20c0-3.5 2.7-6 5.5-6s5.5 2.5 5.5 6"/>
-            <circle cx="17" cy="9" r="2.6"/>
-            <path d="M15 20c0-2.8 1-5 3.8-5.4"/>
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
-          <span>Mitglieder</span>
+          <span>Einstellungen</span>
         </button>
       </nav>
     `;
@@ -527,6 +559,7 @@
     return state.view;
   }
   function hashFor(sig){
+    if(sig==='settingsMenu') return '#einstellungen';
     if(sig==='settings') return '#mitglieder';
     if(sig==='new') return '#neuer-abend';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
@@ -537,6 +570,7 @@
     const app = document.getElementById('app');
     let body = '';
     if(state.view==='main') body = viewMain();
+    else if(state.view==='settingsMenu') body = viewSettingsMenu();
     else if(state.view==='settings') body = viewSettings();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
@@ -555,7 +589,9 @@
     isPopstateNavigation = true;
     const sig = (event.state && event.state.sig) || 'main';
     (async ()=>{
-      if(sig==='settings'){
+      if(sig==='settingsMenu'){
+        goToSettingsMenu();
+      }else if(sig==='settings'){
         await goToSettings();
       }else if(sig==='new'){
         goToNew();
@@ -585,7 +621,8 @@
       </header>`;
     }
     let title = '';
-    if(state.view==='settings') title = 'Mitgliederverwaltung';
+    if(state.view==='settingsMenu') title = 'Einstellungen';
+    else if(state.view==='settings') title = 'Mitgliederverwaltung';
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail') title = 'Kegelabend';
     return `<header class="app-header">
@@ -823,21 +860,27 @@
     if(navOverviewBtn) navOverviewBtn.addEventListener('click', goToMain);
     const navTodayBtn = document.getElementById('nav-today-btn');
     if(navTodayBtn) navTodayBtn.addEventListener('click', goToTodayEvening);
-    const navMembersBtn = document.getElementById('nav-members-btn');
-    if(navMembersBtn) navMembersBtn.addEventListener('click', goToSettings);
+    const navSettingsBtn = document.getElementById('nav-settings-btn');
+    if(navSettingsBtn) navSettingsBtn.addEventListener('click', goToSettingsMenu);
     const logoBtn = document.getElementById('logo-home-btn');
     if(logoBtn) logoBtn.addEventListener('click', goToMain);
     const headerBackBtn = document.getElementById('header-back-btn');
-    if(headerBackBtn) headerBackBtn.addEventListener('click', goToMain);
+    if(headerBackBtn) headerBackBtn.addEventListener('click', goBackFromHeader);
   }
 
   function attachListeners(){
     attachGlobalNavListeners();
 
     if(state.view==='main') attachMainListeners();
+    else if(state.view==='settingsMenu') attachSettingsMenuListeners();
     else if(state.view==='settings') attachSettingsListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
+  }
+
+  function attachSettingsMenuListeners(){
+    const mitgliederBtn = document.getElementById('settings-menu-mitglieder-btn');
+    if(mitgliederBtn) mitgliederBtn.addEventListener('click', goToSettings);
   }
 
   // Eigenständige Fehleransicht mit "Erneut versuchen"-Button - für Fälle, in denen eine
