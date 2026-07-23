@@ -49,9 +49,9 @@
   .header-brand{display:flex; flex-direction:column; gap:2px; background:none; border:none; padding:0; margin:0; text-align:left; cursor:pointer; font:inherit;}
   .brand-logo{height:46px; width:auto; display:block;}
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
-  .header-back-btn{background:none; border:none; padding:6px; margin:0 0 0 -6px; cursor:pointer; color:var(--ink); display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .header-back-btn{background:none; border:none; padding:6px; margin:0 0 0 -6px; cursor:pointer; color:var(--ink); display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
   .header-back-btn svg{width:26px; height:26px; display:block;}
-  .header-title{font-family:var(--font-display); font-size:20px; font-weight:400; line-height:1; margin:0; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center;}
+  .header-title{font-family:var(--font-display); font-size:20px; font-weight:400; margin:0; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:38px; line-height:38px; box-sizing:border-box;}
 
   .container{max-width:640px; margin:0 auto; padding:24px 16px 100px; transition:transform 0.25s ease;}
   .container.pull-dragging{transition:none;}
@@ -190,7 +190,11 @@
   .seat-counter{font-family:var(--font-mono); font-size:13px; padding:9px 12px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:inline-block; margin-bottom:10px;}
   .seat-counter.over{color:var(--wine); border-color:var(--wine); font-weight:700;}
 
+  .detail-header{position:relative;}
   .detail-header .eyebrow{font-family:var(--font-mono); text-transform:uppercase; letter-spacing:0.15em; font-size:11px; color:var(--brass);}
+  .delete-icon-btn{position:absolute; top:14px; right:14px; background:none; border:none; padding:6px; cursor:pointer; color:var(--muted); border-radius:6px;}
+  .delete-icon-btn svg{width:20px; height:20px; display:block;}
+  .delete-icon-btn:hover{color:var(--wine); background:var(--line);}
   .detail-header h2{font-family:var(--font-display); font-size:28px; margin:4px 0; font-weight:400; letter-spacing:0.01em;}
   .muted{color:var(--muted); font-size:13px; margin:0;}
 
@@ -222,8 +226,6 @@
   .name-plate-text.empty-text{fill:var(--ink-soft); font-style:italic; font-weight:400;}
   .guest-tag-text{font-family:var(--font-mono); font-size:11px; letter-spacing:0.06em; fill:var(--brass-light); font-weight:700;}
 
-  .detail-actions{display:flex; flex-direction:column; gap:10px; margin-top:8px;}
-  .detail-actions .confirm-row{flex-direction:column; align-items:stretch; gap:10px;}
   .confirm-row-buttons{display:flex; gap:10px;}
   .confirm-row-buttons > button{flex:1;}
 
@@ -545,7 +547,7 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.20 · Stand 23.07.2026</p>
+      <p class="version-footer">Version 0.21 · Stand 23.07.2026</p>
     `;
   }
 
@@ -700,6 +702,14 @@
     const occupied = detail.seating.filter(s=>s.name).length;
     return `
       <div class="card detail-header">
+        <button type="button" class="delete-icon-btn" id="delete-evening-btn" aria-label="Kegelabend löschen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6M14 11v6"/>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          </svg>
+        </button>
         <div class="eyebrow">Kegelabend</div>
         <h2>${formatDateDE(detail.date)}</h2>
         <p class="muted">${occupied} Teilnehmer ausgelost</p>
@@ -707,9 +717,6 @@
       ${state.justCreated ? `<p class="hint">Die Sitzordnung wurde zufällig ausgelost und gespeichert. Sie kann nicht mehr geändert werden.</p>` : ''}
       <div class="card">
         ${buildSeatingSVG(detail)}
-      </div>
-      <div class="detail-actions">
-        <button type="button" class="btn-danger" id="delete-evening-btn">Kegelabend löschen</button>
       </div>
       ${buildDeleteModal(detail)}
     `;
