@@ -30,7 +30,7 @@
     --font-mono:'IBM Plex Mono', monospace;
   }
   *{box-sizing:border-box;}
-  body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--font-body); line-height:1.5; touch-action:manipulation;}
+  body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--font-body); line-height:1.5; touch-action:manipulation; overscroll-behavior-y:contain;}
   button{font:inherit;}
   a{color:inherit;}
   *:focus-visible{outline:2px solid var(--felt); outline-offset:2px;}
@@ -53,7 +53,21 @@
   .header-back-btn svg{width:26px; height:26px; display:block;}
   .header-title{font-family:var(--font-display); font-size:20px; font-weight:400; margin:0; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 
-  .container{max-width:640px; margin:0 auto; padding:24px 16px 100px;}
+  .container{max-width:640px; margin:0 auto; padding:24px 16px 100px; transition:transform 0.25s ease;}
+  .container.pull-dragging{transition:none;}
+
+  .pull-refresh-indicator{
+    position:fixed; top:66px; left:50%; z-index:850;
+    width:36px; height:36px; border-radius:50%;
+    background:var(--surface); border:2px solid var(--ink); box-shadow:2px 2px 0 var(--ink);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; transform:translateX(-50%) translateY(-40px) rotate(0deg);
+    color:var(--felt); pointer-events:none;
+  }
+  .pull-refresh-indicator svg{width:18px; height:18px; display:block;}
+  .pull-refresh-indicator.ready{color:var(--felt-dark);}
+  .pull-refresh-indicator.spinning svg{animation:pull-spin .7s linear infinite;}
+  @keyframes pull-spin{from{transform:rotate(0deg);} to{transform:rotate(360deg);}}
 
   .bottom-nav{
     position:fixed; left:0; right:0; bottom:0; z-index:900;
@@ -227,6 +241,11 @@
 </head>
 <body>
 <div id="app"></div>
+<div id="pull-refresh-indicator" class="pull-refresh-indicator">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 5v14M12 19l-5-5M12 19l5-5"/>
+  </svg>
+</div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
@@ -430,7 +449,7 @@
     let title = '';
     if(state.view==='settings') title = 'Mitglieder';
     else if(state.view==='new') title = 'Neuer Kegelabend';
-    else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
+    else if(state.view==='detail') title = 'Kegelabend';
     return `<header class="app-header">
       <button type="button" class="header-back-btn" id="header-back-btn" aria-label="Zurück zur Übersicht">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
@@ -476,7 +495,7 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.17 · Stand 22.07.2026</p>
+      <p class="version-footer">Version 0.18 · Stand 22.07.2026</p>
     `;
   }
 
@@ -1004,6 +1023,108 @@
     const noBtn = document.getElementById('confirm-delete-evening-no');
     if(noBtn) noBtn.addEventListener('click', ()=>{ state.confirmDeleteEveningId=null; render(); });
   }
+
+  // ---------- Pull-to-Refresh ----------
+  (function setupPullToRefresh(){
+    const THRESHOLD = 70;
+    const MAX_PULL = 110;
+    let startY = null;
+    let pulling = false;
+    let currentPull = 0;
+
+    function scrollTop(){ return window.scrollY || document.documentElement.scrollTop || 0; }
+    function getIndicator(){ return document.getElementById('pull-refresh-indicator'); }
+    function getContainer(){ return document.querySelector('main.container'); }
+
+    function updateIndicator(pull){
+      const el = getIndicator();
+      const container = getContainer();
+      const progress = Math.min(pull / THRESHOLD, 1);
+      const clamped = Math.min(pull, MAX_PULL);
+      if(el){
+        el.style.opacity = String(progress);
+        el.style.transform = `translateX(-50%) translateY(${clamped-40}px) rotate(${progress*180}deg)`;
+        el.classList.toggle('ready', progress>=1);
+      }
+      if(container) container.style.transform = `translateY(${clamped}px)`;
+    }
+
+    function resetIndicator(){
+      const el = getIndicator();
+      const container = getContainer();
+      if(el){ el.style.opacity='0'; el.style.transform='translateX(-50%) translateY(-40px) rotate(0deg)'; el.classList.remove('ready','spinning'); }
+      if(container){ container.classList.remove('pull-dragging'); container.style.transform=''; }
+      currentPull = 0;
+    }
+
+    async function doRefresh(){
+      const el = getIndicator();
+      const container = getContainer();
+      if(container){ container.classList.remove('pull-dragging'); container.style.transform = `translateY(${THRESHOLD}px)`; }
+      if(el){ el.classList.add('spinning'); el.classList.add('ready'); }
+      try{
+        if(state.view==='main'){
+          const [members, eveningsIndex] = await Promise.all([
+            getJSON('members', true, state.members),
+            getJSON('evenings-index', true, state.eveningsIndex)
+          ]);
+          state.members = members;
+          state.eveningsIndex = eveningsIndex;
+        }else if(state.view==='settings'){
+          state.members = await getJSON('members', true, state.members);
+        }else if(state.view==='detail' && state.currentEveningDetail){
+          const fresh = await getJSON('evening-'+state.currentEveningDetail.id, true, state.currentEveningDetail);
+          if(fresh) state.currentEveningDetail = fresh;
+        }
+        render();
+        const newContainer = getContainer();
+        if(newContainer){
+          newContainer.style.transition = 'none';
+          newContainer.style.transform = `translateY(${THRESHOLD}px)`;
+          requestAnimationFrame(()=>{
+            newContainer.style.transition = '';
+            newContainer.style.transform = '';
+          });
+        }
+      } finally {
+        resetIndicator();
+      }
+    }
+
+    document.addEventListener('touchstart', e=>{
+      if(scrollTop()>0 || state.view==='new' || document.getElementById('generic-modal-root')){
+        pulling = false;
+        return;
+      }
+      startY = e.touches[0].clientY;
+      pulling = true;
+      const container = getContainer();
+      if(container) container.classList.add('pull-dragging');
+    }, {passive:true});
+
+    document.addEventListener('touchmove', e=>{
+      if(!pulling || startY===null) return;
+      const delta = e.touches[0].clientY - startY;
+      if(delta<=0 || scrollTop()>0){
+        if(currentPull>0) resetIndicator();
+        return;
+      }
+      e.preventDefault();
+      currentPull = delta * 0.5;
+      updateIndicator(currentPull);
+    }, {passive:false});
+
+    document.addEventListener('touchend', ()=>{
+      if(!pulling){ startY=null; return; }
+      pulling = false;
+      startY = null;
+      if(currentPull >= THRESHOLD){
+        doRefresh();
+      }else{
+        resetIndicator();
+      }
+    });
+  })();
 
   // ---------- Start ----------
   async function init(){
