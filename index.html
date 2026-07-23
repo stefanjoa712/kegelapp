@@ -297,7 +297,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.29';
+  const APP_VERSION = '0.30';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -354,6 +354,14 @@
       return fallback;
     }
   }
+  // Wie getJSON, aber wirft bei Fehler/Timeout weiter statt still den Fallback zu liefern -
+  // für Stellen, an denen dem Nutzer eine Fehlermeldung mit "Erneut versuchen" gezeigt werden soll.
+  async function getJSONOrThrow(key, fallback){
+    const snap = await withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS);
+    if(!snap.exists()) return fallback;
+    const data = snap.data();
+    return JSON.parse(data.value);
+  }
   async function setJSON(key, value, shared){
     try{
       await withTimeout(setDoc(doc(db, 'kegelbuch', key), { value: JSON.stringify(value) }), STORAGE_TIMEOUT_MS);
@@ -408,39 +416,51 @@
   async function goToMain(){
     state.view = 'main';
     renderLoading('Übersicht wird geladen…');
-    const [members, eveningsIndex] = await Promise.all([
-      getJSON('members', true, []),
-      getJSON('evenings-index', true, [])
-    ]);
-    state.members = members;
-    state.eveningsIndex = eveningsIndex;
-    state.mainError = '';
-    state.view = 'main';
-    render();
+    try{
+      const [members, eveningsIndex] = await Promise.all([
+        getJSONOrThrow('members', []),
+        getJSONOrThrow('evenings-index', [])
+      ]);
+      state.members = members;
+      state.eveningsIndex = eveningsIndex;
+      state.mainError = '';
+      state.view = 'main';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToMain);
+    }
   }
   async function goToTodayEvening(){
     const eve = todayEvening();
     if(!eve) return;
     renderLoading('Kegelabend wird geladen…');
-    const detail = await getJSON('evening-'+eve.id, true, null);
-    if(!detail){
-      state.mainError = 'Konnte diesen Abend nicht laden.';
-      state.view = 'main';
+    try{
+      const detail = await getJSONOrThrow('evening-'+eve.id, null);
+      if(!detail){
+        state.mainError = 'Konnte diesen Abend nicht laden.';
+        state.view = 'main';
+        render();
+        return;
+      }
+      state.currentEveningDetail = detail;
+      state.justCreated = false;
+      state.confirmDeleteEveningId = null;
+      state.view = 'detail';
       render();
-      return;
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToTodayEvening);
     }
-    state.currentEveningDetail = detail;
-    state.justCreated = false;
-    state.confirmDeleteEveningId = null;
-    state.view = 'detail';
-    render();
   }
   async function goToSettings(){
     state.view = 'settings';
     renderLoading('Mitglieder werden geladen…');
-    state.members = await getJSON('members', true, []);
-    state.view = 'settings';
-    render();
+    try{
+      state.members = await getJSONOrThrow('members', []);
+      state.view = 'settings';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToSettings);
+    }
   }
   function goToNew(){
     currentGuests = [];
@@ -536,17 +556,7 @@
         goToNew();
       }else if(sig.startsWith('detail:')){
         const id = sig.slice(7);
-        renderLoading('Kegelabend wird geladen…');
-        const detail = await getJSON('evening-'+id, true, null);
-        if(detail){
-          state.currentEveningDetail = detail;
-          state.justCreated = false;
-          state.confirmDeleteEveningId = null;
-          state.view = 'detail';
-          render();
-        }else{
-          await goToMain();
-        }
+        await openEveningDetail(id);
       }else{
         await goToMain();
       }
@@ -803,7 +813,7 @@
   }
 
   // ---------- Event-Listener ----------
-  function attachListeners(){
+  function attachGlobalNavListeners(){
     const navOverviewBtn = document.getElementById('nav-overview-btn');
     if(navOverviewBtn) navOverviewBtn.addEventListener('click', goToMain);
     const navTodayBtn = document.getElementById('nav-today-btn');
@@ -814,11 +824,30 @@
     if(logoBtn) logoBtn.addEventListener('click', goToMain);
     const headerBackBtn = document.getElementById('header-back-btn');
     if(headerBackBtn) headerBackBtn.addEventListener('click', goToMain);
+  }
+
+  function attachListeners(){
+    attachGlobalNavListeners();
 
     if(state.view==='main') attachMainListeners();
     else if(state.view==='settings') attachSettingsListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
+  }
+
+  // Eigenständige Fehleransicht mit "Erneut versuchen"-Button - für Fälle, in denen eine
+  // Firestore-Anfrage in ein Timeout gelaufen ist. Header/Bottom-Nav bleiben nutzbar.
+  function renderError(message, retryFn){
+    const app = document.getElementById('app');
+    app.innerHTML = headerHtml() + `<main class="container">
+      <div class="card" style="text-align:center;">
+        <p class="form-error" style="margin-bottom:14px;">${escapeHtml(message)}</p>
+        <button type="button" class="btn-primary" id="error-retry-btn">Erneut versuchen</button>
+      </div>
+    </main>` + bottomNavHtml();
+    attachGlobalNavListeners();
+    const btn = document.getElementById('error-retry-btn');
+    if(btn) btn.addEventListener('click', retryFn);
   }
 
   function attachMainListeners(){
@@ -834,24 +863,29 @@
       });
     });
     document.querySelectorAll('.evening-row').forEach(row=>{
-      row.addEventListener('click', async ()=>{
-        const id = row.dataset.id;
-        renderLoading('Kegelabend wird geladen…');
-        const detail = await getJSON('evening-'+id, true, null);
-        if(!detail){
-          state.mainError = 'Konnte diesen Abend nicht laden.';
-          state.view = 'main';
-          render();
-          return;
-        }
-        state.currentEveningDetail = detail;
-        state.justCreated = false;
-        state.confirmDeleteEveningId = null;
-        state.mainError = '';
-        state.view = 'detail';
-        render();
-      });
+      row.addEventListener('click', ()=> openEveningDetail(row.dataset.id));
     });
+  }
+
+  async function openEveningDetail(id){
+    renderLoading('Kegelabend wird geladen…');
+    try{
+      const detail = await getJSONOrThrow('evening-'+id, null);
+      if(!detail){
+        state.mainError = 'Konnte diesen Abend nicht laden.';
+        state.view = 'main';
+        render();
+        return;
+      }
+      state.currentEveningDetail = detail;
+      state.justCreated = false;
+      state.confirmDeleteEveningId = null;
+      state.mainError = '';
+      state.view = 'detail';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', ()=>openEveningDetail(id));
+    }
   }
 
   function attachSettingsListeners(){
@@ -945,22 +979,9 @@
       </div>
     `);
     document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    document.getElementById('open-existing-evening-btn').addEventListener('click', async ()=>{
+    document.getElementById('open-existing-evening-btn').addEventListener('click', ()=>{
       closeGenericModal();
-      renderLoading('Kegelabend wird geladen…');
-      const detail = await getJSON('evening-'+existingId, true, null);
-      if(!detail){
-        state.mainError = 'Konnte diesen Abend nicht laden.';
-        state.view = 'main';
-        render();
-        return;
-      }
-      state.currentEveningDetail = detail;
-      state.justCreated = false;
-      state.confirmDeleteEveningId = null;
-      state.detailTab = 'sitzplan';
-      state.view = 'detail';
-      render();
+      openEveningDetail(existingId);
     });
   }
   function showDeleteMemberModal(member){
@@ -987,34 +1008,49 @@
       <h3>${escapeHtml(name)}</h3>
       <p class="empty-state">Statistik wird geladen…</p>
     `);
-    const freshIndex = await getJSON('evenings-index', true, state.eveningsIndex);
-    const details = await Promise.all(freshIndex.map(e=>getJSON('evening-'+e.id, true, null)));
-    const countsByYear = {};
-    let total = 0;
-    details.forEach(d=>{
-      if(!d || !d.seating) return;
-      const attended = d.seating.some(s=>!s.isGuest && s.name===name);
-      if(attended){
-        const year = d.date.slice(0,4);
-        countsByYear[year] = (countsByYear[year]||0) + 1;
-        total++;
-      }
-    });
-    const years = Object.keys(countsByYear).sort((a,b)=> b.localeCompare(a));
-    const rowsHtml = years.length===0
-      ? `<p class="empty-state">Keine Anwesenheiten gefunden.</p>`
-      : years.map(y=>`<div class="stat-row"><span>${y}</span><span class="stat-count">${countsByYear[y]}×</span></div>`).join('');
-    showModal(`
-      <h3>${escapeHtml(name)}</h3>
-      <p>Anwesenheiten pro Jahr</p>
-      ${rowsHtml}
-      ${years.length>0 ? `<div class="stat-total"><span>Gesamt</span><span>${total}×</span></div>` : ''}
-      <div class="confirm-row-buttons" style="margin-top:14px;">
-        <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
-      </div>
-    `);
-    const closeBtn = document.getElementById('modal-cancel-btn');
-    if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
+    try{
+      const freshIndex = await getJSONOrThrow('evenings-index', state.eveningsIndex);
+      const details = await Promise.all(freshIndex.map(e=>getJSON('evening-'+e.id, true, null)));
+      const countsByYear = {};
+      let total = 0;
+      details.forEach(d=>{
+        if(!d || !d.seating) return;
+        const attended = d.seating.some(s=>!s.isGuest && s.name===name);
+        if(attended){
+          const year = d.date.slice(0,4);
+          countsByYear[year] = (countsByYear[year]||0) + 1;
+          total++;
+        }
+      });
+      const years = Object.keys(countsByYear).sort((a,b)=> b.localeCompare(a));
+      const rowsHtml = years.length===0
+        ? `<p class="empty-state">Keine Anwesenheiten gefunden.</p>`
+        : years.map(y=>`<div class="stat-row"><span>${y}</span><span class="stat-count">${countsByYear[y]}×</span></div>`).join('');
+      showModal(`
+        <h3>${escapeHtml(name)}</h3>
+        <p>Anwesenheiten pro Jahr</p>
+        ${rowsHtml}
+        ${years.length>0 ? `<div class="stat-total"><span>Gesamt</span><span>${total}×</span></div>` : ''}
+        <div class="confirm-row-buttons" style="margin-top:14px;">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      const closeBtn = document.getElementById('modal-cancel-btn');
+      if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
+    }catch(e){
+      showModal(`
+        <h3>${escapeHtml(name)}</h3>
+        <p class="form-error">Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-primary" id="stats-retry-btn">Erneut versuchen</button>
+          <button type="button" class="btn-secondary" id="modal-cancel-btn">Schließen</button>
+        </div>
+      `);
+      const closeBtn = document.getElementById('modal-cancel-btn');
+      if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
+      const retryBtn = document.getElementById('stats-retry-btn');
+      if(retryBtn) retryBtn.addEventListener('click', ()=>showMemberStatsModal(name));
+    }
   }
 
   function showMemberFormModal(existingMember){
@@ -1307,15 +1343,20 @@
     document.getElementById('app').innerHTML = `<div class="loading">Die Pudolfs – wird geladen…</div>`;
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
-    const [members, eveningsIndex] = await Promise.all([
-      getJSON('members', true, []),
-      getJSON('evenings-index', true, [])
-    ]);
-    state.members = members;
-    state.eveningsIndex = eveningsIndex;
-    state.view = 'main';
-    render();
-    setTimeout(checkForUpdate, 2000);
+    try{
+      const [members, eveningsIndex] = await Promise.all([
+        getJSONOrThrow('members', []),
+        getJSONOrThrow('evenings-index', [])
+      ]);
+      state.members = members;
+      state.eveningsIndex = eveningsIndex;
+      state.view = 'main';
+      render();
+      setTimeout(checkForUpdate, 2000);
+    }catch(e){
+      state.view = 'main';
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', init);
+    }
   }
   init();
 </script>
