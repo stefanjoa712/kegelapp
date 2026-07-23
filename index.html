@@ -80,6 +80,19 @@
     color:var(--muted); font-family:var(--font-body); font-size:11px; font-weight:700;
   }
   .bottom-nav-item svg{width:22px; height:22px; display:block;}
+
+  .update-banner{
+    position:fixed; top:0; left:0; right:0; z-index:1100;
+    display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap;
+    background:var(--felt); color:#fff; padding:10px 16px;
+    padding-top:calc(10px + env(safe-area-inset-top));
+    font-size:14px; font-weight:700;
+  }
+  .update-banner[hidden]{display:none;}
+  .update-banner button{
+    background:#fff; color:var(--felt-dark); border:none; padding:6px 14px; border-radius:6px;
+    font-weight:800; font-size:13px; cursor:pointer;
+  }
   .bottom-nav-item.active{color:var(--felt);}
 
   .loading{padding:60px 20px; text-align:center; font-family:var(--font-mono); color:var(--ink-soft);}
@@ -243,6 +256,10 @@
 </head>
 <body>
 <div id="app"></div>
+<div id="update-banner" class="update-banner" hidden>
+  <span>Neue Version verfügbar</span>
+  <button type="button" id="update-banner-btn">Jetzt aktualisieren</button>
+</div>
 <div id="pull-refresh-indicator" class="pull-refresh-indicator">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
     <path d="M12 5v14M12 19l-5-5M12 19l5-5"/>
@@ -271,6 +288,11 @@
   // Kennwort, das vor dem Löschen eines Kegelabends abgefragt wird (kein echter Sicherheitsmechanismus,
   // nur eine Hürde gegen versehentliches Löschen - jeder mit Blick in den Quellcode könnte es finden).
   const DELETE_PASSWORD = 'KEGEL-2957';
+
+  // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
+  // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
+  const APP_VERSION = '0.24';
+  const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -547,7 +569,7 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.23 · Stand 23.07.2026</p>
+      <p class="version-footer">Version ${APP_VERSION} · Stand ${APP_VERSION_DATE}</p>
     `;
   }
 
@@ -1183,9 +1205,34 @@
     });
   })();
 
+  // ---------- Update-Prüfung ----------
+  // Löst gezielt das iOS-Problem, dass zum Home-Bildschirm hinzugefügte Seiten neue
+  // Versionen nicht automatisch bemerken: aktiv beim Server nachfragen und den Nutzer informieren.
+  let updateAvailable = false;
+  async function checkForUpdate(){
+    if(updateAvailable) return;
+    try{
+      const res = await fetch(location.pathname + '?_v=' + Date.now(), { cache: 'no-store' });
+      if(!res.ok) return;
+      const html = await res.text();
+      const match = html.match(/APP_VERSION\s*=\s*'([^']+)'/);
+      if(match && match[1] !== APP_VERSION){
+        updateAvailable = true;
+        const banner = document.getElementById('update-banner');
+        if(banner) banner.hidden = false;
+      }
+    }catch(e){ /* offline o.ä. - einfach ignorieren */ }
+  }
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkForUpdate(); });
+  window.addEventListener('focus', checkForUpdate);
+  window.addEventListener('pageshow', checkForUpdate);
+  setInterval(checkForUpdate, 5 * 60 * 1000);
+
   // ---------- Start ----------
   async function init(){
     document.getElementById('app').innerHTML = `<div class="loading">Die Pudolfs – wird geladen…</div>`;
+    const updateBtn = document.getElementById('update-banner-btn');
+    if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
     const [members, eveningsIndex] = await Promise.all([
       getJSON('members', true, []),
       getJSON('evenings-index', true, [])
@@ -1194,6 +1241,7 @@
     state.eveningsIndex = eveningsIndex;
     state.view = 'main';
     render();
+    setTimeout(checkForUpdate, 2000);
   }
   init();
 </script>
