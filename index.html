@@ -297,7 +297,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.27';
+  const APP_VERSION = '0.28';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -333,9 +333,19 @@
   // in der Firestore-Collection 'kegelbuch', als String im Feld 'value' gespeichert.
   // Der Parameter 'shared' bleibt aus Kompatibilitätsgründen im Funktionskopf, wird aber
   // nicht mehr benötigt: es gibt jetzt ohnehin nur noch die eine gemeinsame Datenbank.
+  // Verhindert, dass ein hängender Firestore-Aufruf (z.B. bei schlechter Verbindung) die App
+  // für immer im Ladezustand stecken lässt - nach STORAGE_TIMEOUT_MS wird abgebrochen.
+  const STORAGE_TIMEOUT_MS = 10000;
+  function withTimeout(promise, ms){
+    return Promise.race([
+      promise,
+      new Promise((_, reject)=> setTimeout(()=> reject(new Error('Zeitüberschreitung')), ms))
+    ]);
+  }
+
   async function getJSON(key, shared, fallback){
     try{
-      const snap = await getDoc(doc(db, 'kegelbuch', key));
+      const snap = await withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS);
       if(!snap.exists()) return fallback;
       const data = snap.data();
       return JSON.parse(data.value);
@@ -346,7 +356,7 @@
   }
   async function setJSON(key, value, shared){
     try{
-      await setDoc(doc(db, 'kegelbuch', key), { value: JSON.stringify(value) });
+      await withTimeout(setDoc(doc(db, 'kegelbuch', key), { value: JSON.stringify(value) }), STORAGE_TIMEOUT_MS);
       return true;
     }catch(e){
       console.error('setJSON fehlgeschlagen für', key, e);
@@ -354,7 +364,7 @@
     }
   }
   async function deleteKey(key, shared){
-    try{ await deleteDoc(doc(db, 'kegelbuch', key)); }catch(e){ console.error('deleteKey fehlgeschlagen für', key, e); }
+    try{ await withTimeout(deleteDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS); }catch(e){ console.error('deleteKey fehlgeschlagen für', key, e); }
   }
 
   // ---------- Kleine Helfer ----------
