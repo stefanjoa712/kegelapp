@@ -184,6 +184,7 @@
   .confirm-row{display:flex; align-items:center; gap:8px; font-size:13px; flex-wrap:wrap;}
 
   .member-check-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--line); cursor:pointer;}
+  .schriftfuehrer-row{border-bottom:none; margin-top:10px;}
   .member-check-row:last-child{border-bottom:none;}
   .member-check-row input[type="checkbox"]{width:18px; height:18px; accent-color:var(--felt); flex-shrink:0;}
 
@@ -291,7 +292,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.24';
+  const APP_VERSION = '0.25';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -620,6 +621,10 @@
         <h2 class="section-title">Neuer Kegelabend</h2>
         <label for="date-input">Datum</label>
         <input type="date" id="date-input" value="${today}">
+        <label class="member-check-row schriftfuehrer-row">
+          <input type="checkbox" id="schriftfuehrer-checkbox">
+          <span>Schriftführer auslosen</span>
+        </label>
       </div>
       <div class="card">
         <h3 class="section-title-small">Anwesende Mitglieder</h3>
@@ -674,6 +679,10 @@
       const textLenAttr = estW>availW ? ` textLength="${availW}" lengthAdjust="spacingAndGlyphs"` : '';
       const plateCenterY = cy+12;
       const clickable = !empty && !seat.isGuest;
+      const sfText = '✎ SCHRIFTFÜHRER';
+      const sfMaxW = chairW-16;
+      const sfEstW = sfText.length * 15 * 0.56;
+      const sfTextLenAttr = sfEstW>sfMaxW ? ` textLength="${sfMaxW}" lengthAdjust="spacingAndGlyphs"` : '';
       return `<g class="reveal-group${clickable?' chair-clickable':''}" style="animation-delay:${idx*45}ms"${clickable?` data-member-name="${escapeHtml(seat.name)}"`:''}>
         <line class="chair-tick" x1="${e.x}" y1="${e.y}" x2="${tickX2}" y2="${cy}" />
         <rect class="chair-body${empty?' empty':''}" x="${rectX}" y="${rectY}" width="${chairW}" height="${chairH}" rx="16" />
@@ -681,6 +690,7 @@
         <rect class="name-plate-rect" x="${cx-plateWidth/2}" y="${plateCenterY-20}" width="${plateWidth}" height="40" rx="6" />
         <text class="name-plate-text${empty?' empty-text':''}" x="${cx}" y="${plateCenterY+9}" text-anchor="middle" font-size="${fontSize}"${textLenAttr}>${escapeHtml(nameRaw)}</text>
         ${(!empty && seat.isGuest) ? `<text class="guest-tag-text" x="${cx}" y="${rectY+chairH-11}" text-anchor="middle">GAST</text>` : ''}
+        ${(!empty && seat.isSchriftfuehrer) ? `<text class="guest-tag-text" x="${cx}" y="${rectY+chairH-11}" text-anchor="middle"${sfTextLenAttr}>${sfText}</text>` : ''}
       </g>`;
     }
 
@@ -1031,9 +1041,23 @@
     const shuffledParticipants = shuffle(participants);
     const seatAssignment = {};
     occupiedSeatIds.forEach((seatId, i)=>{ seatAssignment[seatId] = shuffledParticipants[i]; });
+
+    const schriftfuehrerCheckbox = document.getElementById('schriftfuehrer-checkbox');
+    let schriftfuehrerSeatId = null;
+    if(schriftfuehrerCheckbox && schriftfuehrerCheckbox.checked){
+      const memberSeatIds = occupiedSeatIds.filter((seatId, i)=> !shuffledParticipants[i].isGuest);
+      if(memberSeatIds.length>0){
+        schriftfuehrerSeatId = memberSeatIds[Math.floor(Math.random()*memberSeatIds.length)];
+      }
+    }
+
     const seating = SEATS.map(seat=>{
       const p = seatAssignment[seat.id];
-      return { seatId:seat.id, section:seat.section, label:seat.label, name: p ? p.name : null, isGuest: p ? p.isGuest : false };
+      return {
+        seatId:seat.id, section:seat.section, label:seat.label,
+        name: p ? p.name : null, isGuest: p ? p.isGuest : false,
+        isSchriftfuehrer: seat.id===schriftfuehrerSeatId
+      };
     });
 
     const id = uid('e');
