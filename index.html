@@ -328,7 +328,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.34';
+  const APP_VERSION = '0.35';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -564,11 +564,15 @@
   }
   function fineTypeLabel(type){
     if(type==='multiplier') return 'Multiplikator';
+    if(type==='fremdstrafe') return 'Fremdstrafe';
     return type;
   }
   function fineTypeIconSvg(type){
     if(type==='multiplier'){
       return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+    }
+    if(type==='fremdstrafe'){
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`;
     }
     return '';
   }
@@ -1288,6 +1292,7 @@
       <label for="new-fine-type">Strafenart</label>
       <select id="new-fine-type">
         <option value="multiplier"${(!isEdit || existingFine.type==='multiplier')?' selected':''}>Multiplikator</option>
+        <option value="fremdstrafe"${(isEdit && existingFine.type==='fremdstrafe')?' selected':''}>Fremdstrafe</option>
       </select>
       <p class="form-error" id="fine-form-error"></p>
       <div class="confirm-row-buttons">
