@@ -190,10 +190,21 @@
   }
   input[type="date"]{ min-height:44px; }
   input[type="date"]::-webkit-date-and-time-value{ text-align:left; }
+  input[type="number"], select{
+    font-family:var(--font-body); font-size:15px; padding:10px 12px; border:1px solid var(--line);
+    border-radius:8px; background:#fff; color:var(--ink); width:100%;
+    -webkit-appearance:none; appearance:none; box-sizing:border-box; margin:0 0 12px;
+  }
+  #new-fine-name{margin-bottom:12px;}
 
   .form-error{color:var(--wine); font-size:13px; min-height:18px; margin:6px 0;}
 
   .member-row{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px dashed var(--line);}
+  .fine-row-info{display:flex; align-items:center; gap:10px; min-width:0;}
+  .fine-type-icon{width:22px; height:22px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
+  .fine-type-icon svg{width:16px; height:16px; display:block;}
+  .fine-row-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .fine-row-amount{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft); white-space:nowrap;}
   .member-row:last-child{border-bottom:none;}
   .row-actions{display:flex; gap:4px;}
   .nickname-tag{color:var(--brass); font-style:italic; font-weight:400;}
@@ -317,7 +328,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.33';
+  const APP_VERSION = '0.34';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -340,6 +351,7 @@
     view:'loading',
     members:[],
     eveningsIndex:[],
+    finesCatalog:[],
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -486,8 +498,19 @@
     state.view = 'settingsMenu';
     render();
   }
+  async function goToFinesManagement(){
+    state.view = 'finesManagement';
+    renderLoading('Strafen werden geladen…');
+    try{
+      state.finesCatalog = await getJSONOrThrow('fines-catalog', []);
+      state.view = 'finesManagement';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToFinesManagement);
+    }
+  }
   function goBackFromHeader(){
-    if(state.view==='settings') goToSettingsMenu();
+    if(state.view==='settings' || state.view==='finesManagement') goToSettingsMenu();
     else goToMain();
   }
   function goToNew(){
@@ -512,12 +535,68 @@
                 <path d="M15 20c0-2.8 1-5 3.8-5.4"/>
               </svg>
             </span>
-            <span class="settings-menu-item-label">Mitglieder</span>
+            <span class="settings-menu-item-label">Mitgliederverwaltung</span>
+            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
+          <button type="button" class="settings-menu-item" id="settings-menu-strafen-btn">
+            <span class="settings-menu-item-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M15 8.3a3.6 4.6 0 0 0-3-1.4c-2.3 0-4.1 2.3-4.1 5.1s1.8 5.1 4.1 5.1a3.6 4.6 0 0 0 3-1.4"/>
+                <line x1="6.7" y1="10.6" x2="12.5" y2="10.6"/>
+                <line x1="6.7" y1="13.4" x2="12.5" y2="13.4"/>
+              </svg>
+            </span>
+            <span class="settings-menu-item-label">Strafenverwaltung</span>
             <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 6l6 6-6 6"/>
             </svg>
           </button>
         </div>
+      </div>
+    `;
+  }
+
+  function fmtEuro(n){
+    return n.toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+  }
+  function fineTypeLabel(type){
+    if(type==='multiplier') return 'Multiplikator';
+    return type;
+  }
+  function fineTypeIconSvg(type){
+    if(type==='multiplier'){
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+    }
+    return '';
+  }
+  function fineRowHtml(fine){
+    return `<div class="member-row" data-id="${fine.id}">
+      <span class="fine-row-info">
+        <span class="fine-type-icon" title="${escapeHtml(fineTypeLabel(fine.type))}">${fineTypeIconSvg(fine.type)}</span>
+        <span class="fine-row-name">${escapeHtml(fine.name)}</span>
+      </span>
+      <span class="row-actions">
+        <span class="fine-row-amount">${fmtEuro(fine.amount)}</span>
+        <button type="button" class="icon-btn edit-fine-btn" data-id="${fine.id}" aria-label="Bearbeiten">✎</button>
+        <button type="button" class="icon-btn delete-fine-btn" data-id="${fine.id}" aria-label="Löschen">✕</button>
+      </span>
+    </div>`;
+  }
+  function viewFinesManagement(){
+    const sorted = state.finesCatalog.slice().sort((a,b)=> a.amount-b.amount);
+    const listHtml = sorted.length===0
+      ? `<p class="empty-state">Noch keine Strafen angelegt. Füge oben rechts die erste hinzu.</p>`
+      : sorted.map(fineRowHtml).join('');
+    return `
+      <div class="card">
+        <div class="settings-header-row">
+          <h2 class="section-title">Strafen <span class="member-count">(${state.finesCatalog.length})</span></h2>
+          <button type="button" class="btn-icon-add" id="open-add-fine-btn" aria-label="Strafe hinzufügen">+</button>
+        </div>
+        ${listHtml}
       </div>
     `;
   }
@@ -531,7 +610,7 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings';
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement';
     const activeTab = isSettingsActive ? 'settings' : (isTodayActive ? 'today' : 'overview');
     const todayButtonHtml = todayEve ? `
         <button type="button" class="bottom-nav-item${activeTab==='today'?' active':''}" id="nav-today-btn">
@@ -575,6 +654,7 @@
   function hashFor(sig){
     if(sig==='settingsMenu') return '#einstellungen';
     if(sig==='settings') return '#mitglieder';
+    if(sig==='finesManagement') return '#strafen';
     if(sig==='new') return '#neuer-abend';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
@@ -586,6 +666,7 @@
     if(state.view==='main') body = viewMain();
     else if(state.view==='settingsMenu') body = viewSettingsMenu();
     else if(state.view==='settings') body = viewSettings();
+    else if(state.view==='finesManagement') body = viewFinesManagement();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
     app.innerHTML = headerHtml() + `<main class="container">${body}</main>` + bottomNavHtml();
@@ -607,6 +688,8 @@
         goToSettingsMenu();
       }else if(sig==='settings'){
         await goToSettings();
+      }else if(sig==='finesManagement'){
+        await goToFinesManagement();
       }else if(sig==='new'){
         goToNew();
       }else if(sig.startsWith('detail:')){
@@ -637,6 +720,7 @@
     let title = '';
     if(state.view==='settingsMenu') title = 'Einstellungen';
     else if(state.view==='settings') title = 'Mitgliederverwaltung';
+    else if(state.view==='finesManagement') title = 'Strafenverwaltung';
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail') title = 'Kegelabend';
     return `<header class="app-header">
@@ -888,6 +972,7 @@
     if(state.view==='main') attachMainListeners();
     else if(state.view==='settingsMenu') attachSettingsMenuListeners();
     else if(state.view==='settings') attachSettingsListeners();
+    else if(state.view==='finesManagement') attachFinesManagementListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
   }
@@ -895,6 +980,8 @@
   function attachSettingsMenuListeners(){
     const mitgliederBtn = document.getElementById('settings-menu-mitglieder-btn');
     if(mitgliederBtn) mitgliederBtn.addEventListener('click', goToSettings);
+    const strafenBtn = document.getElementById('settings-menu-strafen-btn');
+    if(strafenBtn) strafenBtn.addEventListener('click', goToFinesManagement);
   }
 
   // Eigenständige Fehleransicht mit "Erneut versuchen"-Button - für Fälle, in denen eine
@@ -965,6 +1052,23 @@
     });
     const openAddMemberBtn = document.getElementById('open-add-member-btn');
     if(openAddMemberBtn) openAddMemberBtn.addEventListener('click', ()=>showMemberFormModal());
+  }
+
+  function attachFinesManagementListeners(){
+    document.querySelectorAll('.edit-fine-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const f = state.finesCatalog.find(x=>x.id===b.dataset.id);
+        if(f) showFineFormModal(f);
+      });
+    });
+    document.querySelectorAll('.delete-fine-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const f = state.finesCatalog.find(x=>x.id===b.dataset.id);
+        if(f) showDeleteFineModal(f);
+      });
+    });
+    const openAddFineBtn = document.getElementById('open-add-fine-btn');
+    if(openAddFineBtn) openAddFineBtn.addEventListener('click', ()=>showFineFormModal());
   }
 
   function renderGuestList(){
@@ -1148,6 +1252,69 @@
         state.members.push({id:uid('m'), firstName:fn, lastName:ln, nickname:nick});
       }
       await setJSON('members', state.members, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showDeleteFineModal(fine){
+    showModal(`
+      <h3>Strafe löschen</h3>
+      <p>„${escapeHtml(fine.name)}" (${fmtEuro(fine.amount)}) wirklich löschen?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-fine-modal-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-fine-modal-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-fine-modal-yes');
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      state.finesCatalog = state.finesCatalog.filter(f=>f.id!==fine.id);
+      await setJSON('fines-catalog', state.finesCatalog, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showFineFormModal(existingFine){
+    const isEdit = !!existingFine;
+    showModal(`
+      <h3>${isEdit ? 'Strafe bearbeiten' : 'Strafe hinzufügen'}</h3>
+      <label for="new-fine-name">Name</label>
+      <input type="text" id="new-fine-name" placeholder="z. B. Handy klingelt" value="${isEdit?escapeHtml(existingFine.name):''}">
+      <label for="new-fine-amount">Betrag (€)</label>
+      <input type="number" id="new-fine-amount" min="0" step="0.01" placeholder="0,50" value="${isEdit?existingFine.amount.toFixed(2):''}">
+      <label for="new-fine-type">Strafenart</label>
+      <select id="new-fine-type">
+        <option value="multiplier"${(!isEdit || existingFine.type==='multiplier')?' selected':''}>Multiplikator</option>
+      </select>
+      <p class="form-error" id="fine-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="add-fine-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('new-fine-name').focus();
+    document.getElementById('add-fine-btn').addEventListener('click', async ()=>{
+      const name = document.getElementById('new-fine-name').value.trim();
+      const amountRaw = document.getElementById('new-fine-amount').value.replace(',', '.');
+      const amount = parseFloat(amountRaw);
+      const type = document.getElementById('new-fine-type').value;
+      const errEl = document.getElementById('fine-form-error');
+      if(!name){ if(errEl) errEl.textContent='Bitte einen Namen angeben.'; return; }
+      if(isNaN(amount) || amount<0){ if(errEl) errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
+      const submitBtn = document.getElementById('add-fine-btn');
+      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+      const rounded = Math.round(amount*100)/100;
+      if(isEdit){
+        const f = state.finesCatalog.find(x=>x.id===existingFine.id);
+        if(f){ f.name=name; f.amount=rounded; f.type=type; }
+      }else{
+        state.finesCatalog.push({id:uid('f'), name, amount:rounded, type});
+      }
+      await setJSON('fines-catalog', state.finesCatalog, true);
       closeGenericModal();
       render();
     });
