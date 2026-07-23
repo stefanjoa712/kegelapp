@@ -208,7 +208,7 @@
   .table-shape{fill:none; stroke:var(--wood-dark); stroke-width:2.5;}
   .lane-center-line{stroke:var(--brass); stroke-width:1.5; stroke-dasharray:6 6; opacity:0.55;}
   .lane-label-text{font-family:var(--font-mono); font-size:21px; font-weight:700; letter-spacing:0.14em; fill:var(--brass);}
-  .side-label-text{font-family:var(--font-mono); font-size:18px; font-weight:700; letter-spacing:0.1em; fill:var(--wood-dark);}
+  .side-label-text{font-family:var(--font-mono); font-size:20px; font-weight:700; letter-spacing:0.1em; fill:var(--wood-dark);}
   .chair-tick{stroke:var(--wood-dark); stroke-width:1.5;}
   .chair-body{fill:var(--wood); stroke:var(--wood-dark); stroke-width:2.5;}
   .chair-clickable{cursor:pointer;}
@@ -547,7 +547,7 @@
         <h2 class="section-title">Bisherige Abende</h2>
         ${listHtml}
       </div>
-      <p class="version-footer">Version 0.22 · Stand 23.07.2026</p>
+      <p class="version-footer">Version 0.23 · Stand 23.07.2026</p>
     `;
   }
 
@@ -620,8 +620,8 @@
   }
 
   function buildSeatingSVG(detail){
-    const W = 760, H = 940;
-    const tableTopY = 130, tableBottomY = 860;
+    const W = 760, H = 1020;
+    const tableTopY = 130, tableBottomY = 970;
     const topLX = 230, topRX = 530, botLX = 300, botRX = 460;
     const chairW = 188, chairH = 122, outward = 128, n = 6;
 
