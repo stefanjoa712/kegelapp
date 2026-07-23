@@ -115,12 +115,18 @@
   .settings-header-row{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;}
   .settings-menu-list{display:flex; flex-direction:column; gap:10px;}
   .settings-menu-item{
-    display:flex; justify-content:space-between; align-items:center;
+    display:flex; align-items:center; gap:12px;
     background:var(--surface); border:1.5px solid var(--line); border-radius:10px;
-    padding:14px 16px; font-family:var(--font-body); font-size:16px; font-weight:700; color:var(--ink);
+    padding:10px 14px; font-family:var(--font-body); font-size:16px; font-weight:700; color:var(--ink);
     cursor:pointer;
   }
-  .settings-menu-item svg{width:20px; height:20px; color:var(--muted);}
+  .settings-menu-item-icon{
+    width:38px; height:38px; border-radius:9px; background:var(--wood); color:#fff;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .settings-menu-item-icon svg{width:20px; height:20px; display:block;}
+  .settings-menu-item-label{flex:1; text-align:left;}
+  .settings-menu-item-chevron{width:18px; height:18px; color:var(--muted); flex-shrink:0;}
   .settings-menu-item:hover{border-color:var(--wood); background:var(--bg);}
   .settings-header-row .section-title{margin-bottom:0;}
   .member-count{font-family:var(--font-body); font-size:15px; font-weight:600; color:var(--muted);}
@@ -311,7 +317,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.32';
+  const APP_VERSION = '0.33';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -498,8 +504,16 @@
         <h2 class="section-title">Einstellungen</h2>
         <div class="settings-menu-list">
           <button type="button" class="settings-menu-item" id="settings-menu-mitglieder-btn">
-            <span>Mitglieder</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <span class="settings-menu-item-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="9" cy="8" r="3.2"/>
+                <path d="M3.5 20c0-3.5 2.7-6 5.5-6s5.5 2.5 5.5 6"/>
+                <circle cx="17" cy="9" r="2.6"/>
+                <path d="M15 20c0-2.8 1-5 3.8-5.4"/>
+              </svg>
+            </span>
+            <span class="settings-menu-item-label">Mitglieder</span>
+            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 6l6 6-6 6"/>
             </svg>
           </button>
