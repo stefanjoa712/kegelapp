@@ -333,6 +333,8 @@
   .pudel-crown{display:inline-flex; margin-left:5px; color:var(--brass); vertical-align:middle;}
   .pudel-crown svg{width:15px; height:15px; display:block;}
   .fines-summary-amount{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft);}
+  .fines-summary-amount.amount-due{color:var(--wine);}
+  .fines-summary-amount.amount-clear{color:#1a7a3c;}
 
   .fine-detail-row{display:flex; align-items:center; gap:10px; padding:13px 2px; border-bottom:1px dashed var(--line); cursor:pointer;}
   .fine-detail-row.readonly{cursor:default;}
@@ -461,7 +463,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.65';
+  const APP_VERSION = '0.66';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -969,7 +971,7 @@
       return `
         <div class="fines-summary-row${clickable?'':' not-clickable'}"${clickable?` data-name="${escapeHtml(r.name)}" data-amount="${r.amount}"`:''}>
           <span class="fines-summary-name">${escapeHtml(r.name)}</span>
-          <span class="fines-summary-amount">${fmtEuro(r.amount)}</span>
+          <span class="fines-summary-amount ${r.amount>0?'amount-due':'amount-clear'}">${fmtEuro(r.amount)}</span>
         </div>
       `;
     }).join('');
@@ -1805,7 +1807,7 @@
     detail.seating.forEach(s=>{ bySeatIdForBulk[s.seatId] = s; });
     const interleavedSeatOrder = [];
     for(let i=1;i<=6;i++){ interleavedSeatOrder.push('saal-'+i, 'kneipe-'+i); }
-    const memberSeats = interleavedSeatOrder.map(id=>bySeatIdForBulk[id]).filter(s=>s && s.name && !s.isGuest);
+    const memberSeats = interleavedSeatOrder.map(id=>bySeatIdForBulk[id]).filter(s=>s && s.name);
     const fineOptionsHtml = catalog.map(f=>`<option value="fine:${f.id}">${escapeHtml(f.name)} (${fmtEuro(f.amount)})</option>`).join('');
     const gameOptionsHtml = games.map(g=>`<option value="game:${g.id}">${escapeHtml(g.name)}</option>`).join('');
     const memberRowsHtml = memberSeats.length===0
@@ -1826,7 +1828,7 @@
         ${catalog.length>0 ? `<optgroup label="Strafen">${fineOptionsHtml}</optgroup>` : ''}
         ${games.length>0 ? `<optgroup label="Spiele">${gameOptionsHtml}</optgroup>` : ''}
       </select>
-      <label>Mitglieder</label>
+      <label>Anwesende</label>
       <div class="bulk-quick-select-row">
         <button type="button" class="btn-secondary bulk-quick-btn" id="bulk-select-saal-btn">Saal</button>
         <button type="button" class="btn-secondary bulk-quick-btn" id="bulk-select-kneipe-btn">Kneipe</button>
