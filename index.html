@@ -390,7 +390,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.41';
+  const APP_VERSION = '0.42';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -1094,7 +1094,7 @@
             ${closed ? '' : `<button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>`}
             <span class="fine-detail-count">${count}×</span>
           </span>
-          <span class="fine-detail-result">${fmtEuro(result)}</span>
+          <span class="fine-detail-result">${isFremd ? '' : fmtEuro(result)}</span>
         </div>
       `;
     }).join('');
@@ -1108,7 +1108,7 @@
         if(count>0){
           fremdstrafeChargeRows.push(`
             <div class="fine-detail-row fremdstrafe-charge-row readonly">
-              <span class="fine-detail-name">Fremdstrafe „${escapeHtml(f.name)}“ durch „${escapeHtml(s.name)}“</span>
+              <span class="fine-detail-name">${escapeHtml(f.name)} durch ${escapeHtml(s.name)}</span>
               <span class="fine-detail-controls"><span class="fine-detail-count">${count}×</span></span>
               <span class="fine-detail-result">${fmtEuro(count*f.amount)}</span>
             </div>
