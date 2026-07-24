@@ -438,7 +438,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.57';
+  const APP_VERSION = '0.58';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1231,7 +1231,10 @@
 
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
     const catalog = detail.finesCatalogSnapshot || [];
-    const rowsHtml = catalog.map(f=>{
+    const nonRundenCatalog = catalog.filter(f=>f.type!=='runde');
+    const rundenCatalog = catalog.filter(f=>f.type==='runde');
+
+    function fineDetailRowHtml(f, entries, closed){
       const count = entries[f.id] || 0;
       const result = count * f.amount;
       const isFremd = f.type==='fremdstrafe';
@@ -1247,7 +1250,10 @@
           <span class="fine-detail-result">${resultDisplay}</span>
         </div>
       `;
-    }).join('');
+    }
+
+    const rowsHtml = nonRundenCatalog.map(f=>fineDetailRowHtml(f, entries, closed)).join('');
+    const rundenRowsHtml = rundenCatalog.map(f=>fineDetailRowHtml(f, entries, closed)).join('');
 
     const otherPresentSeats = detail.seating.filter(s=>s.name && s.seatId!==seatId);
     const fremdstrafeChargeRows = [];
@@ -1284,7 +1290,7 @@
     return `
       <div class="card">
         <h3 class="section-title-small">Strafen</h3>
-        ${catalog.length===0 ? `<p class="empty-state">Für diesen Abend sind keine Strafen hinterlegt.</p>` : rowsHtml}
+        ${nonRundenCatalog.length===0 ? `<p class="empty-state">Für diesen Abend sind keine Strafen hinterlegt.</p>` : rowsHtml}
       </div>
       ${fremdstrafeChargeRows.length>0 ? `
       <div class="card">
@@ -1295,6 +1301,11 @@
         <h3 class="section-title-small">Geldstrafen</h3>
         ${adHocList.length===0 ? `<p class="empty-state">Noch keine Geldstrafen.${closed?'':' Über das „+“ oben hinzufügen.'}</p>` : adHocRowsHtml}
       </div>
+      ${rundenCatalog.length>0 ? `
+      <div class="card">
+        <h3 class="section-title-small">Runden</h3>
+        ${rundenRowsHtml}
+      </div>` : ''}
       <div class="card">
         <div class="stat-total-raw"><span>Gesamt (genau)</span><span>${fmtEuro(total)}</span></div>
         <div class="stat-total"><span>Gesamt (gerundet)</span><span>${fmtEuro(roundUpToFullEuro(total))}</span></div>
@@ -1695,7 +1706,7 @@
           <circle cx="${invalidBadgeCx}" cy="${crownCy}" r="9" fill="none" stroke="#fff" stroke-width="2.5"/>
         </g>
       ` : '';
-      const sfText = '✎ SCHRIFTFÜHRER';
+      const sfText = 'SCHRIFTFÜHRER';
       const sfMaxW = chairW-16;
       const sfEstW = sfText.length * 15 * 0.56;
       const sfTextLenAttr = sfEstW>sfMaxW ? ` textLength="${sfMaxW}" lengthAdjust="spacingAndGlyphs"` : '';
