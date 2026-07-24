@@ -363,6 +363,9 @@
   .guest-tag-text{font-family:var(--font-mono); font-size:15px; letter-spacing:0.06em; fill:var(--brass-light); font-weight:700;}
   .pudel-crown-badge circle{fill:var(--wood); stroke:#fff; stroke-width:2.5;}
   .pudel-crown-badge path{fill:#fff;}
+  .invalid-seat-badge circle{fill:var(--wine);}
+  .invalid-icon{display:inline-flex; margin-left:5px; color:var(--wine); vertical-align:middle;}
+  .invalid-icon svg{width:14px; height:14px; display:block;}
 
   .confirm-row-buttons{display:flex; gap:10px;}
   .confirm-row-buttons > button{flex:1;}
@@ -435,7 +438,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.53';
+  const APP_VERSION = '0.54';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1082,7 +1085,11 @@
 
   function fineTotalForSeat(detail, seatId){
     const seat = detail.seating.find(s=>s.seatId===seatId);
-    if(seat && seat.invalid) return seat.invalidAmount || 0;
+    if(seat && seat.invalid){
+      // Fest eingetragens (nach Abschluss) oder dynamisch berechnet (während des Abends)
+      if(seat.invalidAmount !== undefined) return seat.invalidAmount;
+      return averageOfTotalsRounded(validPresentMemberTotals(detail, seatId));
+    }
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
     const catalog = detail.finesCatalogSnapshot || [];
     let total = 0;
@@ -1153,7 +1160,7 @@
         const crownHtml = hasCrown ? `<span class="pudel-crown" title="Pudelkönig"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/></svg></span>` : '';
         return `
         <div class="fines-summary-row" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
-          <span class="fines-summary-name">${escapeHtml(s.name)}${crownHtml}</span>
+          <span class="fines-summary-name">${escapeHtml(s.name)}${crownHtml}${s.invalid ? `<span class="invalid-icon" title="Invalide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4.5" y1="4.5" x2="19.5" y2="19.5"/><circle cx="12" cy="12" r="9"/></svg></span>` : ''}</span>
           <span class="fines-summary-amount">${fmtEuro(roundedFineTotalForSeat(detail, s.seatId))}</span>
         </div>
       `;
@@ -1204,12 +1211,15 @@
     const invalid = !!(seat && seat.invalid);
 
     if(invalid){
+      const dynamicAvg = seat.invalidAmount !== undefined
+        ? seat.invalidAmount
+        : averageOfTotalsRounded(validPresentMemberTotals(detail, seatId));
       return `
         <div class="card">
-          <p class="hint">Diese Person ist als <strong>invalide</strong> markiert. Es werden keine Strafen mehr gepflegt, stattdessen gilt ein fest hinterlegter Durchschnittsbetrag.</p>
+          <p class="hint">Diese Person ist als <strong>invalide</strong> markiert. Es werden keine Strafen gepflegt. Beim Abschließen des Abends wird der Durchschnitt der anderen Anwesenden fest hinterlegt.</p>
         </div>
         <div class="card">
-          <div class="stat-total"><span>Gesamt</span><span>${fmtEuro(seat.invalidAmount||0)}</span></div>
+          <div class="stat-total-raw"><span>Aktueller Durchschnitt (vorläufig)</span><span>${fmtEuro(dynamicAvg)}</span></div>
         </div>
       `;
     }
@@ -1399,6 +1409,10 @@
       const presentSeats = detail.seating.filter(s=>s.name && !s.isGuest);
       const presentNames = new Set(presentSeats.map(s=>s.name));
       const avgRounded = averageOfTotalsRounded(validPresentMemberTotals(detail));
+      // Invalide markierte Personen: Durchschnitt jetzt fest einfrieren.
+      detail.seating.forEach(s=>{
+        if(s.invalid && s.invalidAmount===undefined) s.invalidAmount = avgRounded;
+      });
       const absentMembers = allMembers.filter(m=> !presentNames.has(displayName(m)));
       detail.absentMembersFines = absentMembers.map(m=>({ name: displayName(m), amount: avgRounded }));
       detail.closed = true;
@@ -1455,7 +1469,7 @@
     const seatId = state.currentFineSeatId;
     showModal(`
       <h3>Als invalide markieren</h3>
-      <p>Für <strong>${escapeHtml(state.currentFineName)}</strong> können danach keine Strafen mehr gepflegt werden. Stattdessen wird jetzt einmalig der gerundete Durchschnittsbetrag der anderen anwesenden Mitglieder berechnet und fest hinterlegt. Fortfahren?</p>
+      <p>Für <strong>${escapeHtml(state.currentFineName)}</strong> können danach keine Strafen mehr gepflegt werden. Beim Abschließen des Abends wird automatisch der Durchschnittsbetrag der anderen Anwesenden berechnet und hinterlegt. Bis dahin wird der Durchschnitt dynamisch angezeigt.</p>
       <div class="confirm-row-buttons">
         <button type="button" class="btn-danger" id="confirm-mark-invalid-yes">Ja, als invalide markieren</button>
         <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
@@ -1468,7 +1482,7 @@
       const seat = detail.seating.find(s=>s.seatId===seatId);
       if(seat){
         seat.invalid = true;
-        seat.invalidAmount = averageOfTotalsRounded(validPresentMemberTotals(detail, seatId));
+        delete seat.invalidAmount; // wird erst beim Abschließen fest eingetragen
       }
       await setJSON('evening-'+detail.id, detail, true);
       closeGenericModal();
@@ -1666,6 +1680,14 @@
           <path transform="translate(${crownCx-9},${crownCy-9}) scale(0.75)" d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/>
         </g>
       ` : '';
+      const invalidBadgeCx = crownCx - (hasCrown ? 34 : 0);
+      const invalidBadgeHtml = (!empty && seat.invalid) ? `
+        <g class="invalid-seat-badge">
+          <circle cx="${invalidBadgeCx}" cy="${crownCy}" r="14"/>
+          <line x1="${invalidBadgeCx-7}" y1="${crownCy-7}" x2="${invalidBadgeCx+7}" y2="${crownCy+7}" stroke-linecap="round" stroke-width="2.5" stroke="#fff"/>
+          <circle cx="${invalidBadgeCx}" cy="${crownCy}" r="9" fill="none" stroke="#fff" stroke-width="2.5"/>
+        </g>
+      ` : '';
       const sfText = '✎ SCHRIFTFÜHRER';
       const sfMaxW = chairW-16;
       const sfEstW = sfText.length * 15 * 0.56;
@@ -1679,6 +1701,7 @@
         ${(!empty && seat.isGuest) ? `<text class="guest-tag-text" x="${cx}" y="${rectY+chairH-11}" text-anchor="middle">GAST</text>` : ''}
         ${(!empty && seat.isSchriftfuehrer) ? `<text class="guest-tag-text" x="${cx}" y="${rectY+chairH-11}" text-anchor="middle"${sfTextLenAttr}>${sfText}</text>` : ''}
         ${crownBadgeHtml}
+        ${invalidBadgeHtml}
       </g>`;
     }
 
