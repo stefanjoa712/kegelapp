@@ -41,9 +41,9 @@ function displayName(m) {
   return (m.nickname && m.nickname.trim()) ? m.nickname.trim() : m.firstName;
 }
 
-function roundUpToFiftyCents(amount) {
+function roundUpToFullEuro(amount) {
   const cents = Math.round(amount * 100);
-  return Math.ceil(cents / 50) * 50 / 100;
+  return Math.ceil(cents / 100);
 }
 
 // Gesamtbetrag für einen Sitzplatz - inkl. Geldstrafen und umgelegter Fremdstrafen anderer.
@@ -252,7 +252,7 @@ async function handleEveningClosed(after, docId) {
   logger.info(`Sende Strafen-E-Mails für Abend ${docId} an ${recipients.length} Empfänger.`);
 
   for (const r of recipients) {
-    const roundedTotal = roundUpToFiftyCents(r.total);
+    const roundedTotal = roundUpToFullEuro(r.total);
     const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal);
     try {
       await resend.emails.send({

@@ -307,6 +307,8 @@
   .fines-summary-row.not-clickable{cursor:default;}
   .fines-summary-row.not-clickable:hover{background:transparent;}
   .fines-summary-name{font-weight:700;}
+  .pudel-crown{display:inline-flex; margin-right:5px; color:var(--brass); vertical-align:middle;}
+  .pudel-crown svg{width:15px; height:15px; display:block;}
   .fines-summary-amount{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft);}
 
   .fine-detail-row{display:flex; align-items:center; gap:10px; padding:13px 2px; border-bottom:1px dashed var(--line); cursor:pointer;}
@@ -431,7 +433,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.50';
+  const APP_VERSION = '0.51';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -707,13 +709,14 @@
   function fmtEuro(n){
     return n.toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
   }
-  function roundUpToFiftyCents(amount){
+  function roundUpToFullEuro(amount){
     const cents = Math.round(amount*100);
-    return Math.ceil(cents/50)*50/100;
+    return Math.ceil(cents/100);
   }
   function fineTypeLabel(type){
     if(type==='multiplier') return 'Multiplikator';
     if(type==='fremdstrafe') return 'Fremdstrafe';
+    if(type==='pudel') return 'Pudel';
     return type;
   }
   function fineTypeIconSvg(type){
@@ -722,6 +725,9 @@
     }
     if(type==='fremdstrafe'){
       return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`;
+    }
+    if(type==='pudel'){
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1.4 0 2 1.6 2 3.2 0 1.6-1 2.8-1 4.8s1 3.2 1 4.8-.6 3.2-2 3.2-2-1.6-2-3.2 1-3.2 1-4.8-1-3.2-1-4.8C10 4.6 10.6 3 12 3z"/><ellipse cx="12" cy="20" rx="3.4" ry="1.3"/></svg>`;
     }
     return '';
   }
@@ -1097,7 +1103,7 @@
     return total;
   }
   function roundedFineTotalForSeat(detail, seatId){
-    return roundUpToFiftyCents(fineTotalForSeat(detail, seatId));
+    return roundUpToFullEuro(fineTotalForSeat(detail, seatId));
   }
 
   function buildFinesSummary(detail){
@@ -1106,18 +1112,34 @@
     const interleavedOrder = [];
     for(let i=1;i<=6;i++){ interleavedOrder.push('saal-'+i, 'kneipe-'+i); }
     const occupied = interleavedOrder.map(id=>bySeatId[id]).filter(s=>s && s.name);
+
+    // Krone für die meisten "Pudel"-Strafen (bei Gleichstand: alle bekommen sie).
+    const catalog = detail.finesCatalogSnapshot || [];
+    const pudelFineIds = catalog.filter(f=>f.type==='pudel').map(f=>f.id);
+    function pudelCountForSeat(seatId){
+      const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
+      return pudelFineIds.reduce((sum,id)=> sum + (entries[id]||0), 0);
+    }
+    const pudelCounts = occupied.map(s=>pudelCountForSeat(s.seatId));
+    const maxPudel = pudelCounts.length>0 ? Math.max(0, ...pudelCounts) : 0;
+
     const rowsHtml = occupied.length===0
       ? `<p class="empty-state">Keine Teilnehmer für diesen Abend.</p>`
-      : occupied.map(s=>`
+      : occupied.map(s=>{
+        const hasCrown = maxPudel>0 && pudelCountForSeat(s.seatId)===maxPudel;
+        const crownHtml = hasCrown ? `<span class="pudel-crown" title="Meiste Pudel"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/></svg></span>` : '';
+        return `
         <div class="fines-summary-row" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
-          <span class="fines-summary-name">${escapeHtml(s.name)}</span>
+          <span class="fines-summary-name">${crownHtml}${escapeHtml(s.name)}</span>
           <span class="fines-summary-amount">${fmtEuro(roundedFineTotalForSeat(detail, s.seatId))}</span>
         </div>
-      `).join('');
+      `;
+      }).join('');
+
     const absentList = detail.closed ? (detail.absentMembersFines || []) : [];
     const absentHtml = absentList.length===0 ? '' : `
       <div class="card">
-        <h3 class="section-title-small">Nicht anwesend (Durchschnitt)</h3>
+        <h3 class="section-title-small">Abwesende Mitglieder</h3>
         <div class="fines-summary-header-row"><span>Name</span><span>Strafe</span></div>
         ${absentList.map(a=>`
           <div class="fines-summary-row not-clickable">
@@ -1127,12 +1149,20 @@
         `).join('')}
       </div>
     `;
+
+    let totalEinnahme = 0;
+    occupied.forEach(s=>{ totalEinnahme += roundedFineTotalForSeat(detail, s.seatId); });
+    absentList.forEach(a=>{ totalEinnahme += a.amount; });
+
     return `
       <div class="card">
         <div class="fines-summary-header-row"><span>Name</span><span>Aktuelle Strafen</span></div>
         ${rowsHtml}
       </div>
       ${absentHtml}
+      <div class="card">
+        <div class="stat-total"><span>Einnahme</span><span>${fmtEuro(totalEinnahme)}</span></div>
+      </div>
     `;
   }
 
@@ -1213,7 +1243,7 @@
       </div>
       <div class="card">
         <div class="stat-total-raw"><span>Gesamt (genau)</span><span>${fmtEuro(total)}</span></div>
-        <div class="stat-total"><span>Gesamt (gerundet)</span><span>${fmtEuro(roundUpToFiftyCents(total))}</span></div>
+        <div class="stat-total"><span>Gesamt (gerundet)</span><span>${fmtEuro(roundUpToFullEuro(total))}</span></div>
       </div>
     `;
   }
@@ -1333,7 +1363,7 @@
       const presentNames = new Set(presentSeats.map(s=>s.name));
       const presentTotals = presentSeats.map(s=>roundedFineTotalForSeat(detail, s.seatId));
       const avg = presentTotals.length>0 ? presentTotals.reduce((a,b)=>a+b,0)/presentTotals.length : 0;
-      const avgRounded = roundUpToFiftyCents(avg);
+      const avgRounded = roundUpToFullEuro(avg);
       const absentMembers = allMembers.filter(m=> !presentNames.has(displayName(m)));
       detail.absentMembersFines = absentMembers.map(m=>({ name: displayName(m), amount: avgRounded }));
       detail.closed = true;
@@ -2089,6 +2119,7 @@
       <select id="new-fine-type">
         <option value="multiplier"${(!isEdit || existingFine.type==='multiplier')?' selected':''}>Multiplikator</option>
         <option value="fremdstrafe"${(isEdit && existingFine.type==='fremdstrafe')?' selected':''}>Fremdstrafe</option>
+        <option value="pudel"${(isEdit && existingFine.type==='pudel')?' selected':''}>Pudel</option>
       </select>
       <p class="form-error" id="fine-form-error"></p>
       <div class="confirm-row-buttons">
