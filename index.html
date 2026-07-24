@@ -288,8 +288,6 @@
   .chair-clickable:hover .chair-body{filter:brightness(1.12);}
   .chair-clickable:hover .name-plate-rect{filter:brightness(0.96);}
 
-  .stat-row{display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--bg); border:1px solid var(--line); border-radius:8px; margin-bottom:6px;}
-  .stat-row .stat-count{font-weight:800; font-family:var(--font-mono);}
   .stat-total{display:flex; justify-content:space-between; font-weight:800; font-size:16px; padding-top:10px; margin-top:6px; border-top:2px solid var(--ink);}
   .chair-body.empty{fill:var(--surface); stroke:var(--muted); stroke-width:2; stroke-dasharray:5 4;}
   .seat-label-text{font-family:var(--font-mono); font-size:21px; font-weight:700; letter-spacing:0.05em; fill:var(--brass-light);}
@@ -356,7 +354,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.36';
+  const APP_VERSION = '0.37';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -859,8 +857,9 @@
 
   function fineTotalForSeat(detail, seatId){
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
+    const catalog = detail.finesCatalogSnapshot || [];
     let total = 0;
-    state.finesCatalog.forEach(f=>{
+    catalog.forEach(f=>{
       if(f.type==='fremdstrafe') return;
       const count = entries[f.id] || 0;
       total += count * f.amount;
@@ -897,7 +896,7 @@
     const detail = state.currentEveningDetail;
     const seatId = state.currentFineSeatId;
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
-    const catalog = state.finesCatalog.filter(f=>f.type!=='fremdstrafe');
+    const catalog = (detail.finesCatalogSnapshot || []).filter(f=>f.type!=='fremdstrafe');
     let total = 0;
     const rowsHtml = catalog.map(f=>{
       const count = entries[f.id] || 0;
@@ -905,7 +904,6 @@
       total += result;
       return `
         <div class="fine-detail-row" data-fine-id="${f.id}">
-          <span class="fine-type-icon">${fineTypeIconSvg(f.type)}</span>
           <span class="fine-detail-name">${escapeHtml(f.name)}</span>
           <span class="fine-detail-controls">
             <button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>
@@ -917,7 +915,7 @@
     }).join('');
     return `
       <div class="card">
-        ${catalog.length===0 ? `<p class="empty-state">Noch keine Strafen in der Strafenverwaltung angelegt.</p>` : rowsHtml}
+        ${catalog.length===0 ? `<p class="empty-state">Für diesen Abend sind keine Strafen hinterlegt.</p>` : rowsHtml}
         ${catalog.length>0 ? `<div class="stat-total"><span>Gesamt</span><span>${fmtEuro(total)}</span></div>` : ''}
       </div>
     `;
@@ -966,12 +964,12 @@
       const estW = nameRaw.length * fontSize * 0.56;
       const textLenAttr = estW>availW ? ` textLength="${availW}" lengthAdjust="spacingAndGlyphs"` : '';
       const plateCenterY = cy+12;
-      const clickable = !empty && !seat.isGuest;
+      const clickable = !empty;
       const sfText = '✎ SCHRIFTFÜHRER';
       const sfMaxW = chairW-16;
       const sfEstW = sfText.length * 15 * 0.56;
       const sfTextLenAttr = sfEstW>sfMaxW ? ` textLength="${sfMaxW}" lengthAdjust="spacingAndGlyphs"` : '';
-      return `<g class="reveal-group${clickable?' chair-clickable':''}" style="animation-delay:${idx*45}ms"${clickable?` data-member-name="${escapeHtml(seat.name)}"`:''}>
+      return `<g class="reveal-group${clickable?' chair-clickable':''}" style="animation-delay:${idx*45}ms"${clickable?` data-member-name="${escapeHtml(seat.name)}" data-seat-id="${seat.seatId}"`:''}>
         <line class="chair-tick" x1="${e.x}" y1="${e.y}" x2="${tickX2}" y2="${cy}" />
         <rect class="chair-body${empty?' empty':''}" x="${rectX}" y="${rectY}" width="${chairW}" height="${chairH}" rx="16" />
         <text class="seat-label-text${empty?' empty':''}" x="${cx}" y="${rectY+29}" text-anchor="middle">${shortLabel}</text>
@@ -1305,55 +1303,6 @@
       render();
     });
   }
-  async function showMemberStatsModal(name){
-    showModal(`
-      <h3>${escapeHtml(name)}</h3>
-      <p class="empty-state">Statistik wird geladen…</p>
-    `);
-    try{
-      const freshIndex = await getJSONOrThrow('evenings-index', state.eveningsIndex);
-      const details = await Promise.all(freshIndex.map(e=>getJSON('evening-'+e.id, true, null)));
-      const countsByYear = {};
-      let total = 0;
-      details.forEach(d=>{
-        if(!d || !d.seating) return;
-        const attended = d.seating.some(s=>!s.isGuest && s.name===name);
-        if(attended){
-          const year = d.date.slice(0,4);
-          countsByYear[year] = (countsByYear[year]||0) + 1;
-          total++;
-        }
-      });
-      const years = Object.keys(countsByYear).sort((a,b)=> b.localeCompare(a));
-      const rowsHtml = years.length===0
-        ? `<p class="empty-state">Keine Anwesenheiten gefunden.</p>`
-        : years.map(y=>`<div class="stat-row"><span>${y}</span><span class="stat-count">${countsByYear[y]}×</span></div>`).join('');
-      showModal(`
-        <h3>${escapeHtml(name)}</h3>
-        <p>Anwesenheiten pro Jahr</p>
-        ${rowsHtml}
-        ${years.length>0 ? `<div class="stat-total"><span>Gesamt</span><span>${total}×</span></div>` : ''}
-        <div class="confirm-row-buttons" style="margin-top:14px;">
-          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
-        </div>
-      `);
-      const closeBtn = document.getElementById('modal-cancel-btn');
-      if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
-    }catch(e){
-      showModal(`
-        <h3>${escapeHtml(name)}</h3>
-        <p class="form-error">Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.</p>
-        <div class="confirm-row-buttons">
-          <button type="button" class="btn-primary" id="stats-retry-btn">Erneut versuchen</button>
-          <button type="button" class="btn-secondary" id="modal-cancel-btn">Schließen</button>
-        </div>
-      `);
-      const closeBtn = document.getElementById('modal-cancel-btn');
-      if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
-      const retryBtn = document.getElementById('stats-retry-btn');
-      if(retryBtn) retryBtn.addEventListener('click', ()=>showMemberStatsModal(name));
-    }
-  }
 
   function showMemberFormModal(existingMember){
     const isEdit = !!existingMember;
@@ -1489,6 +1438,11 @@
 
     if(btn){ btn.textContent = 'Wird ausgelost…'; }
 
+    // Aktuelle Strafenliste als feste Kopie für diesen Abend übernehmen - spätere Änderungen
+    // in der Strafenverwaltung dürfen diesen Abend nicht mehr beeinflussen.
+    const finesCatalogAtCreation = await getJSON('fines-catalog', true, state.finesCatalog);
+    state.finesCatalog = finesCatalogAtCreation;
+
     const occupiedSeatIds = buildSeatPriorityOrder().slice(0, participants.length);
     const shuffledParticipants = shuffle(participants);
     const seatAssignment = {};
@@ -1513,7 +1467,7 @@
     });
 
     const id = uid('e');
-    const detail = { id, date, seating, finesBySeat: {} };
+    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation };
     const newIndex = [...state.eveningsIndex, {id, date}];
     await Promise.all([
       setJSON('evening-'+id, detail, true),
@@ -1545,19 +1499,14 @@
 
   function attachDetailListeners(){
     document.querySelectorAll('[data-member-name]').forEach(el=>{
-      el.addEventListener('click', ()=>{ showMemberStatsModal(el.dataset.memberName); });
+      el.addEventListener('click', ()=>{ goToPersonFineDetail(el.dataset.seatId, el.dataset.memberName); });
     });
     const tabSitzplanBtn = document.getElementById('tab-sitzplan-btn');
     if(tabSitzplanBtn) tabSitzplanBtn.addEventListener('click', ()=>{ state.eveningTab='sitzplan'; render(); });
     const tabStrafenBtn = document.getElementById('tab-strafen-btn');
-    if(tabStrafenBtn) tabStrafenBtn.addEventListener('click', async ()=>{
+    if(tabStrafenBtn) tabStrafenBtn.addEventListener('click', ()=>{
       state.eveningTab='strafen';
       render();
-      try{
-        const fresh = await getJSON('fines-catalog', true, state.finesCatalog);
-        state.finesCatalog = fresh;
-        if(state.eveningTab==='strafen') render();
-      }catch(e){}
     });
     document.querySelectorAll('.fines-summary-row').forEach(row=>{
       row.addEventListener('click', ()=>{ goToPersonFineDetail(row.dataset.seatId, row.dataset.name); });
