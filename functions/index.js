@@ -11,9 +11,11 @@
  */
 
 const { onDocumentUpdated } = require('firebase-functions/v2/firestore');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
 const { Resend } = require('resend');
 const logger = require('firebase-functions/logger');
 
@@ -324,3 +326,59 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
   }
 );
 
+
+// -------- Mitglied einladen (legt Firebase-Auth-Account an, verschickt Passwort-Link) --------
+
+const HOSTING_URL = 'https://die-pudolfs.web.app/';
+
+exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  const { email, name } = request.data || {};
+  if (!email || typeof email !== 'string') {
+    throw new HttpsError('invalid-argument', 'E-Mail-Adresse fehlt.');
+  }
+
+  const adminAuth = getAuth();
+  try {
+    await adminAuth.getUserByEmail(email);
+  } catch (e) {
+    // Nutzer existiert noch nicht -> Account anlegen (ohne Passwort, das setzt das Mitglied selbst).
+    await adminAuth.createUser({ email, emailVerified: false });
+  }
+
+  const resetLink = await adminAuth.generatePasswordResetLink(email, {
+    url: HOSTING_URL,
+    handleCodeInApp: false,
+  });
+
+  const resend = new Resend(resendApiKey.value());
+  const html = `
+    <div style="font-family:sans-serif; color:#161616; max-width:480px;">
+      <p>Hallo ${escapeHtml(name || '')},</p>
+      <p>du wurdest eingeladen, dich in der Kegelbuch-App der Pudolfs anzumelden.</p>
+      <p>
+        <a href="${resetLink}" style="display:inline-block; background:#E3421F; color:#fff; font-weight:800; text-decoration:none; padding:12px 22px; border-radius:8px;">
+          Passwort festlegen
+        </a>
+      </p>
+      <p>Danach kannst du dich mit deiner E-Mail-Adresse und deinem neuen Passwort in der App anmelden.</p>
+      <p>Kegelgruß,<br>Die Pudolfs</p>
+    </div>
+  `;
+
+  try {
+    await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: email,
+      subject: 'Einladung: Die Pudolfs Kegelbuch',
+      html,
+    });
+  } catch (err) {
+    logger.error(`Fehler beim Senden der Einladung an ${email}:`, err);
+    throw new HttpsError('internal', 'E-Mail konnte nicht gesendet werden.');
+  }
+
+  return { success: true };
+});
