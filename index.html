@@ -396,7 +396,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.47';
+  const APP_VERSION = '0.48';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -704,7 +704,6 @@
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Strafen <span class="member-count">(${state.finesCatalog.length})</span></h2>
-          <button type="button" class="btn-icon-add" id="open-add-fine-btn" aria-label="Strafe hinzufügen">+</button>
         </div>
         <div id="fines-list-container">${listHtml}</div>
       </div>
@@ -735,7 +734,6 @@
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Spiele <span class="member-count">(${state.gamesCatalog.length})</span></h2>
-          <button type="button" class="btn-icon-add" id="open-add-game-btn" aria-label="Spiel hinzufügen">+</button>
         </div>
         ${listHtml}
       </div>
@@ -957,7 +955,6 @@
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Mitglieder <span class="member-count">(${state.members.length})</span></h2>
-          <button type="button" class="btn-icon-add" id="open-add-member-btn" aria-label="Mitglied hinzufügen">+</button>
         </div>
         ${membersHtml}
       </div>
@@ -1572,6 +1569,20 @@
       </div>
     ` : '';
 
+    const settingsAddBtnConfig = {
+      settings: { id: 'header-add-member-btn', label: 'Mitglied hinzufügen' },
+      finesManagement: { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' },
+      gamesManagement: { id: 'header-add-game-btn', label: 'Spiel hinzufügen' },
+    }[state.view];
+    const settingsAddBtnHtml = settingsAddBtnConfig ? `
+      <button type="button" class="header-circle-btn" id="${settingsAddBtnConfig.id}" aria-label="${settingsAddBtnConfig.label}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </button>
+    ` : '';
+
     const addFineBtnHtml = (state.view==='personFineDetail' && !isClosed) ? `
       <button type="button" class="header-circle-btn" id="header-add-fine-btn" aria-label="Geldstrafe hinzufügen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
@@ -1596,7 +1607,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${settingsAddBtnHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -1723,7 +1734,7 @@
         if(m) showDeleteMemberModal(m);
       });
     });
-    const openAddMemberBtn = document.getElementById('open-add-member-btn');
+    const openAddMemberBtn = document.getElementById('header-add-member-btn');
     if(openAddMemberBtn) openAddMemberBtn.addEventListener('click', ()=>showMemberFormModal());
   }
 
@@ -1740,7 +1751,7 @@
         if(f) showDeleteFineModal(f);
       });
     });
-    const openAddFineBtn = document.getElementById('open-add-fine-btn');
+    const openAddFineBtn = document.getElementById('header-add-fine-catalog-btn');
     if(openAddFineBtn) openAddFineBtn.addEventListener('click', ()=>showFineFormModal());
     setupDragReorder('fines-list-container', async (newIdOrder)=>{
       const byId = {};
@@ -1763,7 +1774,7 @@
         if(g) showDeleteGameModal(g);
       });
     });
-    const openAddGameBtn = document.getElementById('open-add-game-btn');
+    const openAddGameBtn = document.getElementById('header-add-game-btn');
     if(openAddGameBtn) openAddGameBtn.addEventListener('click', ()=>showGameFormModal());
   }
 
