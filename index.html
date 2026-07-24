@@ -307,7 +307,7 @@
   .fines-summary-row.not-clickable{cursor:default;}
   .fines-summary-row.not-clickable:hover{background:transparent;}
   .fines-summary-name{font-weight:700;}
-  .pudel-crown{display:inline-flex; margin-right:5px; color:var(--brass); vertical-align:middle;}
+  .pudel-crown{display:inline-flex; margin-left:5px; color:var(--brass); vertical-align:middle;}
   .pudel-crown svg{width:15px; height:15px; display:block;}
   .fines-summary-amount{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft);}
 
@@ -433,7 +433,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.51';
+  const APP_VERSION = '0.52';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1127,10 +1127,10 @@
       ? `<p class="empty-state">Keine Teilnehmer für diesen Abend.</p>`
       : occupied.map(s=>{
         const hasCrown = maxPudel>0 && pudelCountForSeat(s.seatId)===maxPudel;
-        const crownHtml = hasCrown ? `<span class="pudel-crown" title="Meiste Pudel"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/></svg></span>` : '';
+        const crownHtml = hasCrown ? `<span class="pudel-crown" title="Pudelkönig"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/></svg></span>` : '';
         return `
         <div class="fines-summary-row" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
-          <span class="fines-summary-name">${crownHtml}${escapeHtml(s.name)}</span>
+          <span class="fines-summary-name">${escapeHtml(s.name)}${crownHtml}</span>
           <span class="fines-summary-amount">${fmtEuro(roundedFineTotalForSeat(detail, s.seatId))}</span>
         </div>
       `;
