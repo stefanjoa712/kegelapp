@@ -446,7 +446,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.61';
+  const APP_VERSION = '0.62';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -470,6 +470,7 @@
     eveningsIndex:[],
     finesCatalog:[],
     gamesCatalog:[],
+    financeAccounts:[],
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -642,8 +643,19 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToGamesManagement);
     }
   }
+  async function goToFinanceManagement(){
+    state.view = 'financeManagement';
+    renderLoading('Konten werden geladen…');
+    try{
+      state.financeAccounts = await getJSONOrThrow('finance-accounts', []);
+      state.view = 'financeManagement';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToFinanceManagement);
+    }
+  }
   function goBackFromHeader(){
-    if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement') goToSettingsMenu();
+    if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement') goToSettingsMenu();
     else if(state.view==='personFineDetail'){ history.back(); }
     else goToMain();
   }
@@ -700,6 +712,20 @@
               </svg>
             </span>
             <span class="settings-menu-item-label">Spieleverwaltung</span>
+            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
+          <button type="button" class="settings-menu-item" id="settings-menu-finanzen-btn">
+            <span class="settings-menu-item-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2.5" y="6" width="19" height="13" rx="2"/>
+                <circle cx="12" cy="12.5" r="3.2"/>
+                <line x1="6" y1="6" x2="6" y2="4.5"/>
+                <line x1="18" y1="6" x2="18" y2="4.5"/>
+              </svg>
+            </span>
+            <span class="settings-menu-item-label">Finanzverwaltung</span>
             <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 6l6 6-6 6"/>
             </svg>
@@ -808,6 +834,31 @@
     `;
   }
 
+  function financeAccountRowHtml(acc){
+    return `<div class="member-row" data-id="${acc.id}">
+      <span class="fine-row-name">${escapeHtml(acc.name)}</span>
+      <span class="row-actions">
+        <span class="fine-row-amount">${fmtEuro(acc.startBalance)}</span>
+        <button type="button" class="icon-btn edit-finance-account-btn" data-id="${acc.id}" aria-label="Bearbeiten">✎</button>
+        <button type="button" class="icon-btn delete-finance-account-btn" data-id="${acc.id}" aria-label="Löschen">✕</button>
+      </span>
+    </div>`;
+  }
+  function viewFinanceManagement(){
+    const sorted = state.financeAccounts.slice().sort((a,b)=> a.name.localeCompare(b.name,'de'));
+    const listHtml = sorted.length===0
+      ? `<p class="empty-state">Noch keine Konten &amp; Kassen angelegt. Füge oben rechts das erste hinzu.</p>`
+      : sorted.map(financeAccountRowHtml).join('');
+    return `
+      <div class="card">
+        <div class="settings-header-row">
+          <h2 class="section-title">Konten &amp; Kassen <span class="member-count">(${state.financeAccounts.length})</span></h2>
+        </div>
+        ${listHtml}
+      </div>
+    `;
+  }
+
   // ---------- Rendering ----------
   function todayEvening(){
     const today = todayISO();
@@ -817,7 +868,7 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement';
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement';
     const activeTab = isSettingsActive ? 'settings' : (isTodayActive ? 'today' : 'overview');
     const todayButtonHtml = todayEve ? `
         <button type="button" class="bottom-nav-item${activeTab==='today'?' active':''}" id="nav-today-btn">
@@ -864,6 +915,7 @@
     if(sig==='settings') return '#mitglieder';
     if(sig==='finesManagement') return '#strafen';
     if(sig==='gamesManagement') return '#spiele';
+    if(sig==='financeManagement') return '#finanzen';
     if(sig==='new') return '#neuer-abend';
     if(sig.startsWith('personFine:')) return '#strafe-person';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
@@ -879,6 +931,7 @@
     else if(state.view==='settings') body = viewSettings();
     else if(state.view==='finesManagement') body = viewFinesManagement();
     else if(state.view==='gamesManagement') body = viewGamesManagement();
+    else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
     else if(state.view==='personFineDetail') body = viewPersonFineDetail();
@@ -916,6 +969,8 @@
         await goToFinesManagement();
       }else if(sig==='gamesManagement'){
         await goToGamesManagement();
+      }else if(sig==='financeManagement'){
+        await goToFinanceManagement();
       }else if(sig==='new'){
         goToNew();
       }else if(sig.startsWith('detail:')){
@@ -1783,6 +1838,7 @@
     else if(state.view==='settings') title = 'Mitgliederverwaltung';
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
+    else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
     else if(state.view==='personFineDetail') title = state.currentFineName || '';
@@ -1814,6 +1870,7 @@
       settings: { id: 'header-add-member-btn', label: 'Mitglied hinzufügen' },
       finesManagement: { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' },
       gamesManagement: { id: 'header-add-game-btn', label: 'Spiel hinzufügen' },
+      financeManagement: { id: 'header-add-finance-account-btn', label: 'Konto hinzufügen' },
     }[state.view];
     const settingsAddBtnHtml = settingsAddBtnConfig ? `
       <button type="button" class="header-circle-btn" id="${settingsAddBtnConfig.id}" aria-label="${settingsAddBtnConfig.label}">
@@ -1921,6 +1978,7 @@
     else if(state.view==='settings') attachSettingsListeners();
     else if(state.view==='finesManagement') attachFinesManagementListeners();
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
+    else if(state.view==='financeManagement') attachFinanceManagementListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
     else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
@@ -1933,6 +1991,8 @@
     if(strafenBtn) strafenBtn.addEventListener('click', goToFinesManagement);
     const spieleBtn = document.getElementById('settings-menu-spiele-btn');
     if(spieleBtn) spieleBtn.addEventListener('click', goToGamesManagement);
+    const finanzenBtn = document.getElementById('settings-menu-finanzen-btn');
+    if(finanzenBtn) finanzenBtn.addEventListener('click', goToFinanceManagement);
     const logoutBtn = document.getElementById('settings-menu-logout-btn');
     if(logoutBtn) logoutBtn.addEventListener('click', logout);
   }
@@ -2058,6 +2118,23 @@
     });
     const openAddGameBtn = document.getElementById('header-add-game-btn');
     if(openAddGameBtn) openAddGameBtn.addEventListener('click', ()=>showGameFormModal());
+  }
+
+  function attachFinanceManagementListeners(){
+    document.querySelectorAll('.edit-finance-account-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const a = state.financeAccounts.find(x=>x.id===b.dataset.id);
+        if(a) showFinanceAccountFormModal(a);
+      });
+    });
+    document.querySelectorAll('.delete-finance-account-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const a = state.financeAccounts.find(x=>x.id===b.dataset.id);
+        if(a) showDeleteFinanceAccountModal(a);
+      });
+    });
+    const openAddFinanceBtn = document.getElementById('header-add-finance-account-btn');
+    if(openAddFinanceBtn) openAddFinanceBtn.addEventListener('click', ()=>showFinanceAccountFormModal());
   }
 
   function renderGuestList(){
@@ -2392,6 +2469,69 @@
         state.gamesCatalog.push({id:uid('game'), name, type});
       }
       await setJSON('games-catalog', state.gamesCatalog, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showDeleteFinanceAccountModal(acc){
+    showModal(`
+      <h3>Konto löschen</h3>
+      <p>„${escapeHtml(acc.name)}" wirklich löschen?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-finance-account-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-finance-account-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-finance-account-yes');
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      state.financeAccounts = state.financeAccounts.filter(a=>a.id!==acc.id);
+      await setJSON('finance-accounts', state.financeAccounts, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showFinanceAccountFormModal(existingAccount){
+    const isEdit = !!existingAccount;
+    showModal(`
+      <h3>${isEdit ? 'Konto bearbeiten' : 'Konto/Kasse hinzufügen'}</h3>
+      <label for="new-finance-name">Bezeichnung</label>
+      <input type="text" id="new-finance-name" placeholder="z. B. Vereinskasse" value="${isEdit?escapeHtml(existingAccount.name):''}">
+      <label for="new-finance-balance">Start-Kontostand (€)</label>
+      <input type="number" id="new-finance-balance" min="0" step="0.01" placeholder="0,00"
+        value="${isEdit?existingAccount.startBalance.toFixed(2):''}"${isEdit?' readonly disabled':''}>
+      ${isEdit ? `<p class="hint" style="margin-top:-6px;">Der Start-Kontostand kann nachträglich nicht mehr geändert werden.</p>` : ''}
+      <p class="form-error" id="finance-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="add-finance-account-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('new-finance-name').focus();
+    document.getElementById('add-finance-account-btn').addEventListener('click', async ()=>{
+      const name = document.getElementById('new-finance-name').value.trim();
+      const errEl = document.getElementById('finance-form-error');
+      if(!name){ if(errEl) errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+      const submitBtn = document.getElementById('add-finance-account-btn');
+      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+      if(isEdit){
+        const a = state.financeAccounts.find(x=>x.id===existingAccount.id);
+        if(a){ a.name=name; }
+      }else{
+        const balanceRaw = document.getElementById('new-finance-balance').value.replace(',', '.');
+        const startBalance = parseFloat(balanceRaw);
+        if(isNaN(startBalance)){
+          if(errEl) errEl.textContent='Bitte einen gültigen Start-Kontostand angeben.';
+          submitBtn.disabled = false; submitBtn.textContent = 'Hinzufügen';
+          return;
+        }
+        state.financeAccounts.push({id:uid('acc'), name, startBalance: Math.round(startBalance*100)/100});
+      }
+      await setJSON('finance-accounts', state.financeAccounts, true);
       closeGenericModal();
       render();
     });
