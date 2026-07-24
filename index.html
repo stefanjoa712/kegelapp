@@ -156,6 +156,7 @@
     padding:12px 14px; -webkit-appearance:none; appearance:none;
   }
   .notes-textarea:focus{outline:none; border-color:var(--wood);}
+  .notes-readonly{background:var(--bg); color:var(--muted); cursor:default; resize:none;}
   .settings-header-row{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;}
   .settings-menu-list{display:flex; flex-direction:column; gap:10px;}
   .settings-menu-item{
@@ -445,7 +446,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.60';
+  const APP_VERSION = '0.61';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1884,7 +1885,7 @@
       return `
         <div class="card">
           <h2 class="section-title">Notizen</h2>
-          <textarea id="evening-notes-textarea" class="notes-textarea" placeholder="Notizen zum Kegelabend…">${escapeHtml(detail.notes||'')}</textarea>
+          <textarea id="evening-notes-textarea" class="notes-textarea${detail.closed?' notes-readonly':''}" placeholder="Notizen zum Kegelabend…"${detail.closed?' readonly':''}>${escapeHtml(detail.notes||'')}</textarea>
         </div>
         ${buildDeleteModal(detail)}
       `;
@@ -2553,7 +2554,7 @@
     const tabNotizenBtn = document.getElementById('tab-notizen-btn');
     if(tabNotizenBtn) tabNotizenBtn.addEventListener('click', ()=>{ state.eveningTab='notizen'; render(); });
     const notesTextarea = document.getElementById('evening-notes-textarea');
-    if(notesTextarea){
+    if(notesTextarea && !notesTextarea.readOnly){
       let saveTimer = null;
       notesTextarea.addEventListener('input', ()=>{
         clearTimeout(saveTimer);
