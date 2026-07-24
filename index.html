@@ -149,6 +149,13 @@
   }
 
   .section-title{font-family:var(--font-display); font-size:21px; margin:0 0 12px; font-weight:700; letter-spacing:-0.01em;}
+  .notes-textarea{
+    width:100%; min-height:200px; box-sizing:border-box; resize:vertical;
+    font-family:var(--font-body); font-size:15px; line-height:1.6; color:var(--ink);
+    background:#fff; border:1px solid var(--line); border-radius:8px;
+    padding:12px 14px; -webkit-appearance:none; appearance:none;
+  }
+  .notes-textarea:focus{outline:none; border-color:var(--wood);}
   .settings-header-row{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;}
   .settings-menu-list{display:flex; flex-direction:column; gap:10px;}
   .settings-menu-item{
@@ -438,7 +445,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.59';
+  const APP_VERSION = '0.60';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1846,6 +1853,7 @@
       <div class="tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
         <button type="button" class="tab-btn${state.eveningTab==='strafen'?' active':''}" id="tab-strafen-btn">Strafen</button>
+        <button type="button" class="tab-btn${state.eveningTab==='notizen'?' active':''}" id="tab-notizen-btn">Notizen</button>
       </div>
     ` : '';
 
@@ -1869,6 +1877,15 @@
       return `
         ${state.justCreated ? `<p class="hint">Die Sitzordnung wurde zufällig ausgelost und gespeichert. Sie kann nicht mehr geändert werden.</p>` : ''}
         ${buildFinesSummary(detail)}
+        ${buildDeleteModal(detail)}
+      `;
+    }
+    if(state.eveningTab==='notizen'){
+      return `
+        <div class="card">
+          <h2 class="section-title">Notizen</h2>
+          <textarea id="evening-notes-textarea" class="notes-textarea" placeholder="Notizen zum Kegelabend…">${escapeHtml(detail.notes||'')}</textarea>
+        </div>
         ${buildDeleteModal(detail)}
       `;
     }
@@ -2533,6 +2550,19 @@
       state.eveningTab='strafen';
       render();
     });
+    const tabNotizenBtn = document.getElementById('tab-notizen-btn');
+    if(tabNotizenBtn) tabNotizenBtn.addEventListener('click', ()=>{ state.eveningTab='notizen'; render(); });
+    const notesTextarea = document.getElementById('evening-notes-textarea');
+    if(notesTextarea){
+      let saveTimer = null;
+      notesTextarea.addEventListener('input', ()=>{
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(async ()=>{
+          state.currentEveningDetail.notes = notesTextarea.value;
+          await setJSON('evening-'+state.currentEveningDetail.id, state.currentEveningDetail, true);
+        }, 800);
+      });
+    }
     document.querySelectorAll('.fines-summary-row:not(.not-clickable)').forEach(row=>{
       row.addEventListener('click', ()=>{ goToPersonFineDetail(row.dataset.seatId, row.dataset.name); });
     });
