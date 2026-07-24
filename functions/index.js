@@ -328,6 +328,8 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
 
 
 // -------- Mitglied einladen (legt Firebase-Auth-Account an, verschickt Passwort-Link) --------
+// Marker zum Erzwingen eines echten Redeploys (v2), falls ein vorheriger Deploy-Versuch
+// die Function auf Google-Seite in einem kaputten Zwischenzustand hinterlassen hat.
 
 const HOSTING_URL = 'https://die-pudolfs.web.app/';
 
@@ -383,7 +385,7 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   return { success: true };
 });
 
-// -------- Account-Verknüpfung eines Mitglieds aufheben --------
+// -------- Account-Verknüpfung eines Mitglieds aufheben (v2) --------
 
 exports.unlinkMemberAccount = onCall({}, async (request) => {
   if (!request.auth) {
