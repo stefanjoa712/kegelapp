@@ -27,7 +27,7 @@ const resendApiKey = defineSecret('RESEND_API_KEY');
 // die Resend-Sandbox-Adresse "onboarding@resend.dev" (Zustellung an eigene,
 // bei Resend verifizierte Test-Adressen). Für echten Versand an alle
 // Mitglieder muss eine eigene Domain verifiziert und hier eingetragen werden.
-const FROM_ADDRESS = 'Die Pudolfs <onboarding@resend.dev>';
+const FROM_ADDRESS = 'Die Pudolfs <strafen@die-pudolfs.de>';
 
 // -------- Hilfsfunktionen (spiegeln exakt die Logik der App) --------
 
