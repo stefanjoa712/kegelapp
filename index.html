@@ -293,7 +293,11 @@
   .fine-detail-icon{width:20px; height:20px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
   .fine-detail-icon svg{width:16px; height:16px; display:block;}
   .fine-detail-name{flex:1; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .fremdstrafe-hint{font-size:11px; font-weight:400; font-style:italic; color:var(--muted); margin-left:6px;}
+  .fremdstrafe-tag{
+    display:inline-block; font-family:var(--font-mono); font-size:10px; text-transform:uppercase;
+    letter-spacing:0.04em; font-weight:700; color:var(--brass); background:var(--tint);
+    padding:2px 7px; border-radius:5px; margin-left:8px; vertical-align:middle;
+  }
   .fine-detail-controls{display:flex; align-items:center; gap:8px; flex-shrink:0;}
   .fine-minus-btn{
     width:28px; height:28px; border-radius:50%; border:1.5px solid var(--line); background:#fff;
@@ -343,6 +347,7 @@
   .modal-card{
     background:var(--surface); border:2.5px solid var(--ink); border-radius:14px;
     padding:22px 20px; max-width:360px; width:100%; box-shadow:6px 6px 0 var(--ink);
+    max-height:calc(100vh - 40px); overflow-y:auto; -webkit-overflow-scrolling:touch; box-sizing:border-box;
   }
   .modal-card h3{font-family:var(--font-display); font-size:19px; margin:0 0 10px; font-weight:700;}
   .modal-card p{margin:0 0 14px; font-size:14px; color:var(--ink-soft);}
@@ -390,7 +395,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.43';
+  const APP_VERSION = '0.44';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -1089,7 +1094,7 @@
       const isFremd = f.type==='fremdstrafe';
       return `
         <div class="fine-detail-row${closed?' readonly':''}" data-fine-id="${f.id}">
-          <span class="fine-detail-name">${escapeHtml(f.name)}${isFremd ? '<span class="fremdstrafe-hint">wird auf alle anderen Anwesenden umgelegt</span>' : ''}</span>
+          <span class="fine-detail-name">${escapeHtml(f.name)}${isFremd ? '<span class="fremdstrafe-tag">Fremdstrafe</span>' : ''}</span>
           <span class="fine-detail-controls">
             ${closed ? '' : `<button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>`}
             <span class="fine-detail-count">${count}×</span>
@@ -1138,7 +1143,7 @@
       </div>
       ${fremdstrafeChargeRows.length>0 ? `
       <div class="card">
-        <h3 class="section-title-small">Fremdstrafen von anderen</h3>
+        <h3 class="section-title-small">Fremdstrafen</h3>
         ${fremdstrafeChargeRows.join('')}
       </div>` : ''}
       <div class="card">
@@ -1389,6 +1394,15 @@
     document.getElementById('bulk-select-kneipe-btn').addEventListener('click', ()=>{
       document.querySelectorAll('.bulk-member-checkbox').forEach(cb=>{
         cb.checked = cb.dataset.seatId.startsWith('kneipe-');
+      });
+    });
+    document.querySelectorAll('.bulk-member-amount').forEach(inp=>{
+      inp.addEventListener('input', ()=>{
+        if(inp.value.trim()!==''){
+          const row = inp.closest('.bulk-member-row');
+          const cb = row ? row.querySelector('.bulk-member-checkbox') : null;
+          if(cb) cb.checked = true;
+        }
       });
     });
 
