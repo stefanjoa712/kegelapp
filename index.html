@@ -217,6 +217,17 @@
   .evening-row:last-child{border-bottom:none;}
   .evening-row:hover .meta{color:var(--felt);}
   .evening-row .date{font-family:var(--font-display); font-size:16px; font-weight:600;}
+  .finance-total-card{background:var(--felt); text-align:center; padding:28px 20px;}
+  .finance-total-amount{font-family:var(--font-display); font-size:36px; font-weight:700; color:#fff;}
+  .finance-total-label{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:4px;}
+  .transaction-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px; cursor:pointer;}
+  .transaction-row:last-child{border-bottom:none;}
+  .transaction-info{display:flex; flex-direction:column; min-width:0;}
+  .transaction-description{font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .transaction-meta{font-size:12px; color:var(--muted); margin-top:2px;}
+  .transaction-amount{font-family:var(--font-mono); font-weight:700; white-space:nowrap; flex-shrink:0;}
+  .transaction-amount.positive{color:#1a7a3c;}
+  .transaction-amount.negative{color:var(--wine);}
   .closed-badge{font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); background:var(--bg); border:1px solid var(--line); padding:2px 7px; border-radius:5px; margin-left:6px; font-weight:700; vertical-align:middle;}
   .evening-row .meta{font-family:var(--font-mono); font-size:12px; color:var(--muted);}
 
@@ -446,7 +457,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.62';
+  const APP_VERSION = '0.63';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -471,11 +482,13 @@
     finesCatalog:[],
     gamesCatalog:[],
     financeAccounts:[],
+    financeTransactions:[],
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
     mainError:'',
     expandedYears: new Set([String(new Date().getFullYear())]),
+    financeExpandedYears: new Set([String(new Date().getFullYear())]),
     eveningTab:'sitzplan',
     currentFineSeatId:null,
     currentFineName:''
@@ -652,6 +665,22 @@
       render();
     }catch(e){
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToFinanceManagement);
+    }
+  }
+  async function goToFinance(){
+    state.view = 'finance';
+    renderLoading('Finanzen werden geladen…');
+    try{
+      const [accounts, transactions] = await Promise.all([
+        getJSONOrThrow('finance-accounts', []),
+        getJSONOrThrow('finance-transactions', [])
+      ]);
+      state.financeAccounts = accounts;
+      state.financeTransactions = transactions;
+      state.view = 'finance';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToFinance);
     }
   }
   function goBackFromHeader(){
@@ -859,6 +888,65 @@
     `;
   }
 
+  function financeAccountNameById(accountId){
+    const acc = state.financeAccounts.find(a=>a.id===accountId);
+    return acc ? acc.name : 'Unbekanntes Konto';
+  }
+
+  function viewFinance(){
+    const totalStartBalances = state.financeAccounts.reduce((sum,a)=> sum + a.startBalance, 0);
+    const totalTransactions = state.financeTransactions.reduce((sum,t)=> sum + t.amount, 0);
+    const totalAmount = totalStartBalances + totalTransactions;
+
+    const sorted = state.financeTransactions.slice().sort((a,b)=> b.date.localeCompare(a.date));
+    let listHtml;
+    if(sorted.length===0){
+      listHtml = `<p class="empty-state">Noch keine Umsätze eingetragen. Über das „+" oben hinzufügen.</p>`;
+    }else{
+      const byYear = {};
+      sorted.forEach(t=>{
+        const year = t.date.slice(0,4);
+        (byYear[year] = byYear[year] || []).push(t);
+      });
+      const years = Object.keys(byYear).sort((a,b)=> b.localeCompare(a));
+      listHtml = years.map(year=>{
+        const expanded = state.financeExpandedYears.has(year);
+        const rows = byYear[year].map(t=>{
+          const isPositive = t.amount>=0;
+          return `
+            <div class="transaction-row" data-id="${t.id}">
+              <span class="transaction-info">
+                <span class="transaction-description">${escapeHtml(t.description)}</span>
+                <span class="transaction-meta">${formatDateDE(t.date)} · ${escapeHtml(financeAccountNameById(t.accountId))}</span>
+              </span>
+              <span class="transaction-amount${isPositive?' positive':' negative'}">${isPositive?'+':''}${fmtEuro(t.amount)}</span>
+            </div>
+          `;
+        }).join('');
+        return `
+          <div class="year-group finance-year-group${expanded?' expanded':''}" data-year="${year}">
+            <div class="year-header finance-year-header">
+              <span>${year}</span>
+              <span class="chevron">▸</span>
+            </div>
+            <div class="year-evenings">${rows}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    return `
+      <div class="card finance-total-card">
+        <div class="finance-total-amount">${fmtEuro(totalAmount)}</div>
+        <div class="finance-total-label">Gesamtbetrag</div>
+      </div>
+      <div class="card">
+        <h2 class="section-title">Umsätze</h2>
+        ${listHtml}
+      </div>
+    `;
+  }
+
   // ---------- Rendering ----------
   function todayEvening(){
     const today = todayISO();
@@ -869,7 +957,8 @@
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
     const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement';
-    const activeTab = isSettingsActive ? 'settings' : (isTodayActive ? 'today' : 'overview');
+    const isFinanceActive = state.view==='finance';
+    const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isTodayActive ? 'today' : 'overview'));
     const todayButtonHtml = todayEve ? `
         <button type="button" class="bottom-nav-item${activeTab==='today'?' active':''}" id="nav-today-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -890,6 +979,15 @@
           <span>Übersicht</span>
         </button>
         ${todayButtonHtml}
+        <button type="button" class="bottom-nav-item${activeTab==='finance'?' active':''}" id="nav-finance-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2.5" y="6" width="19" height="13" rx="2"/>
+            <circle cx="12" cy="12.5" r="3.2"/>
+            <line x1="6" y1="6" x2="6" y2="4.5"/>
+            <line x1="18" y1="6" x2="18" y2="4.5"/>
+          </svg>
+          <span>Finanzen</span>
+        </button>
         <button type="button" class="bottom-nav-item${activeTab==='settings'?' active':''}" id="nav-settings-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>
@@ -915,7 +1013,8 @@
     if(sig==='settings') return '#mitglieder';
     if(sig==='finesManagement') return '#strafen';
     if(sig==='gamesManagement') return '#spiele';
-    if(sig==='financeManagement') return '#finanzen';
+    if(sig==='financeManagement') return '#finanzen-verwaltung';
+    if(sig==='finance') return '#finanzen';
     if(sig==='new') return '#neuer-abend';
     if(sig.startsWith('personFine:')) return '#strafe-person';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
@@ -932,6 +1031,7 @@
     else if(state.view==='finesManagement') body = viewFinesManagement();
     else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='financeManagement') body = viewFinanceManagement();
+    else if(state.view==='finance') body = viewFinance();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
     else if(state.view==='personFineDetail') body = viewPersonFineDetail();
@@ -971,6 +1071,8 @@
         await goToGamesManagement();
       }else if(sig==='financeManagement'){
         await goToFinanceManagement();
+      }else if(sig==='finance'){
+        await goToFinance();
       }else if(sig==='new'){
         goToNew();
       }else if(sig.startsWith('detail:')){
@@ -1839,6 +1941,7 @@
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
+    else if(state.view==='finance') title = 'Finanzen';
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
     else if(state.view==='personFineDetail') title = state.currentFineName || '';
@@ -1871,6 +1974,7 @@
       finesManagement: { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' },
       gamesManagement: { id: 'header-add-game-btn', label: 'Spiel hinzufügen' },
       financeManagement: { id: 'header-add-finance-account-btn', label: 'Konto hinzufügen' },
+      finance: { id: 'header-add-transaction-btn', label: 'Umsatz hinzufügen' },
     }[state.view];
     const settingsAddBtnHtml = settingsAddBtnConfig ? `
       <button type="button" class="header-circle-btn" id="${settingsAddBtnConfig.id}" aria-label="${settingsAddBtnConfig.label}">
@@ -1964,6 +2068,8 @@
     if(navTodayBtn) navTodayBtn.addEventListener('click', goToTodayEvening);
     const navSettingsBtn = document.getElementById('nav-settings-btn');
     if(navSettingsBtn) navSettingsBtn.addEventListener('click', goToSettingsMenu);
+    const navFinanceBtn = document.getElementById('nav-finance-btn');
+    if(navFinanceBtn) navFinanceBtn.addEventListener('click', goToFinance);
     const logoBtn = document.getElementById('logo-home-btn');
     if(logoBtn) logoBtn.addEventListener('click', goToMain);
     const headerBackBtn = document.getElementById('header-back-btn');
@@ -1979,6 +2085,7 @@
     else if(state.view==='finesManagement') attachFinesManagementListeners();
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='financeManagement') attachFinanceManagementListeners();
+    else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
     else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
@@ -2135,6 +2242,26 @@
     });
     const openAddFinanceBtn = document.getElementById('header-add-finance-account-btn');
     if(openAddFinanceBtn) openAddFinanceBtn.addEventListener('click', ()=>showFinanceAccountFormModal());
+  }
+
+  function attachFinanceListeners(){
+    document.querySelectorAll('.finance-year-header').forEach(header=>{
+      header.addEventListener('click', ()=>{
+        const group = header.closest('.finance-year-group');
+        if(!group) return;
+        const year = group.dataset.year;
+        const isExpanded = group.classList.toggle('expanded');
+        if(isExpanded) state.financeExpandedYears.add(year); else state.financeExpandedYears.delete(year);
+      });
+    });
+    document.querySelectorAll('.transaction-row').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const t = state.financeTransactions.find(x=>x.id===row.dataset.id);
+        if(t) showTransactionFormModal(t);
+      });
+    });
+    const headerAddTxBtn = document.getElementById('header-add-transaction-btn');
+    if(headerAddTxBtn) headerAddTxBtn.addEventListener('click', ()=>showTransactionFormModal());
   }
 
   function renderGuestList(){
@@ -2532,6 +2659,97 @@
         state.financeAccounts.push({id:uid('acc'), name, startBalance: Math.round(startBalance*100)/100});
       }
       await setJSON('finance-accounts', state.financeAccounts, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showDeleteTransactionModal(transaction){
+    showModal(`
+      <h3>Umsatz löschen</h3>
+      <p>„${escapeHtml(transaction.description)}" wirklich löschen?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-transaction-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-transaction-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-transaction-yes');
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      state.financeTransactions = state.financeTransactions.filter(t=>t.id!==transaction.id);
+      await setJSON('finance-transactions', state.financeTransactions, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showTransactionFormModal(existingTransaction){
+    const isEdit = !!existingTransaction;
+    if(state.financeAccounts.length===0){
+      showModal(`
+        <h3>Umsatz hinzufügen</h3>
+        <p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in den Einstellungen unter „Finanzverwaltung" eines an.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+      return;
+    }
+    const isExpenseEdit = isEdit && existingTransaction.amount<0;
+    const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${(isEdit && existingTransaction.accountId===a.id)?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
+    showModal(`
+      <h3>${isEdit ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen'}</h3>
+      <label for="new-tx-account">Konto/Kasse</label>
+      <select id="new-tx-account">${accountOptionsHtml}</select>
+      <label for="new-tx-description">Bezeichnung</label>
+      <input type="text" id="new-tx-description" placeholder="z. B. Kegelbahn Miete" value="${isEdit?escapeHtml(existingTransaction.description):''}">
+      <label for="new-tx-date">Datum</label>
+      <input type="date" id="new-tx-date" value="${isEdit?existingTransaction.date:todayISO()}">
+      <label for="new-tx-income">Einnahme (€)</label>
+      <input type="number" id="new-tx-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(existingTransaction.amount).toFixed(2):''}">
+      <label for="new-tx-expense">Ausgabe (€)</label>
+      <input type="number" id="new-tx-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(existingTransaction.amount).toFixed(2):''}">
+      <p class="form-error" id="tx-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="save-tx-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+      ${isEdit ? `<button type="button" class="btn-danger" id="delete-tx-from-edit-btn" style="width:100%; margin-top:10px;">Umsatz löschen</button>` : ''}
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    if(isEdit){
+      const delBtn = document.getElementById('delete-tx-from-edit-btn');
+      if(delBtn) delBtn.addEventListener('click', ()=>showDeleteTransactionModal(existingTransaction));
+    }
+    document.getElementById('new-tx-description').focus();
+    document.getElementById('save-tx-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('tx-form-error');
+      const accountId = document.getElementById('new-tx-account').value;
+      const description = document.getElementById('new-tx-description').value.trim();
+      const date = document.getElementById('new-tx-date').value;
+      const incomeRaw = document.getElementById('new-tx-income').value.replace(',', '.');
+      const expenseRaw = document.getElementById('new-tx-expense').value.replace(',', '.');
+      const income = incomeRaw==='' ? 0 : parseFloat(incomeRaw);
+      const expense = expenseRaw==='' ? 0 : parseFloat(expenseRaw);
+
+      if(!description){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+      if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
+      if(isNaN(income) || isNaN(expense) || income<0 || expense<0){ errEl.textContent='Bitte gültige Beträge angeben.'; return; }
+      if((income>0) === (expense>0)){ errEl.textContent='Bitte entweder eine Einnahme oder eine Ausgabe angeben (nicht beides oder keins).'; return; }
+
+      const amount = income>0 ? Math.round(income*100)/100 : -Math.round(expense*100)/100;
+      const submitBtn = document.getElementById('save-tx-btn');
+      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+
+      if(isEdit){
+        const t = state.financeTransactions.find(x=>x.id===existingTransaction.id);
+        if(t){ t.accountId=accountId; t.description=description; t.date=date; t.amount=amount; }
+      }else{
+        state.financeTransactions.push({id:uid('tx'), accountId, description, date, amount});
+      }
+      await setJSON('finance-transactions', state.financeTransactions, true);
       closeGenericModal();
       render();
     });
