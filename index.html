@@ -59,14 +59,22 @@
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
   .header-back-btn{background:none; border:none; padding:6px; margin:0 0 0 -6px; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
   .header-back-btn svg{width:26px; height:26px; display:block;}
-  .header-delete-btn{background:none; border:none; padding:6px; margin:0 -6px 0 0; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
-  .header-delete-btn svg{width:22px; height:22px; display:block;}
-  .header-add-fine-btn{
+  .header-icon-btn{background:none; border:none; padding:6px; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
+  .header-icon-btn svg{width:22px; height:22px; display:block;}
+  .header-circle-btn{
     background:var(--wood); border:2px solid #fff; border-radius:50%; width:38px; height:38px;
     display:flex; align-items:center; justify-content:center; cursor:pointer; color:#fff; flex-shrink:0;
-    margin:0 -4px 0 0; box-shadow:0 2px 5px rgba(0,0,0,0.35);
+    box-shadow:0 2px 5px rgba(0,0,0,0.35);
   }
-  .header-add-fine-btn svg{width:20px; height:20px; display:block;}
+  .header-circle-btn svg{width:20px; height:20px; display:block;}
+  .header-overflow-wrap{position:relative; margin:0 -6px 0 0;}
+  .header-overflow-menu{
+    position:absolute; top:44px; right:0; background:var(--surface); border:2px solid var(--ink);
+    border-radius:8px; box-shadow:3px 3px 0 var(--ink); min-width:190px; z-index:1050; overflow:hidden;
+  }
+  .header-overflow-menu[hidden]{display:none;}
+  .header-overflow-item{display:block; width:100%; text-align:left; background:none; border:none; padding:13px 16px; font-family:var(--font-body); font-weight:700; font-size:14px; color:var(--wine); cursor:pointer;}
+  .header-overflow-item:hover{background:var(--bg);}
   .header-title{font-family:var(--font-display); font-size:19px; font-weight:700; margin:0; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:38px; line-height:38px; box-sizing:border-box; flex:1; min-width:0;}
 
   .tab-bar{display:flex; gap:8px; padding:0 16px 14px;}
@@ -239,6 +247,10 @@
   .confirm-row{display:flex; align-items:center; gap:8px; font-size:13px; flex-wrap:wrap;}
 
   .member-check-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--line); cursor:pointer;}
+  .bulk-member-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--line); cursor:pointer;}
+  .bulk-member-row:last-child{border-bottom:none;}
+  .bulk-member-name{flex:1;}
+  .bulk-member-amount{width:90px; flex-shrink:0; margin:0 !important;}
   .schriftfuehrer-row{border-bottom:none; margin-top:10px;}
   .member-check-row:last-child{border-bottom:none;}
   .member-check-row input[type="checkbox"]{width:18px; height:18px; accent-color:var(--felt); flex-shrink:0;}
@@ -248,13 +260,13 @@
   .guest-input-row{display:flex; gap:8px; margin-top:8px;}
   .guest-input-row input{flex:1;}
   .btn-icon-add{
-    width:44px; height:44px; flex-shrink:0; display:flex; align-items:center; justify-content:center;
-    background:var(--surface); color:var(--ink); border:2px solid var(--ink); border-radius:8px;
+    width:38px; height:38px; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+    background:var(--wood); color:#fff; border:none; border-radius:50%;
     font-size:22px; font-weight:800; line-height:1; cursor:pointer; padding:0;
-    box-shadow:2px 2px 0 var(--ink); transition:transform .08s ease, box-shadow .08s ease, background .15s ease;
+    box-shadow:0 2px 5px rgba(0,0,0,0.3); transition:transform .08s ease, box-shadow .08s ease, background .15s ease;
   }
-  .btn-icon-add:hover{background:var(--bg);}
-  .btn-icon-add:active{transform:translate(2px,2px); box-shadow:0 0 0 var(--ink);}
+  .btn-icon-add:hover{background:var(--felt-dark);}
+  .btn-icon-add:active{transform:translate(1px,1px);}
 
   .seat-counter{font-family:var(--font-mono); font-size:13px; padding:9px 12px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:inline-block; margin-bottom:10px;}
   .seat-counter.over{color:var(--wine); border-color:var(--wine); font-weight:700;}
@@ -367,7 +379,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.38';
+  const APP_VERSION = '0.39';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -792,6 +804,15 @@
     lastHistorySignature = sig;
   }
 
+  // Einmaliger globaler Listener (nicht pro Render), schließt das Overflow-Menü bei Klick außerhalb.
+  document.addEventListener('click', (e)=>{
+    const menu = document.getElementById('header-overflow-menu');
+    const btn = document.getElementById('header-overflow-btn');
+    if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
+      menu.hidden = true;
+    }
+  });
+
   window.addEventListener('popstate', (event)=>{
     isPopstateNavigation = true;
     const sig = (event.state && event.state.sig) || 'main';
@@ -948,7 +969,11 @@
   }
 
   function buildFinesSummary(detail){
-    const occupied = detail.seating.filter(s=>s.name);
+    const bySeatId = {};
+    detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
+    const interleavedOrder = [];
+    for(let i=1;i<=6;i++){ interleavedOrder.push('saal-'+i, 'kneipe-'+i); }
+    const occupied = interleavedOrder.map(id=>bySeatId[id]).filter(s=>s && s.name);
     const rowsHtml = occupied.length===0
       ? `<p class="empty-state">Keine Teilnehmer für diesen Abend.</p>`
       : occupied.map(s=>`
@@ -1115,6 +1140,98 @@
     });
   }
 
+  async function showBulkAddFineModal(){
+    const detail = state.currentEveningDetail;
+    try{ state.gamesCatalog = await getJSON('games-catalog', true, state.gamesCatalog); }catch(e){}
+    const catalog = (detail.finesCatalogSnapshot || []).filter(f=>f.type!=='fremdstrafe');
+    const games = state.gamesCatalog;
+    if(catalog.length===0 && games.length===0){
+      showModal(`
+        <h3>Strafen hinzufügen</h3>
+        <p class="empty-state">Noch keine Strafen oder Spiele angelegt. Lege zuerst welche in den Einstellungen an.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+      return;
+    }
+    const memberSeats = detail.seating.filter(s=>s.name && !s.isGuest);
+    const fineOptionsHtml = catalog.map(f=>`<option value="fine:${f.id}">${escapeHtml(f.name)} (${fmtEuro(f.amount)})</option>`).join('');
+    const gameOptionsHtml = games.map(g=>`<option value="game:${g.id}">${escapeHtml(g.name)}</option>`).join('');
+    const memberRowsHtml = memberSeats.length===0
+      ? `<p class="empty-state">Keine Mitglieder bei diesem Abend anwesend.</p>`
+      : memberSeats.map(s=>`
+        <label class="bulk-member-row" data-seat-id="${s.seatId}">
+          <input type="checkbox" class="bulk-member-checkbox" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
+          <span class="bulk-member-name">${escapeHtml(s.name)}</span>
+          <input type="number" class="bulk-member-amount" min="0" step="0.01" placeholder="0,00" style="display:none;">
+        </label>
+      `).join('');
+    showModal(`
+      <h3>Strafen hinzufügen</h3>
+      <label for="bulk-fine-select">Strafe oder Spiel</label>
+      <select id="bulk-fine-select">
+        ${catalog.length>0 ? `<optgroup label="Strafen">${fineOptionsHtml}</optgroup>` : ''}
+        ${games.length>0 ? `<optgroup label="Spiele">${gameOptionsHtml}</optgroup>` : ''}
+      </select>
+      <label>Mitglieder</label>
+      <div id="bulk-members-list">${memberRowsHtml}</div>
+      <p class="form-error" id="bulk-fine-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="bulk-add-confirm-btn">Hinzufügen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    const selectEl = document.getElementById('bulk-fine-select');
+    function updateAmountVisibility(){
+      const isGame = selectEl.value.startsWith('game:');
+      document.querySelectorAll('.bulk-member-amount').forEach(inp=>{ inp.style.display = isGame ? '' : 'none'; });
+    }
+    selectEl.addEventListener('change', updateAmountVisibility);
+    updateAmountVisibility();
+
+    document.getElementById('bulk-add-confirm-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('bulk-fine-form-error');
+      const [kind, refId] = selectEl.value.split(':');
+      const checkedBoxes = Array.from(document.querySelectorAll('.bulk-member-checkbox:checked'));
+      if(checkedBoxes.length===0){ if(errEl) errEl.textContent='Bitte mindestens ein Mitglied auswählen.'; return; }
+
+      if(kind==='fine'){
+        checkedBoxes.forEach(cb=>{
+          const seatId = cb.dataset.seatId;
+          if(!detail.finesBySeat) detail.finesBySeat = {};
+          if(!detail.finesBySeat[seatId]) detail.finesBySeat[seatId] = {};
+          detail.finesBySeat[seatId][refId] = (detail.finesBySeat[seatId][refId]||0) + 1;
+        });
+      }else{
+        const game = games.find(g=>g.id===refId);
+        const entries = [];
+        for(const cb of checkedBoxes){
+          const row = cb.closest('.bulk-member-row');
+          const amountInput = row.querySelector('.bulk-member-amount');
+          const amount = parseFloat((amountInput.value||'').replace(',','.'));
+          if(isNaN(amount) || amount<0){
+            if(errEl) errEl.textContent = 'Bitte für jedes ausgewählte Mitglied einen gültigen Betrag angeben.';
+            return;
+          }
+          entries.push({seatId: cb.dataset.seatId, amount: Math.round(amount*100)/100});
+        }
+        entries.forEach(({seatId, amount})=>{
+          if(!detail.adHocFinesBySeat) detail.adHocFinesBySeat = {};
+          if(!detail.adHocFinesBySeat[seatId]) detail.adHocFinesBySeat[seatId] = [];
+          detail.adHocFinesBySeat[seatId].push({id:uid('adhoc'), name:game.name, amount});
+        });
+      }
+      const confirmBtn = document.getElementById('bulk-add-confirm-btn');
+      confirmBtn.disabled = true; confirmBtn.textContent = 'Wird gespeichert…';
+      await setJSON('evening-'+detail.id, detail, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
   function buildSeatingSVG(detail){
     const W = 760, H = 1020;
     const tableTopY = 130, tableBottomY = 970;
@@ -1218,19 +1335,25 @@
     else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
     else if(state.view==='personFineDetail') title = state.currentFineName || '';
 
-    const deleteBtnHtml = state.view==='detail' ? `
-      <button type="button" class="header-delete-btn" id="header-delete-btn" aria-label="Kegelabend löschen">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="3 6 5 6 21 6"/>
-          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-          <path d="M10 11v6M14 11v6"/>
-          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+    const detailHeaderExtrasHtml = state.view==='detail' ? `
+      <button type="button" class="header-circle-btn" id="header-bulk-add-btn" aria-label="Strafe hinzufügen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
       </button>
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-overflow-delete-btn">Kegelabend löschen</button>
+        </div>
+      </div>
     ` : '';
 
     const addFineBtnHtml = state.view==='personFineDetail' ? `
-      <button type="button" class="header-add-fine-btn" id="header-add-fine-btn" aria-label="Geldstrafe hinzufügen">
+      <button type="button" class="header-circle-btn" id="header-add-fine-btn" aria-label="Geldstrafe hinzufügen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"/>
           <line x1="5" y1="12" x2="19" y2="12"/>
@@ -1253,7 +1376,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${deleteBtnHtml}${addFineBtnHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -1840,8 +1963,22 @@
     document.querySelectorAll('.fines-summary-row').forEach(row=>{
       row.addEventListener('click', ()=>{ goToPersonFineDetail(row.dataset.seatId, row.dataset.name); });
     });
-    const delBtn = document.getElementById('header-delete-btn');
-    if(delBtn) delBtn.addEventListener('click', ()=>{ state.confirmDeleteEveningId = state.currentEveningDetail.id; render(); });
+    const overflowBtn = document.getElementById('header-overflow-btn');
+    const overflowMenu = document.getElementById('header-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
+    }
+    const overflowDeleteBtn = document.getElementById('header-overflow-delete-btn');
+    if(overflowDeleteBtn) overflowDeleteBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      state.confirmDeleteEveningId = state.currentEveningDetail.id;
+      render();
+    });
+    const bulkAddBtn = document.getElementById('header-bulk-add-btn');
+    if(bulkAddBtn) bulkAddBtn.addEventListener('click', showBulkAddFineModal);
     const backdrop = document.getElementById('delete-modal-backdrop');
     if(backdrop) backdrop.addEventListener('click', e=>{ if(e.target===backdrop){ state.confirmDeleteEveningId=null; render(); } });
     const pwInput = document.getElementById('delete-password-input');
