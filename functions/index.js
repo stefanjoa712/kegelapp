@@ -63,6 +63,7 @@ function fineTotalForSeat(detail, seatId) {
 
   catalog.forEach(f => {
     if (f.type === 'fremdstrafe') return;
+    if (f.type === 'runde') return; // Runden haben keinen Euro-Betrag
     const count = entries[f.id] || 0;
     total += count * f.amount;
   });
@@ -92,6 +93,7 @@ function buildCatalogLines(detail, seatId) {
   const lines = [];
   catalog.forEach(f => {
     if (f.type === 'fremdstrafe') return;
+    if (f.type === 'runde') return; // Runden haben keinen Euro-Betrag
     const count = entries[f.id] || 0;
     if (count > 0) lines.push({ label: `${f.name} (${count}×)`, amount: count * f.amount });
   });
