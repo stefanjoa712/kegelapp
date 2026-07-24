@@ -73,7 +73,9 @@
     border-radius:8px; box-shadow:3px 3px 0 var(--ink); min-width:190px; z-index:1050; overflow:hidden;
   }
   .header-overflow-menu[hidden]{display:none;}
-  .header-overflow-item{display:block; width:100%; text-align:left; background:none; border:none; padding:13px 16px; font-family:var(--font-body); font-weight:700; font-size:14px; color:var(--wine); cursor:pointer;}
+  .header-overflow-item{display:block; width:100%; text-align:left; background:none; border:none; padding:13px 16px; font-family:var(--font-body); font-weight:700; font-size:14px; color:var(--wine); cursor:pointer; border-top:1px solid var(--line);}
+  .header-overflow-item:first-child{border-top:none;}
+  .header-overflow-item.neutral{color:var(--ink);}
   .header-overflow-item:hover{background:var(--bg);}
   .header-title{font-family:var(--font-display); font-size:19px; font-weight:700; margin:0; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:38px; line-height:38px; box-sizing:border-box; flex:1; min-width:0;}
 
@@ -198,6 +200,7 @@
   .evening-row:last-child{border-bottom:none;}
   .evening-row:hover .meta{color:var(--felt);}
   .evening-row .date{font-family:var(--font-display); font-size:16px; font-weight:600;}
+  .closed-badge{font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); background:var(--bg); border:1px solid var(--line); padding:2px 7px; border-radius:5px; margin-left:6px; font-weight:700; vertical-align:middle;}
   .evening-row .meta{font-family:var(--font-mono); font-size:12px; color:var(--muted);}
 
   .year-group{border-bottom:1px solid var(--line);}
@@ -247,10 +250,11 @@
   .confirm-row{display:flex; align-items:center; gap:8px; font-size:13px; flex-wrap:wrap;}
 
   .member-check-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--line); cursor:pointer;}
-  .bulk-member-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--line); cursor:pointer;}
+  .bulk-member-row{display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px dashed var(--line);}
   .bulk-member-row:last-child{border-bottom:none;}
-  .bulk-member-name{flex:1;}
-  .bulk-member-amount{width:90px; flex-shrink:0; margin:0 !important;}
+  .bulk-member-left{display:flex; align-items:center; gap:10px; flex:1 1 50%; min-width:0; cursor:pointer;}
+  .bulk-member-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .bulk-member-amount{flex:0 0 50%; width:50% !important; max-width:50%; margin:0 !important; box-sizing:border-box;}
   .schriftfuehrer-row{border-bottom:none; margin-top:10px;}
   .member-check-row:last-child{border-bottom:none;}
   .member-check-row input[type="checkbox"]{width:18px; height:18px; accent-color:var(--felt); flex-shrink:0;}
@@ -275,10 +279,13 @@
   .fines-summary-row{display:flex; justify-content:space-between; align-items:center; padding:13px 2px; border-bottom:1px dashed var(--line); cursor:pointer;}
   .fines-summary-row:last-child{border-bottom:none;}
   .fines-summary-row:hover{background:var(--bg);}
+  .fines-summary-row.not-clickable{cursor:default;}
+  .fines-summary-row.not-clickable:hover{background:transparent;}
   .fines-summary-name{font-weight:700;}
   .fines-summary-amount{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft);}
 
   .fine-detail-row{display:flex; align-items:center; gap:10px; padding:13px 2px; border-bottom:1px dashed var(--line); cursor:pointer;}
+  .fine-detail-row.readonly{cursor:default;}
   .fine-detail-row:last-child{border-bottom:none;}
   .fine-detail-row:hover{background:var(--bg);}
   .fine-detail-icon{width:20px; height:20px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
@@ -313,6 +320,7 @@
   .chair-clickable:hover .chair-body{filter:brightness(1.12);}
   .chair-clickable:hover .name-plate-rect{filter:brightness(0.96);}
 
+  .stat-total-raw{display:flex; justify-content:space-between; font-size:13px; color:var(--muted); padding-bottom:6px;}
   .stat-total{display:flex; justify-content:space-between; font-weight:800; font-size:16px; padding-top:10px; margin-top:6px; border-top:2px solid var(--ink);}
   .chair-body.empty{fill:var(--surface); stroke:var(--muted); stroke-width:2; stroke-dasharray:5 4;}
   .seat-label-text{font-family:var(--font-mono); font-size:21px; font-weight:700; letter-spacing:0.05em; fill:var(--brass-light);}
@@ -379,7 +387,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.39';
+  const APP_VERSION = '0.40';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -578,7 +586,7 @@
   }
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement') goToSettingsMenu();
-    else if(state.view==='personFineDetail'){ state.view='detail'; render(); }
+    else if(state.view==='personFineDetail'){ history.back(); }
     else goToMain();
   }
   function goToNew(){
@@ -645,6 +653,10 @@
 
   function fmtEuro(n){
     return n.toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+  }
+  function roundUpToFiftyCents(amount){
+    const cents = Math.round(amount*100);
+    return Math.ceil(cents/50)*50/100;
   }
   function fineTypeLabel(type){
     if(type==='multiplier') return 'Multiplikator';
@@ -769,7 +781,8 @@
   let lastHistorySignature = null;
 
   function historySignature(){
-    if((state.view==='detail' || state.view==='personFineDetail') && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
+    if(state.view==='personFineDetail' && state.currentEveningDetail) return 'personFine:'+state.currentEveningDetail.id+':'+state.currentFineSeatId;
+    if(state.view==='detail' && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
     return state.view;
   }
   function hashFor(sig){
@@ -778,6 +791,7 @@
     if(sig==='finesManagement') return '#strafen';
     if(sig==='gamesManagement') return '#spiele';
     if(sig==='new') return '#neuer-abend';
+    if(sig.startsWith('personFine:')) return '#strafe-person';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
   }
@@ -829,7 +843,40 @@
         goToNew();
       }else if(sig.startsWith('detail:')){
         const id = sig.slice(7);
-        await openEveningDetail(id);
+        if(state.currentEveningDetail && state.currentEveningDetail.id===id){
+          state.view = 'detail';
+          render();
+        }else{
+          await openEveningDetail(id);
+        }
+      }else if(sig.startsWith('personFine:')){
+        const parts = sig.split(':');
+        const eveningId = parts[1], seatId = parts[2];
+        if(state.currentEveningDetail && state.currentEveningDetail.id===eveningId){
+          const seatObj = state.currentEveningDetail.seating.find(s=>s.seatId===seatId);
+          state.currentFineSeatId = seatId;
+          state.currentFineName = seatObj ? seatObj.name : '';
+          state.view = 'personFineDetail';
+          render();
+        }else{
+          renderLoading('Kegelabend wird geladen…');
+          try{
+            const d = await getJSONOrThrow('evening-'+eveningId, null);
+            if(d){
+              state.currentEveningDetail = d;
+              const seatObj = d.seating.find(s=>s.seatId===seatId);
+              state.currentFineSeatId = seatId;
+              state.currentFineName = seatObj ? seatObj.name : '';
+              state.eveningTab = 'strafen';
+              state.view = 'personFineDetail';
+              render();
+            }else{
+              await goToMain();
+            }
+          }catch(e){
+            renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToMain);
+          }
+        }
       }else{
         await goToMain();
       }
@@ -857,7 +904,7 @@
       const years = Object.keys(byYear).sort((a,b)=> b.localeCompare(a));
       listHtml = years.map(year=>{
         const expanded = state.expandedYears.has(year);
-        const rows = byYear[year].map(e=>`<div class="evening-row" data-id="${e.id}"><span class="date">${formatDateDE(e.date)}</span><span class="meta">ansehen →</span></div>`).join('');
+        const rows = byYear[year].map(e=>`<div class="evening-row" data-id="${e.id}"><span class="date">${formatDateDE(e.date)}${e.closed?' <span class="closed-badge">Abgeschlossen</span>':''}</span><span class="meta">ansehen →</span></div>`).join('');
         return `
           <div class="year-group${expanded?' expanded':''}" data-year="${year}">
             <div class="year-header">
@@ -967,6 +1014,9 @@
     adHocList.forEach(a=>{ total += a.amount; });
     return total;
   }
+  function roundedFineTotalForSeat(detail, seatId){
+    return roundUpToFiftyCents(fineTotalForSeat(detail, seatId));
+  }
 
   function buildFinesSummary(detail){
     const bySeatId = {};
@@ -979,14 +1029,28 @@
       : occupied.map(s=>`
         <div class="fines-summary-row" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
           <span class="fines-summary-name">${escapeHtml(s.name)}</span>
-          <span class="fines-summary-amount">${fmtEuro(fineTotalForSeat(detail, s.seatId))}</span>
+          <span class="fines-summary-amount">${fmtEuro(roundedFineTotalForSeat(detail, s.seatId))}</span>
         </div>
       `).join('');
+    const absentList = detail.closed ? (detail.absentMembersFines || []) : [];
+    const absentHtml = absentList.length===0 ? '' : `
+      <div class="card">
+        <h3 class="section-title-small">Nicht anwesend (Durchschnitt)</h3>
+        <div class="fines-summary-header-row"><span>Name</span><span>Strafe</span></div>
+        ${absentList.map(a=>`
+          <div class="fines-summary-row not-clickable">
+            <span class="fines-summary-name">${escapeHtml(a.name)}</span>
+            <span class="fines-summary-amount">${fmtEuro(a.amount)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
     return `
       <div class="card">
         <div class="fines-summary-header-row"><span>Name</span><span>Aktuelle Strafen</span></div>
         ${rowsHtml}
       </div>
+      ${absentHtml}
     `;
   }
 
@@ -1000,6 +1064,7 @@
   function viewPersonFineDetail(){
     const detail = state.currentEveningDetail;
     const seatId = state.currentFineSeatId;
+    const closed = !!detail.closed;
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
     const catalog = (detail.finesCatalogSnapshot || []).filter(f=>f.type!=='fremdstrafe');
     let total = 0;
@@ -1008,10 +1073,10 @@
       const result = count * f.amount;
       total += result;
       return `
-        <div class="fine-detail-row" data-fine-id="${f.id}">
+        <div class="fine-detail-row${closed?' readonly':''}" data-fine-id="${f.id}">
           <span class="fine-detail-name">${escapeHtml(f.name)}</span>
           <span class="fine-detail-controls">
-            <button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>
+            ${closed ? '' : `<button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>`}
             <span class="fine-detail-count">${count}×</span>
           </span>
           <span class="fine-detail-result">${fmtEuro(result)}</span>
@@ -1024,10 +1089,11 @@
       <div class="adhoc-fine-row" data-id="${a.id}">
         <span class="fine-detail-name">${escapeHtml(a.name)}</span>
         <span class="fine-detail-result">${fmtEuro(a.amount)}</span>
+        ${closed ? '' : `
         <span class="row-actions">
           <button type="button" class="icon-btn edit-adhoc-btn" data-id="${a.id}" aria-label="Bearbeiten">✎</button>
           <button type="button" class="icon-btn delete-adhoc-btn" data-id="${a.id}" aria-label="Löschen">✕</button>
-        </span>
+        </span>`}
       </div>
     `).join('');
     return `
@@ -1037,10 +1103,11 @@
       </div>
       <div class="card">
         <h3 class="section-title-small">Geldstrafen</h3>
-        ${adHocList.length===0 ? `<p class="empty-state">Noch keine Geldstrafen. Über das „+" oben hinzufügen.</p>` : adHocRowsHtml}
+        ${adHocList.length===0 ? `<p class="empty-state">Noch keine Geldstrafen.${closed?'':' Über das „+“ oben hinzufügen.'}</p>` : adHocRowsHtml}
       </div>
       <div class="card">
-        <div class="stat-total"><span>Gesamt</span><span>${fmtEuro(total)}</span></div>
+        <div class="stat-total-raw"><span>Gesamt (genau)</span><span>${fmtEuro(total)}</span></div>
+        <div class="stat-total"><span>Gesamt (gerundet)</span><span>${fmtEuro(roundUpToFiftyCents(total))}</span></div>
       </div>
     `;
   }
@@ -1140,6 +1207,78 @@
     });
   }
 
+  function showCloseEveningModal(){
+    showModal(`
+      <h3>Kegelabend abschließen</h3>
+      <p>Der Abend wird in den Nur-Lese-Modus versetzt. Für alle nicht anwesenden Mitglieder wird automatisch der gerundete Durchschnittsbetrag der anwesenden Mitglieder als Strafe hinterlegt. Fortfahren?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="confirm-close-evening-yes">Ja, abschließen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-close-evening-yes').addEventListener('click', async ()=>{
+      const btn = document.getElementById('confirm-close-evening-yes');
+      btn.disabled = true; btn.textContent = 'Wird abgeschlossen…';
+      const detail = state.currentEveningDetail;
+      let allMembers = state.members;
+      try{ allMembers = await getJSON('members', true, state.members); state.members = allMembers; }catch(e){}
+      const presentSeats = detail.seating.filter(s=>s.name && !s.isGuest);
+      const presentNames = new Set(presentSeats.map(s=>s.name));
+      const presentTotals = presentSeats.map(s=>roundedFineTotalForSeat(detail, s.seatId));
+      const avg = presentTotals.length>0 ? presentTotals.reduce((a,b)=>a+b,0)/presentTotals.length : 0;
+      const avgRounded = roundUpToFiftyCents(avg);
+      const absentMembers = allMembers.filter(m=> !presentNames.has(displayName(m)));
+      detail.absentMembersFines = absentMembers.map(m=>({ name: displayName(m), amount: avgRounded }));
+      detail.closed = true;
+      const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
+      if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:true};
+      await Promise.all([
+        setJSON('evening-'+detail.id, detail, true),
+        setJSON('evenings-index', state.eveningsIndex, true)
+      ]);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showReopenEveningModal(){
+    showModal(`
+      <h3>Kegelabend wieder öffnen</h3>
+      <p>Zum Wiederöffnen ist das gleiche Kennwort wie beim Löschen erforderlich.</p>
+      <label for="reopen-password-input">Kennwort</label>
+      <input type="password" id="reopen-password-input" placeholder="Kennwort" autocomplete="off">
+      <p class="form-error" id="reopen-password-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="confirm-reopen-yes">Öffnen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    const pwInput = document.getElementById('reopen-password-input');
+    if(pwInput){
+      pwInput.focus();
+      pwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); document.getElementById('confirm-reopen-yes').click(); } });
+    }
+    document.getElementById('confirm-reopen-yes').addEventListener('click', async ()=>{
+      const entered = pwInput ? pwInput.value : '';
+      const errEl = document.getElementById('reopen-password-error');
+      if(entered !== DELETE_PASSWORD){ if(errEl) errEl.textContent='Falsches Kennwort.'; return; }
+      const btn = document.getElementById('confirm-reopen-yes');
+      btn.disabled = true; btn.textContent = 'Öffnet…';
+      const detail = state.currentEveningDetail;
+      detail.closed = false;
+      const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
+      if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:false};
+      await Promise.all([
+        setJSON('evening-'+detail.id, detail, true),
+        setJSON('evenings-index', state.eveningsIndex, true)
+      ]);
+      closeGenericModal();
+      render();
+    });
+  }
+
   async function showBulkAddFineModal(){
     const detail = state.currentEveningDetail;
     try{ state.gamesCatalog = await getJSON('games-catalog', true, state.gamesCatalog); }catch(e){}
@@ -1162,11 +1301,13 @@
     const memberRowsHtml = memberSeats.length===0
       ? `<p class="empty-state">Keine Mitglieder bei diesem Abend anwesend.</p>`
       : memberSeats.map(s=>`
-        <label class="bulk-member-row" data-seat-id="${s.seatId}">
-          <input type="checkbox" class="bulk-member-checkbox" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
-          <span class="bulk-member-name">${escapeHtml(s.name)}</span>
+        <div class="bulk-member-row" data-seat-id="${s.seatId}">
+          <label class="bulk-member-left">
+            <input type="checkbox" class="bulk-member-checkbox" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
+            <span class="bulk-member-name">${escapeHtml(s.name)}</span>
+          </label>
           <input type="number" class="bulk-member-amount" min="0" step="0.01" placeholder="0,00" style="display:none;">
-        </label>
+        </div>
       `).join('');
     showModal(`
       <h3>Strafen hinzufügen</h3>
@@ -1335,24 +1476,30 @@
     else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
     else if(state.view==='personFineDetail') title = state.currentFineName || '';
 
+    const isClosed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
     const detailHeaderExtrasHtml = state.view==='detail' ? `
+      ${isClosed ? '' : `
       <button type="button" class="header-circle-btn" id="header-bulk-add-btn" aria-label="Strafe hinzufügen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"/>
           <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
-      </button>
+      </button>`}
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
         </button>
         <div class="header-overflow-menu" id="header-overflow-menu" hidden>
+          ${isClosed
+            ? `<button type="button" class="header-overflow-item neutral" id="header-overflow-reopen-btn">Kegelabend wieder öffnen</button>`
+            : `<button type="button" class="header-overflow-item neutral" id="header-overflow-close-btn">Kegelabend abschließen</button>`
+          }
           <button type="button" class="header-overflow-item" id="header-overflow-delete-btn">Kegelabend löschen</button>
         </div>
       </div>
     ` : '';
 
-    const addFineBtnHtml = state.view==='personFineDetail' ? `
+    const addFineBtnHtml = (state.view==='personFineDetail' && !isClosed) ? `
       <button type="button" class="header-circle-btn" id="header-add-fine-btn" aria-label="Geldstrafe hinzufügen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"/>
@@ -1960,7 +2107,7 @@
       state.eveningTab='strafen';
       render();
     });
-    document.querySelectorAll('.fines-summary-row').forEach(row=>{
+    document.querySelectorAll('.fines-summary-row:not(.not-clickable)').forEach(row=>{
       row.addEventListener('click', ()=>{ goToPersonFineDetail(row.dataset.seatId, row.dataset.name); });
     });
     const overflowBtn = document.getElementById('header-overflow-btn');
@@ -1976,6 +2123,16 @@
       if(overflowMenu) overflowMenu.hidden = true;
       state.confirmDeleteEveningId = state.currentEveningDetail.id;
       render();
+    });
+    const overflowCloseBtn = document.getElementById('header-overflow-close-btn');
+    if(overflowCloseBtn) overflowCloseBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      showCloseEveningModal();
+    });
+    const overflowReopenBtn = document.getElementById('header-overflow-reopen-btn');
+    if(overflowReopenBtn) overflowReopenBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      showReopenEveningModal();
     });
     const bulkAddBtn = document.getElementById('header-bulk-add-btn');
     if(bulkAddBtn) bulkAddBtn.addEventListener('click', showBulkAddFineModal);
@@ -2011,12 +2168,15 @@
   }
 
   function attachPersonFineDetailListeners(){
-    document.querySelectorAll('.fine-detail-row').forEach(row=>{
-      row.addEventListener('click', (e)=>{
-        if(e.target.closest('.fine-minus-btn')) return;
-        adjustFineCount(row.dataset.fineId, 1);
+    const closed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
+    if(!closed){
+      document.querySelectorAll('.fine-detail-row').forEach(row=>{
+        row.addEventListener('click', (e)=>{
+          if(e.target.closest('.fine-minus-btn')) return;
+          adjustFineCount(row.dataset.fineId, 1);
+        });
       });
-    });
+    }
     document.querySelectorAll('.fine-minus-btn').forEach(btn=>{
       btn.addEventListener('click', (e)=>{
         e.stopPropagation();
