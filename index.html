@@ -361,6 +361,8 @@
   .name-plate-text{font-family:var(--font-body); font-weight:700; fill:var(--ink);}
   .name-plate-text.empty-text{fill:var(--ink-soft); font-style:italic; font-weight:400;}
   .guest-tag-text{font-family:var(--font-mono); font-size:15px; letter-spacing:0.06em; fill:var(--brass-light); font-weight:700;}
+  .pudel-crown-badge circle{fill:var(--wood); stroke:#fff; stroke-width:2.5;}
+  .pudel-crown-badge path{fill:#fff;}
 
   .confirm-row-buttons{display:flex; gap:10px;}
   .confirm-row-buttons > button{flex:1;}
@@ -433,7 +435,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.52';
+  const APP_VERSION = '0.53';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -875,13 +877,15 @@
     lastHistorySignature = sig;
   }
 
-  // Einmaliger globaler Listener (nicht pro Render), schließt das Overflow-Menü bei Klick außerhalb.
+  // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    const menu = document.getElementById('header-overflow-menu');
-    const btn = document.getElementById('header-overflow-btn');
-    if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
-      menu.hidden = true;
-    }
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn']].forEach(([menuId,btnId])=>{
+      const menu = document.getElementById(menuId);
+      const btn = document.getElementById(btnId);
+      if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
+        menu.hidden = true;
+      }
+    });
   });
 
   window.addEventListener('popstate', (event)=>{
@@ -1077,6 +1081,8 @@
   }
 
   function fineTotalForSeat(detail, seatId){
+    const seat = detail.seating.find(s=>s.seatId===seatId);
+    if(seat && seat.invalid) return seat.invalidAmount || 0;
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
     const catalog = detail.finesCatalogSnapshot || [];
     let total = 0;
@@ -1106,6 +1112,31 @@
     return roundUpToFullEuro(fineTotalForSeat(detail, seatId));
   }
 
+  // Pool für Durchschnittsberechnungen: anwesende, gültige (nicht invalide) Mitglieder - ohne Gäste.
+  function validPresentMemberTotals(detail, excludeSeatId){
+    return detail.seating
+      .filter(s=> s.name && !s.isGuest && !s.invalid && s.seatId!==excludeSeatId)
+      .map(s=> roundedFineTotalForSeat(detail, s.seatId));
+  }
+  function averageOfTotalsRounded(totals){
+    if(totals.length===0) return 0;
+    return roundUpToFullEuro(totals.reduce((a,b)=>a+b,0)/totals.length);
+  }
+
+  // Ermittelt die Sitzplätze mit den meisten "Pudel"-Strafen (bei Gleichstand: alle).
+  function computePudelCrownSeatIds(detail){
+    const occupied = detail.seating.filter(s=>s.name);
+    const catalog = detail.finesCatalogSnapshot || [];
+    const pudelFineIds = catalog.filter(f=>f.type==='pudel').map(f=>f.id);
+    function pudelCountForSeat(seatId){
+      const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
+      return pudelFineIds.reduce((sum,id)=> sum + (entries[id]||0), 0);
+    }
+    const counts = occupied.map(s=>({seatId:s.seatId, count:pudelCountForSeat(s.seatId)}));
+    const maxPudel = counts.length>0 ? Math.max(0, ...counts.map(c=>c.count)) : 0;
+    return maxPudel>0 ? new Set(counts.filter(c=>c.count===maxPudel).map(c=>c.seatId)) : new Set();
+  }
+
   function buildFinesSummary(detail){
     const bySeatId = {};
     detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
@@ -1113,20 +1144,12 @@
     for(let i=1;i<=6;i++){ interleavedOrder.push('saal-'+i, 'kneipe-'+i); }
     const occupied = interleavedOrder.map(id=>bySeatId[id]).filter(s=>s && s.name);
 
-    // Krone für die meisten "Pudel"-Strafen (bei Gleichstand: alle bekommen sie).
-    const catalog = detail.finesCatalogSnapshot || [];
-    const pudelFineIds = catalog.filter(f=>f.type==='pudel').map(f=>f.id);
-    function pudelCountForSeat(seatId){
-      const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
-      return pudelFineIds.reduce((sum,id)=> sum + (entries[id]||0), 0);
-    }
-    const pudelCounts = occupied.map(s=>pudelCountForSeat(s.seatId));
-    const maxPudel = pudelCounts.length>0 ? Math.max(0, ...pudelCounts) : 0;
+    const crownSeatIds = computePudelCrownSeatIds(detail);
 
     const rowsHtml = occupied.length===0
       ? `<p class="empty-state">Keine Teilnehmer für diesen Abend.</p>`
       : occupied.map(s=>{
-        const hasCrown = maxPudel>0 && pudelCountForSeat(s.seatId)===maxPudel;
+        const hasCrown = crownSeatIds.has(s.seatId);
         const crownHtml = hasCrown ? `<span class="pudel-crown" title="Pudelkönig"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/></svg></span>` : '';
         return `
         <div class="fines-summary-row" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
@@ -1176,7 +1199,21 @@
   function viewPersonFineDetail(){
     const detail = state.currentEveningDetail;
     const seatId = state.currentFineSeatId;
+    const seat = detail.seating.find(s=>s.seatId===seatId);
     const closed = !!detail.closed;
+    const invalid = !!(seat && seat.invalid);
+
+    if(invalid){
+      return `
+        <div class="card">
+          <p class="hint">Diese Person ist als <strong>invalide</strong> markiert. Es werden keine Strafen mehr gepflegt, stattdessen gilt ein fest hinterlegter Durchschnittsbetrag.</p>
+        </div>
+        <div class="card">
+          <div class="stat-total"><span>Gesamt</span><span>${fmtEuro(seat.invalidAmount||0)}</span></div>
+        </div>
+      `;
+    }
+
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
     const catalog = detail.finesCatalogSnapshot || [];
     const rowsHtml = catalog.map(f=>{
@@ -1361,9 +1398,7 @@
       try{ allMembers = await getJSON('members', true, state.members); state.members = allMembers; }catch(e){}
       const presentSeats = detail.seating.filter(s=>s.name && !s.isGuest);
       const presentNames = new Set(presentSeats.map(s=>s.name));
-      const presentTotals = presentSeats.map(s=>roundedFineTotalForSeat(detail, s.seatId));
-      const avg = presentTotals.length>0 ? presentTotals.reduce((a,b)=>a+b,0)/presentTotals.length : 0;
-      const avgRounded = roundUpToFullEuro(avg);
+      const avgRounded = averageOfTotalsRounded(validPresentMemberTotals(detail));
       const absentMembers = allMembers.filter(m=> !presentNames.has(displayName(m)));
       detail.absentMembersFines = absentMembers.map(m=>({ name: displayName(m), amount: avgRounded }));
       detail.closed = true;
@@ -1410,6 +1445,58 @@
         setJSON('evening-'+detail.id, detail, true),
         setJSON('evenings-index', state.eveningsIndex, true)
       ]);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showMarkInvalidModal(){
+    const detail = state.currentEveningDetail;
+    const seatId = state.currentFineSeatId;
+    showModal(`
+      <h3>Als invalide markieren</h3>
+      <p>Für <strong>${escapeHtml(state.currentFineName)}</strong> können danach keine Strafen mehr gepflegt werden. Stattdessen wird jetzt einmalig der gerundete Durchschnittsbetrag der anderen anwesenden Mitglieder berechnet und fest hinterlegt. Fortfahren?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-mark-invalid-yes">Ja, als invalide markieren</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-mark-invalid-yes').addEventListener('click', async ()=>{
+      const btn = document.getElementById('confirm-mark-invalid-yes');
+      btn.disabled = true; btn.textContent = 'Wird markiert…';
+      const seat = detail.seating.find(s=>s.seatId===seatId);
+      if(seat){
+        seat.invalid = true;
+        seat.invalidAmount = averageOfTotalsRounded(validPresentMemberTotals(detail, seatId));
+      }
+      await setJSON('evening-'+detail.id, detail, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showUnmarkInvalidModal(){
+    const detail = state.currentEveningDetail;
+    const seatId = state.currentFineSeatId;
+    showModal(`
+      <h3>Wieder aktivieren</h3>
+      <p>Für <strong>${escapeHtml(state.currentFineName)}</strong> können danach wieder Strafen gepflegt werden. Der hinterlegte Durchschnittsbetrag wird entfernt. Fortfahren?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="confirm-unmark-invalid-yes">Ja, wieder aktivieren</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-unmark-invalid-yes').addEventListener('click', async ()=>{
+      const btn = document.getElementById('confirm-unmark-invalid-yes');
+      btn.disabled = true; btn.textContent = 'Wird aktiviert…';
+      const seat = detail.seating.find(s=>s.seatId===seatId);
+      if(seat){
+        seat.invalid = false;
+        delete seat.invalidAmount;
+      }
+      await setJSON('evening-'+detail.id, detail, true);
       closeGenericModal();
       render();
     });
@@ -1545,6 +1632,7 @@
 
     const bySeatId = {};
     detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
+    const crownSeatIds = computePudelCrownSeatIds(detail);
 
     function edge(side, t){
       const topX = side==='left' ? topLX : topRX;
@@ -1570,6 +1658,14 @@
       const textLenAttr = estW>availW ? ` textLength="${availW}" lengthAdjust="spacingAndGlyphs"` : '';
       const plateCenterY = cy+12;
       const clickable = !empty;
+      const hasCrown = !empty && crownSeatIds.has(seat.seatId);
+      const crownCx = cx+plateWidth/2, crownCy = plateCenterY-20;
+      const crownBadgeHtml = hasCrown ? `
+        <g class="pudel-crown-badge">
+          <circle cx="${crownCx}" cy="${crownCy}" r="14" />
+          <path transform="translate(${crownCx-9},${crownCy-9}) scale(0.75)" d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/>
+        </g>
+      ` : '';
       const sfText = '✎ SCHRIFTFÜHRER';
       const sfMaxW = chairW-16;
       const sfEstW = sfText.length * 15 * 0.56;
@@ -1582,6 +1678,7 @@
         <text class="name-plate-text${empty?' empty-text':''}" x="${cx}" y="${plateCenterY+9}" text-anchor="middle" font-size="${fontSize}"${textLenAttr}>${escapeHtml(nameRaw)}</text>
         ${(!empty && seat.isGuest) ? `<text class="guest-tag-text" x="${cx}" y="${rectY+chairH-11}" text-anchor="middle">GAST</text>` : ''}
         ${(!empty && seat.isSchriftfuehrer) ? `<text class="guest-tag-text" x="${cx}" y="${rectY+chairH-11}" text-anchor="middle"${sfTextLenAttr}>${sfText}</text>` : ''}
+        ${crownBadgeHtml}
       </g>`;
     }
 
@@ -1677,13 +1774,30 @@
       </button>
     ` : '';
 
+    const currentPersonSeat = (state.view==='personFineDetail' && state.currentEveningDetail)
+      ? state.currentEveningDetail.seating.find(s=>s.seatId===state.currentFineSeatId)
+      : null;
+    const personIsInvalid = !!(currentPersonSeat && currentPersonSeat.invalid);
+
     const addFineBtnHtml = (state.view==='personFineDetail' && !isClosed) ? `
+      ${personIsInvalid ? '' : `
       <button type="button" class="header-circle-btn" id="header-add-fine-btn" aria-label="Geldstrafe hinzufügen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"/>
           <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
-      </button>
+      </button>`}
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-person-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-person-overflow-menu" hidden>
+          ${personIsInvalid
+            ? `<button type="button" class="header-overflow-item neutral" id="header-unmark-invalid-btn">Wieder aktivieren</button>`
+            : `<button type="button" class="header-overflow-item" id="header-mark-invalid-btn">Als invalide markieren</button>`
+          }
+        </div>
+      </div>
     ` : '';
 
     const tabsHtml = state.view==='detail' ? `
@@ -2442,6 +2556,24 @@
     });
     const headerAddFineBtn = document.getElementById('header-add-fine-btn');
     if(headerAddFineBtn) headerAddFineBtn.addEventListener('click', ()=>showAddGeldstrafeModal());
+    const personOverflowBtn = document.getElementById('header-person-overflow-btn');
+    const personOverflowMenu = document.getElementById('header-person-overflow-menu');
+    if(personOverflowBtn && personOverflowMenu){
+      personOverflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        personOverflowMenu.hidden = !personOverflowMenu.hidden;
+      });
+    }
+    const markInvalidBtn = document.getElementById('header-mark-invalid-btn');
+    if(markInvalidBtn) markInvalidBtn.addEventListener('click', ()=>{
+      if(personOverflowMenu) personOverflowMenu.hidden = true;
+      showMarkInvalidModal();
+    });
+    const unmarkInvalidBtn = document.getElementById('header-unmark-invalid-btn');
+    if(unmarkInvalidBtn) unmarkInvalidBtn.addEventListener('click', ()=>{
+      if(personOverflowMenu) personOverflowMenu.hidden = true;
+      showUnmarkInvalidModal();
+    });
     document.querySelectorAll('.edit-adhoc-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const detail = state.currentEveningDetail;

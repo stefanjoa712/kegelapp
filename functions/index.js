@@ -48,6 +48,8 @@ function roundUpToFullEuro(amount) {
 
 // Gesamtbetrag für einen Sitzplatz - inkl. Geldstrafen und umgelegter Fremdstrafen anderer.
 function fineTotalForSeat(detail, seatId) {
+  const seat = detail.seating.find(s => s.seatId === seatId);
+  if (seat && seat.invalid) return seat.invalidAmount || 0;
   const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
   const catalog = detail.finesCatalogSnapshot || [];
   let total = 0;
