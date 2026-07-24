@@ -70,10 +70,10 @@
   .header-overflow-wrap{position:relative; margin:0 -6px 0 0;}
   .header-overflow-menu{
     position:absolute; top:44px; right:0; background:var(--surface); border:2px solid var(--ink);
-    border-radius:8px; box-shadow:3px 3px 0 var(--ink); min-width:190px; z-index:1050; overflow:hidden;
+    border-radius:8px; box-shadow:3px 3px 0 var(--ink); min-width:260px; z-index:1050; overflow:hidden;
   }
   .header-overflow-menu[hidden]{display:none;}
-  .header-overflow-item{display:block; width:100%; text-align:left; background:none; border:none; padding:13px 16px; font-family:var(--font-body); font-weight:700; font-size:14px; color:var(--wine); cursor:pointer; border-top:1px solid var(--line);}
+  .header-overflow-item{display:block; width:100%; text-align:left; background:none; border:none; padding:13px 16px; font-family:var(--font-body); font-weight:700; font-size:14px; color:var(--wine); cursor:pointer; border-top:1px solid var(--line); white-space:nowrap;}
   .header-overflow-item:first-child{border-top:none;}
   .header-overflow-item.neutral{color:var(--ink);}
   .header-overflow-item:hover{background:var(--bg);}
@@ -213,7 +213,7 @@
   .year-evenings .evening-row{padding-left:10px;}
 
   label{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-soft); display:block; margin-bottom:6px;}
-  input[type="text"], input[type="date"], input[type="password"]{
+  input[type="text"], input[type="date"], input[type="password"], input[type="email"]{
     font-family:var(--font-body); font-size:15px; padding:10px 12px; border:1px solid var(--line);
     border-radius:8px; background:#fff; color:var(--ink); width:100%;
     -webkit-appearance:none; appearance:none; box-sizing:border-box; margin:0;
@@ -395,7 +395,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.45';
+  const APP_VERSION = '0.46';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -1876,6 +1876,8 @@
       <input type="text" id="new-last-name" placeholder="Nachname" value="${isEdit?escapeHtml(existingMember.lastName):''}">
       <label for="new-nickname">Spitzname (optional)</label>
       <input type="text" id="new-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt" value="${isEdit?escapeHtml(existingMember.nickname||''):''}">
+      <label for="new-email">E-Mail (optional)</label>
+      <input type="email" id="new-email" placeholder="name@beispiel.de" value="${isEdit?escapeHtml(existingMember.email||''):''}">
       <p class="form-error" id="member-form-error"></p>
       <div class="confirm-row-buttons">
         <button type="button" class="btn-primary" id="add-member-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
@@ -1888,15 +1890,17 @@
       const fn = document.getElementById('new-first-name').value.trim();
       const ln = document.getElementById('new-last-name').value.trim();
       const nick = document.getElementById('new-nickname').value.trim();
+      const email = document.getElementById('new-email').value.trim();
       const errEl = document.getElementById('member-form-error');
       if(!fn || !ln){ if(errEl) errEl.textContent='Bitte Vor- und Nachnamen angeben.'; return; }
+      if(email && !/^\S+@\S+\.\S+$/.test(email)){ if(errEl) errEl.textContent='Bitte eine gültige E-Mail-Adresse angeben.'; return; }
       const submitBtn = document.getElementById('add-member-btn');
       submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
       if(isEdit){
         const m = state.members.find(x=>x.id===existingMember.id);
-        if(m){ m.firstName=fn; m.lastName=ln; m.nickname=nick; }
+        if(m){ m.firstName=fn; m.lastName=ln; m.nickname=nick; m.email=email; }
       }else{
-        state.members.push({id:uid('m'), firstName:fn, lastName:ln, nickname:nick});
+        state.members.push({id:uid('m'), firstName:fn, lastName:ln, nickname:nick, email});
       }
       await setJSON('members', state.members, true);
       closeGenericModal();
