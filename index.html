@@ -294,10 +294,10 @@
   .fine-detail-icon svg{width:16px; height:16px; display:block;}
   .fine-detail-name{flex:1; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .fremdstrafe-tag{
-    display:inline-block; font-family:var(--font-mono); font-size:10px; text-transform:uppercase;
-    letter-spacing:0.04em; font-weight:700; color:var(--brass); background:var(--tint);
-    padding:2px 7px; border-radius:5px; margin-left:8px; vertical-align:middle;
+    display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px;
+    color:var(--brass); background:var(--tint); border-radius:5px; margin-left:8px; vertical-align:middle;
   }
+  .fremdstrafe-tag svg{width:13px; height:13px; display:block;}
   .fine-detail-controls{display:flex; align-items:center; gap:8px; flex-shrink:0;}
   .fine-minus-btn{
     width:28px; height:28px; border-radius:50%; border:1.5px solid var(--line); background:#fff;
@@ -395,7 +395,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.44';
+  const APP_VERSION = '0.45';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -1094,7 +1094,7 @@
       const isFremd = f.type==='fremdstrafe';
       return `
         <div class="fine-detail-row${closed?' readonly':''}" data-fine-id="${f.id}">
-          <span class="fine-detail-name">${escapeHtml(f.name)}${isFremd ? '<span class="fremdstrafe-tag">Fremdstrafe</span>' : ''}</span>
+          <span class="fine-detail-name">${escapeHtml(f.name)}${isFremd ? `<span class="fremdstrafe-tag" title="Fremdstrafe">${fineTypeIconSvg('fremdstrafe')}</span>` : ''}</span>
           <span class="fine-detail-controls">
             ${closed ? '' : `<button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>`}
             <span class="fine-detail-count">${count}×</span>
