@@ -390,7 +390,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.42';
+  const APP_VERSION = '0.43';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -1335,7 +1335,11 @@
       document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
       return;
     }
-    const memberSeats = detail.seating.filter(s=>s.name && !s.isGuest);
+    const bySeatIdForBulk = {};
+    detail.seating.forEach(s=>{ bySeatIdForBulk[s.seatId] = s; });
+    const interleavedSeatOrder = [];
+    for(let i=1;i<=6;i++){ interleavedSeatOrder.push('saal-'+i, 'kneipe-'+i); }
+    const memberSeats = interleavedSeatOrder.map(id=>bySeatIdForBulk[id]).filter(s=>s && s.name && !s.isGuest);
     const fineOptionsHtml = catalog.map(f=>`<option value="fine:${f.id}">${escapeHtml(f.name)} (${fmtEuro(f.amount)})</option>`).join('');
     const gameOptionsHtml = games.map(g=>`<option value="game:${g.id}">${escapeHtml(g.name)}</option>`).join('');
     const memberRowsHtml = memberSeats.length===0
@@ -1379,12 +1383,12 @@
 
     document.getElementById('bulk-select-saal-btn').addEventListener('click', ()=>{
       document.querySelectorAll('.bulk-member-checkbox').forEach(cb=>{
-        if(cb.dataset.seatId.startsWith('saal-')) cb.checked = true;
+        cb.checked = cb.dataset.seatId.startsWith('saal-');
       });
     });
     document.getElementById('bulk-select-kneipe-btn').addEventListener('click', ()=>{
       document.querySelectorAll('.bulk-member-checkbox').forEach(cb=>{
-        if(cb.dataset.seatId.startsWith('kneipe-')) cb.checked = true;
+        cb.checked = cb.dataset.seatId.startsWith('kneipe-');
       });
     });
 
