@@ -331,7 +331,7 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
 // Marker zum Erzwingen eines echten Redeploys (v2), falls ein vorheriger Deploy-Versuch
 // die Function auf Google-Seite in einem kaputten Zwischenzustand hinterlassen hat.
 
-const HOSTING_URL = 'https://die-pudolfs.web.app/';
+const HOSTING_URL = 'https://app.die-pudolfs.de/';
 
 exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   if (!request.auth) {
