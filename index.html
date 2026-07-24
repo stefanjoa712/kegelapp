@@ -438,7 +438,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.55';
+  const APP_VERSION = '0.56';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1242,7 +1242,7 @@
           <span class="fine-detail-name">${escapeHtml(f.name)}${isFremd ? `<span class="fremdstrafe-tag" title="Fremdstrafe">${fineTypeIconSvg('fremdstrafe')}</span>` : ''}</span>
           <span class="fine-detail-controls">
             ${closed ? '' : `<button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>`}
-            <span class="fine-detail-count">${count}×</span>
+            ${isRunde ? '' : `<span class="fine-detail-count">${count}×</span>`}
           </span>
           <span class="fine-detail-result">${resultDisplay}</span>
         </div>
