@@ -382,3 +382,29 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
 
   return { success: true };
 });
+
+// -------- Account-Verknüpfung eines Mitglieds aufheben --------
+
+exports.unlinkMemberAccount = onCall({}, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  const { email } = request.data || {};
+  if (!email || typeof email !== 'string') {
+    throw new HttpsError('invalid-argument', 'E-Mail-Adresse fehlt.');
+  }
+
+  const adminAuth = getAuth();
+  try {
+    const userRecord = await adminAuth.getUserByEmail(email);
+    await adminAuth.deleteUser(userRecord.uid);
+  } catch (e) {
+    if (e.code !== 'auth/user-not-found') {
+      logger.error(`Fehler beim Entfernen des Accounts für ${email}:`, e);
+      throw new HttpsError('internal', 'Account konnte nicht entfernt werden.');
+    }
+    // Account existierte bereits nicht mehr - für uns trotzdem ein Erfolg (idempotent).
+  }
+
+  return { success: true };
+});

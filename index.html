@@ -242,12 +242,16 @@
   .member-row-full{padding:9px 0; border-bottom:1px dashed var(--line);}
   .member-row-full:last-child{border-bottom:none;}
   .member-row-full .member-row{border-bottom:none; padding:0 0 4px;}
-  .member-account-row{display:flex; align-items:center;}
+  .member-account-row{display:flex; align-items:center; flex-wrap:wrap; gap:8px; row-gap:4px;}
   .member-account-status{font-size:12px; color:var(--muted);}
   .member-account-status.linked{color:var(--brass);}
   .invite-member-btn{
     font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.04em; font-weight:700;
     color:var(--wood); background:var(--tint); border:none; padding:5px 10px; border-radius:6px; cursor:pointer;
+  }
+  .unlink-account-btn{
+    font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.04em; font-weight:700;
+    color:var(--wine); background:none; border:none; padding:0; cursor:pointer; text-decoration:underline;
   }
   .fine-row-info{display:flex; align-items:center; gap:10px; min-width:0;}
   .drag-handle{cursor:grab; color:var(--muted); display:flex; align-items:center; justify-content:center; touch-action:none; flex-shrink:0;}
@@ -427,7 +431,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.49';
+  const APP_VERSION = '0.50';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -987,7 +991,10 @@
       statusHtml = `<span class="member-account-status muted">Keine E-Mail hinterlegt</span>`;
     }else if(m.hasAccount){
       const lastLoginText = m.lastLogin ? `zuletzt eingeloggt ${formatDateTimeDE(m.lastLogin)}` : 'noch nie eingeloggt';
-      statusHtml = `<span class="member-account-status linked">Account verknüpft · ${lastLoginText}</span>`;
+      statusHtml = `
+        <span class="member-account-status linked">Account verknüpft · ${lastLoginText}</span>
+        <button type="button" class="unlink-account-btn" data-id="${m.id}">Verknüpfung aufheben</button>
+      `;
     }else{
       statusHtml = `<button type="button" class="invite-member-btn" data-id="${m.id}">Einladen</button>`;
     }
@@ -1801,6 +1808,12 @@
         if(m) showInviteMemberModal(m);
       });
     });
+    document.querySelectorAll('.unlink-account-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const m = state.members.find(x=>x.id===b.dataset.id);
+        if(m) showUnlinkAccountModal(m);
+      });
+    });
   }
 
   function attachFinesManagementListeners(){
@@ -1939,6 +1952,36 @@
       await setJSON('members', state.members, true);
       closeGenericModal();
       render();
+    });
+  }
+
+  function showUnlinkAccountModal(member){
+    showModal(`
+      <h3>Verknüpfung aufheben</h3>
+      <p>Der Account von <strong>${escapeHtml(displayName(member))}</strong> (${escapeHtml(member.email)}) wird entfernt. Er/sie kann sich danach nicht mehr einloggen, bis eine neue Einladung verschickt wird. Der Login-Verlauf wird zurückgesetzt.</p>
+      <p class="form-error" id="unlink-account-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-unlink-yes">Verknüpfung aufheben</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-unlink-yes').addEventListener('click', async ()=>{
+      const btn = document.getElementById('confirm-unlink-yes');
+      const errEl = document.getElementById('unlink-account-error');
+      btn.disabled = true; btn.textContent = 'Wird entfernt…';
+      try{
+        const unlinkFn = httpsCallable(functions, 'unlinkMemberAccount');
+        await unlinkFn({ email: member.email });
+        const m = state.members.find(x=>x.id===member.id);
+        if(m){ m.hasAccount = false; m.lastLogin = null; }
+        await setJSON('members', state.members, true);
+        closeGenericModal();
+        render();
+      }catch(e){
+        btn.disabled = false; btn.textContent = 'Verknüpfung aufheben';
+        if(errEl) errEl.textContent = 'Konnte nicht entfernt werden. Bitte später erneut versuchen.';
+      }
     });
   }
 
