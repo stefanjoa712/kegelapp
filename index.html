@@ -217,7 +217,10 @@
   .evening-row:last-child{border-bottom:none;}
   .evening-row:hover .meta{color:var(--felt);}
   .evening-row .date{font-family:var(--font-display); font-size:16px; font-weight:600;}
-  .finance-total-card{background:var(--felt); text-align:center; padding:28px 20px;}
+  .finance-total-card{background:var(--felt); text-align:center; padding:28px 20px; cursor:pointer;}
+  .finance-tab-bar{padding:0; margin:14px 0 16px; background:var(--surface); border:2px solid var(--ink); border-radius:10px; overflow:hidden;}
+  .finance-tab-bar .tab-btn{color:var(--ink); background:none; border-radius:0;}
+  .finance-tab-bar .tab-btn.active{background:var(--wood); color:#fff;}
   .finance-total-amount{font-family:var(--font-display); font-size:36px; font-weight:700; color:#fff;}
   .finance-total-label{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:4px;}
   .transaction-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px; cursor:pointer;}
@@ -457,7 +460,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.63';
+  const APP_VERSION = '0.64';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -483,6 +486,8 @@
     gamesCatalog:[],
     financeAccounts:[],
     financeTransactions:[],
+    financeArrears:[],
+    financeTab:'umsaetze',
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -671,12 +676,16 @@
     state.view = 'finance';
     renderLoading('Finanzen werden geladen…');
     try{
-      const [accounts, transactions] = await Promise.all([
+      const [accounts, transactions, arrears, members] = await Promise.all([
         getJSONOrThrow('finance-accounts', []),
-        getJSONOrThrow('finance-transactions', [])
+        getJSONOrThrow('finance-transactions', []),
+        getJSONOrThrow('finance-arrears', []),
+        getJSONOrThrow('members', state.members)
       ]);
       state.financeAccounts = accounts;
       state.financeTransactions = transactions;
+      state.financeArrears = arrears;
+      state.members = members;
       state.view = 'finance';
       render();
     }catch(e){
@@ -864,8 +873,13 @@
   }
 
   function financeAccountRowHtml(acc){
-    return `<div class="member-row" data-id="${acc.id}">
-      <span class="fine-row-name">${escapeHtml(acc.name)}</span>
+    return `<div class="member-row draggable-row" data-id="${acc.id}">
+      <span class="fine-row-info">
+        <span class="drag-handle" aria-label="Verschieben">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+        </span>
+        <span class="fine-row-name">${escapeHtml(acc.name)}</span>
+      </span>
       <span class="row-actions">
         <span class="fine-row-amount">${fmtEuro(acc.startBalance)}</span>
         <button type="button" class="icon-btn edit-finance-account-btn" data-id="${acc.id}" aria-label="Bearbeiten">✎</button>
@@ -874,16 +888,15 @@
     </div>`;
   }
   function viewFinanceManagement(){
-    const sorted = state.financeAccounts.slice().sort((a,b)=> a.name.localeCompare(b.name,'de'));
-    const listHtml = sorted.length===0
+    const listHtml = state.financeAccounts.length===0
       ? `<p class="empty-state">Noch keine Konten &amp; Kassen angelegt. Füge oben rechts das erste hinzu.</p>`
-      : sorted.map(financeAccountRowHtml).join('');
+      : state.financeAccounts.map(financeAccountRowHtml).join('');
     return `
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Konten &amp; Kassen <span class="member-count">(${state.financeAccounts.length})</span></h2>
         </div>
-        ${listHtml}
+        <div id="finance-accounts-list-container">${listHtml}</div>
       </div>
     `;
   }
@@ -893,58 +906,111 @@
     return acc ? acc.name : 'Unbekanntes Konto';
   }
 
+  function financeAccountBalance(accountId){
+    const acc = state.financeAccounts.find(a=>a.id===accountId);
+    const start = acc ? acc.startBalance : 0;
+    const sum = state.financeTransactions.filter(t=>t.accountId===accountId).reduce((s,t)=> s+t.amount, 0);
+    return start + sum;
+  }
+
+  function buildFinanceTransactionsTab(){
+    const sorted = state.financeTransactions.slice().sort((a,b)=> b.date.localeCompare(a.date));
+    if(sorted.length===0){
+      return `<div class="card"><p class="empty-state">Noch keine Umsätze eingetragen. Über das „+" oben hinzufügen.</p></div>`;
+    }
+    const byYear = {};
+    sorted.forEach(t=>{
+      const year = t.date.slice(0,4);
+      (byYear[year] = byYear[year] || []).push(t);
+    });
+    const years = Object.keys(byYear).sort((a,b)=> b.localeCompare(a));
+    const listHtml = years.map(year=>{
+      const expanded = state.financeExpandedYears.has(year);
+      const rows = byYear[year].map(t=>{
+        const isPositive = t.amount>=0;
+        return `
+          <div class="transaction-row" data-id="${t.id}">
+            <span class="transaction-info">
+              <span class="transaction-description">${escapeHtml(t.description)}</span>
+              <span class="transaction-meta">${formatDateDE(t.date)} · ${escapeHtml(financeAccountNameById(t.accountId))}</span>
+            </span>
+            <span class="transaction-amount${isPositive?' positive':' negative'}">${isPositive?'+':''}${fmtEuro(t.amount)}</span>
+          </div>
+        `;
+      }).join('');
+      return `
+        <div class="year-group finance-year-group${expanded?' expanded':''}" data-year="${year}">
+          <div class="year-header finance-year-header">
+            <span>${year}</span>
+            <span class="chevron">▸</span>
+          </div>
+          <div class="year-evenings">${rows}</div>
+        </div>
+      `;
+    }).join('');
+    return `<div class="card"><h2 class="section-title">Umsätze</h2>${listHtml}</div>`;
+  }
+
+  function buildFinanceArrearsTab(){
+    const memberNames = new Set(state.members.map(m=>displayName(m)));
+    const memberRows = state.members.map(m=>{
+      const name = displayName(m);
+      const entry = state.financeArrears.find(a=>a.name===name);
+      return { name, amount: entry ? entry.amount : 0 };
+    });
+    const guestRows = state.financeArrears
+      .filter(a=> !memberNames.has(a.name) && a.amount>0)
+      .map(a=>({ name:a.name, amount:a.amount }));
+    const allRows = [...memberRows, ...guestRows].sort((a,b)=> b.amount-a.amount || a.name.localeCompare(b.name,'de'));
+    const rowsHtml = allRows.map(r=>{
+      const clickable = r.amount>0;
+      return `
+        <div class="fines-summary-row${clickable?'':' not-clickable'}"${clickable?` data-name="${escapeHtml(r.name)}" data-amount="${r.amount}"`:''}>
+          <span class="fines-summary-name">${escapeHtml(r.name)}</span>
+          <span class="fines-summary-amount">${fmtEuro(r.amount)}</span>
+        </div>
+      `;
+    }).join('');
+    return `<div class="card"><h2 class="section-title">Rückstände</h2>${rowsHtml}</div>`;
+  }
+
   function viewFinance(){
     const totalStartBalances = state.financeAccounts.reduce((sum,a)=> sum + a.startBalance, 0);
     const totalTransactions = state.financeTransactions.reduce((sum,t)=> sum + t.amount, 0);
     const totalAmount = totalStartBalances + totalTransactions;
 
-    const sorted = state.financeTransactions.slice().sort((a,b)=> b.date.localeCompare(a.date));
-    let listHtml;
-    if(sorted.length===0){
-      listHtml = `<p class="empty-state">Noch keine Umsätze eingetragen. Über das „+" oben hinzufügen.</p>`;
-    }else{
-      const byYear = {};
-      sorted.forEach(t=>{
-        const year = t.date.slice(0,4);
-        (byYear[year] = byYear[year] || []).push(t);
-      });
-      const years = Object.keys(byYear).sort((a,b)=> b.localeCompare(a));
-      listHtml = years.map(year=>{
-        const expanded = state.financeExpandedYears.has(year);
-        const rows = byYear[year].map(t=>{
-          const isPositive = t.amount>=0;
-          return `
-            <div class="transaction-row" data-id="${t.id}">
-              <span class="transaction-info">
-                <span class="transaction-description">${escapeHtml(t.description)}</span>
-                <span class="transaction-meta">${formatDateDE(t.date)} · ${escapeHtml(financeAccountNameById(t.accountId))}</span>
-              </span>
-              <span class="transaction-amount${isPositive?' positive':' negative'}">${isPositive?'+':''}${fmtEuro(t.amount)}</span>
-            </div>
-          `;
-        }).join('');
-        return `
-          <div class="year-group finance-year-group${expanded?' expanded':''}" data-year="${year}">
-            <div class="year-header finance-year-header">
-              <span>${year}</span>
-              <span class="chevron">▸</span>
-            </div>
-            <div class="year-evenings">${rows}</div>
-          </div>
-        `;
-      }).join('');
-    }
+    const tab = state.financeTab || 'umsaetze';
+    const tabBody = tab==='rueckstaende' ? buildFinanceArrearsTab() : buildFinanceTransactionsTab();
 
     return `
-      <div class="card finance-total-card">
+      <div class="card finance-total-card" id="finance-total-card-clickable">
         <div class="finance-total-amount">${fmtEuro(totalAmount)}</div>
         <div class="finance-total-label">Gesamtbetrag</div>
       </div>
-      <div class="card">
-        <h2 class="section-title">Umsätze</h2>
-        ${listHtml}
+      <div class="tab-bar finance-tab-bar">
+        <button type="button" class="tab-btn${tab==='umsaetze'?' active':''}" id="finance-tab-umsaetze-btn">Umsätze</button>
+        <button type="button" class="tab-btn${tab==='rueckstaende'?' active':''}" id="finance-tab-rueckstaende-btn">Rückstände</button>
       </div>
+      ${tabBody}
     `;
+  }
+
+  function showFinanceBreakdownModal(){
+    const rowsHtml = state.financeAccounts.map(a=>`
+      <div class="fines-summary-row not-clickable">
+        <span class="fines-summary-name">${escapeHtml(a.name)}</span>
+        <span class="fines-summary-amount">${fmtEuro(financeAccountBalance(a.id))}</span>
+      </div>
+    `).join('');
+    showModal(`
+      <h3>Aufteilung nach Konten</h3>
+      ${state.financeAccounts.length===0 ? `<p class="empty-state">Noch keine Konten angelegt.</p>` : rowsHtml}
+      <div class="confirm-row-buttons" style="margin-top:14px;">
+        <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+      </div>
+    `);
+    const closeBtn = document.getElementById('modal-cancel-btn');
+    if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
   }
 
   // ---------- Rendering ----------
@@ -1602,9 +1668,26 @@
       detail.closed = true;
       const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
       if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:true};
+
+      // Strafen aller Anwesenden (Mitglieder + Gäste) und Abwesenden zu den offenen Rückständen addieren.
+      let arrears = state.financeArrears;
+      try{ arrears = await getJSON('finance-arrears', true, state.financeArrears); }catch(e){}
+      function addToArrears(name, amount){
+        if(!amount) return;
+        let entry = arrears.find(a=>a.name===name);
+        if(!entry){ entry = {name, amount:0}; arrears.push(entry); }
+        entry.amount = Math.round((entry.amount + amount)*100)/100;
+      }
+      detail.seating.filter(s=>s.name).forEach(s=>{
+        addToArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
+      });
+      detail.absentMembersFines.forEach(a=>{ addToArrears(a.name, a.amount); });
+      state.financeArrears = arrears;
+
       await Promise.all([
         setJSON('evening-'+detail.id, detail, true),
-        setJSON('evenings-index', state.eveningsIndex, true)
+        setJSON('evenings-index', state.eveningsIndex, true),
+        setJSON('finance-arrears', arrears, true)
       ]);
       closeGenericModal();
       render();
@@ -2242,6 +2325,12 @@
     });
     const openAddFinanceBtn = document.getElementById('header-add-finance-account-btn');
     if(openAddFinanceBtn) openAddFinanceBtn.addEventListener('click', ()=>showFinanceAccountFormModal());
+    setupDragReorder('finance-accounts-list-container', async (newIdOrder)=>{
+      const byId = {};
+      state.financeAccounts.forEach(a=>{ byId[a.id]=a; });
+      state.financeAccounts = newIdOrder.map(id=>byId[id]).filter(Boolean);
+      await setJSON('finance-accounts', state.financeAccounts, true);
+    });
   }
 
   function attachFinanceListeners(){
@@ -2262,6 +2351,16 @@
     });
     const headerAddTxBtn = document.getElementById('header-add-transaction-btn');
     if(headerAddTxBtn) headerAddTxBtn.addEventListener('click', ()=>showTransactionFormModal());
+    const totalCard = document.getElementById('finance-total-card-clickable');
+    if(totalCard) totalCard.addEventListener('click', showFinanceBreakdownModal);
+    const tabUmsaetzeBtn = document.getElementById('finance-tab-umsaetze-btn');
+    if(tabUmsaetzeBtn) tabUmsaetzeBtn.addEventListener('click', ()=>{ state.financeTab='umsaetze'; render(); });
+    const tabRueckstaendeBtn = document.getElementById('finance-tab-rueckstaende-btn');
+    if(tabRueckstaendeBtn) tabRueckstaendeBtn.addEventListener('click', ()=>{ state.financeTab='rueckstaende'; render(); });
+    document.querySelectorAll('.fines-summary-row:not(.not-clickable)').forEach(row=>{
+      if(row.dataset.amount===undefined) return;
+      row.addEventListener('click', ()=>{ showConfirmArrearsPaymentModal(row.dataset.name, parseFloat(row.dataset.amount)); });
+    });
   }
 
   function renderGuestList(){
@@ -2679,6 +2778,69 @@
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.financeTransactions = state.financeTransactions.filter(t=>t.id!==transaction.id);
       await setJSON('finance-transactions', state.financeTransactions, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showConfirmArrearsPaymentModal(name, currentAmount){
+    if(state.financeAccounts.length===0){
+      showModal(`
+        <h3>${escapeHtml(name)}</h3>
+        <p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in den Einstellungen unter „Finanzverwaltung" eines an.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+      return;
+    }
+    const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
+    showModal(`
+      <h3>${escapeHtml(name)}</h3>
+      <div class="fines-summary-row not-clickable" style="padding:4px 0 14px;">
+        <span class="fines-summary-name">Offener Rückstand</span>
+        <span class="fines-summary-amount">${fmtEuro(currentAmount)}</span>
+      </div>
+      <label for="arrears-payment-amount">Zahlungsbetrag (€)</label>
+      <input type="number" id="arrears-payment-amount" min="0" step="0.01" placeholder="${currentAmount.toFixed(2)}">
+      <label for="arrears-payment-text">Buchungstext (optional)</label>
+      <input type="text" id="arrears-payment-text" placeholder="Bestätigte Zahlung">
+      <label for="arrears-payment-account">Konto/Kasse</label>
+      <select id="arrears-payment-account">${accountOptionsHtml}</select>
+      <label for="arrears-payment-date">Datum</label>
+      <input type="date" id="arrears-payment-date" value="${todayISO()}">
+      <p class="form-error" id="arrears-payment-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="confirm-arrears-payment-btn">Zahlungseingang bestätigen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('arrears-payment-amount').focus();
+    document.getElementById('confirm-arrears-payment-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('arrears-payment-error');
+      const amountRaw = document.getElementById('arrears-payment-amount').value.replace(',', '.');
+      const paidAmount = amountRaw==='' ? currentAmount : parseFloat(amountRaw);
+      const bookingText = document.getElementById('arrears-payment-text').value.trim() || 'Bestätigte Zahlung';
+      const accountId = document.getElementById('arrears-payment-account').value;
+      const date = document.getElementById('arrears-payment-date').value;
+      if(isNaN(paidAmount) || paidAmount<=0){ errEl.textContent='Bitte einen gültigen Zahlungsbetrag angeben.'; return; }
+      if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
+      const btn = document.getElementById('confirm-arrears-payment-btn');
+      btn.disabled = true; btn.textContent = 'Wird bestätigt…';
+
+      const rounded = Math.round(paidAmount*100)/100;
+      state.financeTransactions.push({id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded});
+
+      let entry = state.financeArrears.find(a=>a.name===name);
+      if(!entry){ entry = {name, amount:0}; state.financeArrears.push(entry); }
+      entry.amount = Math.max(0, Math.round((entry.amount - rounded)*100)/100);
+
+      await Promise.all([
+        setJSON('finance-transactions', state.financeTransactions, true),
+        setJSON('finance-arrears', state.financeArrears, true)
+      ]);
       closeGenericModal();
       render();
     });
