@@ -61,6 +61,12 @@
   .header-back-btn svg{width:26px; height:26px; display:block;}
   .header-delete-btn{background:none; border:none; padding:6px; margin:0 -6px 0 0; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
   .header-delete-btn svg{width:22px; height:22px; display:block;}
+  .header-add-fine-btn{
+    background:var(--wood); border:2px solid #fff; border-radius:50%; width:38px; height:38px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; color:#fff; flex-shrink:0;
+    margin:0 -4px 0 0; box-shadow:0 2px 5px rgba(0,0,0,0.35);
+  }
+  .header-add-fine-btn svg{width:20px; height:20px; display:block;}
   .header-title{font-family:var(--font-display); font-size:19px; font-weight:700; margin:0; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:38px; line-height:38px; box-sizing:border-box; flex:1; min-width:0;}
 
   .tab-bar{display:flex; gap:8px; padding:0 16px 14px;}
@@ -214,6 +220,11 @@
 
   .member-row{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px dashed var(--line);}
   .fine-row-info{display:flex; align-items:center; gap:10px; min-width:0;}
+  .drag-handle{cursor:grab; color:var(--muted); display:flex; align-items:center; justify-content:center; touch-action:none; flex-shrink:0;}
+  .drag-handle svg{width:18px; height:18px; display:block;}
+  .draggable-row.dragging{box-shadow:0 4px 12px rgba(0,0,0,0.25); background:var(--surface); border-radius:8px; opacity:0.95;}
+  .drag-placeholder{background:var(--bg); border:2px dashed var(--line); border-radius:8px; margin:2px 0;}
+  .game-type-badge{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); background:var(--bg); padding:4px 8px; border-radius:6px; white-space:nowrap;}
   .fine-type-icon{width:22px; height:22px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
   .fine-type-icon svg{width:16px; height:16px; display:block;}
   .fine-row-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
@@ -269,6 +280,8 @@
   .fine-minus-btn:hover{border-color:var(--wine); color:var(--wine);}
   .fine-detail-count{font-family:var(--font-mono); font-weight:700; min-width:26px; text-align:center;}
   .fine-detail-result{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft); min-width:66px; text-align:right; flex-shrink:0;}
+  .adhoc-fine-row{display:flex; align-items:center; gap:10px; padding:12px 2px; border-bottom:1px dashed var(--line);}
+  .adhoc-fine-row:last-child{border-bottom:none;}
   .muted{color:var(--muted); font-size:13px; margin:0;}
 
   .hint{background:var(--tint); border:1px solid var(--brass); color:var(--ink); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:6px;}
@@ -354,7 +367,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.37';
+  const APP_VERSION = '0.38';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -378,6 +391,7 @@
     members:[],
     eveningsIndex:[],
     finesCatalog:[],
+    gamesCatalog:[],
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -539,8 +553,19 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToFinesManagement);
     }
   }
+  async function goToGamesManagement(){
+    state.view = 'gamesManagement';
+    renderLoading('Spiele werden geladen…');
+    try{
+      state.gamesCatalog = await getJSONOrThrow('games-catalog', []);
+      state.view = 'gamesManagement';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToGamesManagement);
+    }
+  }
   function goBackFromHeader(){
-    if(state.view==='settings' || state.view==='finesManagement') goToSettingsMenu();
+    if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement') goToSettingsMenu();
     else if(state.view==='personFineDetail'){ state.view='detail'; render(); }
     else goToMain();
   }
@@ -585,6 +610,22 @@
               <path d="M9 6l6 6-6 6"/>
             </svg>
           </button>
+          <button type="button" class="settings-menu-item" id="settings-menu-spiele-btn">
+            <span class="settings-menu-item-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="4"/>
+                <circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"/>
+                <circle cx="16" cy="8" r="1.3" fill="currentColor" stroke="none"/>
+                <circle cx="8" cy="16" r="1.3" fill="currentColor" stroke="none"/>
+                <circle cx="16" cy="16" r="1.3" fill="currentColor" stroke="none"/>
+                <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/>
+              </svg>
+            </span>
+            <span class="settings-menu-item-label">Spieleverwaltung</span>
+            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
         </div>
       </div>
     `;
@@ -608,8 +649,11 @@
     return '';
   }
   function fineRowHtml(fine){
-    return `<div class="member-row" data-id="${fine.id}">
+    return `<div class="member-row draggable-row" data-id="${fine.id}">
       <span class="fine-row-info">
+        <span class="drag-handle" aria-label="Verschieben">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+        </span>
         <span class="fine-type-icon" title="${escapeHtml(fineTypeLabel(fine.type))}">${fineTypeIconSvg(fine.type)}</span>
         <span class="fine-row-name">${escapeHtml(fine.name)}</span>
       </span>
@@ -621,15 +665,45 @@
     </div>`;
   }
   function viewFinesManagement(){
-    const sorted = state.finesCatalog.slice().sort((a,b)=> a.amount-b.amount);
-    const listHtml = sorted.length===0
+    const listHtml = state.finesCatalog.length===0
       ? `<p class="empty-state">Noch keine Strafen angelegt. Füge oben rechts die erste hinzu.</p>`
-      : sorted.map(fineRowHtml).join('');
+      : state.finesCatalog.map(fineRowHtml).join('');
     return `
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Strafen <span class="member-count">(${state.finesCatalog.length})</span></h2>
           <button type="button" class="btn-icon-add" id="open-add-fine-btn" aria-label="Strafe hinzufügen">+</button>
+        </div>
+        <div id="fines-list-container">${listHtml}</div>
+      </div>
+    `;
+  }
+
+  function gameTypeLabel(type){
+    if(type==='group') return 'Gruppenspiel';
+    if(type==='single') return 'Einzelspiel';
+    return type;
+  }
+  function gameRowHtml(game){
+    return `<div class="member-row" data-id="${game.id}">
+      <span class="fine-row-name">${escapeHtml(game.name)}</span>
+      <span class="row-actions">
+        <span class="game-type-badge">${escapeHtml(gameTypeLabel(game.type))}</span>
+        <button type="button" class="icon-btn edit-game-btn" data-id="${game.id}" aria-label="Bearbeiten">✎</button>
+        <button type="button" class="icon-btn delete-game-btn" data-id="${game.id}" aria-label="Löschen">✕</button>
+      </span>
+    </div>`;
+  }
+  function viewGamesManagement(){
+    const sorted = state.gamesCatalog.slice().sort((a,b)=> a.name.localeCompare(b.name,'de'));
+    const listHtml = sorted.length===0
+      ? `<p class="empty-state">Noch keine Spiele angelegt. Füge oben rechts das erste hinzu.</p>`
+      : sorted.map(gameRowHtml).join('');
+    return `
+      <div class="card">
+        <div class="settings-header-row">
+          <h2 class="section-title">Spiele <span class="member-count">(${state.gamesCatalog.length})</span></h2>
+          <button type="button" class="btn-icon-add" id="open-add-game-btn" aria-label="Spiel hinzufügen">+</button>
         </div>
         ${listHtml}
       </div>
@@ -645,7 +719,7 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement';
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement';
     const activeTab = isSettingsActive ? 'settings' : (isTodayActive ? 'today' : 'overview');
     const todayButtonHtml = todayEve ? `
         <button type="button" class="bottom-nav-item${activeTab==='today'?' active':''}" id="nav-today-btn">
@@ -690,6 +764,7 @@
     if(sig==='settingsMenu') return '#einstellungen';
     if(sig==='settings') return '#mitglieder';
     if(sig==='finesManagement') return '#strafen';
+    if(sig==='gamesManagement') return '#spiele';
     if(sig==='new') return '#neuer-abend';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
@@ -702,6 +777,7 @@
     else if(state.view==='settingsMenu') body = viewSettingsMenu();
     else if(state.view==='settings') body = viewSettings();
     else if(state.view==='finesManagement') body = viewFinesManagement();
+    else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
     else if(state.view==='personFineDetail') body = viewPersonFineDetail();
@@ -726,6 +802,8 @@
         await goToSettings();
       }else if(sig==='finesManagement'){
         await goToFinesManagement();
+      }else if(sig==='gamesManagement'){
+        await goToGamesManagement();
       }else if(sig==='new'){
         goToNew();
       }else if(sig.startsWith('detail:')){
@@ -864,6 +942,8 @@
       const count = entries[f.id] || 0;
       total += count * f.amount;
     });
+    const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
+    adHocList.forEach(a=>{ total += a.amount; });
     return total;
   }
 
@@ -913,10 +993,29 @@
         </div>
       `;
     }).join('');
+    const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
+    adHocList.forEach(a=>{ total += a.amount; });
+    const adHocRowsHtml = adHocList.map(a=>`
+      <div class="adhoc-fine-row" data-id="${a.id}">
+        <span class="fine-detail-name">${escapeHtml(a.name)}</span>
+        <span class="fine-detail-result">${fmtEuro(a.amount)}</span>
+        <span class="row-actions">
+          <button type="button" class="icon-btn edit-adhoc-btn" data-id="${a.id}" aria-label="Bearbeiten">✎</button>
+          <button type="button" class="icon-btn delete-adhoc-btn" data-id="${a.id}" aria-label="Löschen">✕</button>
+        </span>
+      </div>
+    `).join('');
     return `
       <div class="card">
+        <h3 class="section-title-small">Strafen</h3>
         ${catalog.length===0 ? `<p class="empty-state">Für diesen Abend sind keine Strafen hinterlegt.</p>` : rowsHtml}
-        ${catalog.length>0 ? `<div class="stat-total"><span>Gesamt</span><span>${fmtEuro(total)}</span></div>` : ''}
+      </div>
+      <div class="card">
+        <h3 class="section-title-small">Geldstrafen</h3>
+        ${adHocList.length===0 ? `<p class="empty-state">Noch keine Geldstrafen. Über das „+" oben hinzufügen.</p>` : adHocRowsHtml}
+      </div>
+      <div class="card">
+        <div class="stat-total"><span>Gesamt</span><span>${fmtEuro(total)}</span></div>
       </div>
     `;
   }
@@ -930,6 +1029,90 @@
     detail.finesBySeat[seatId][fineId] = Math.max(0, current + delta);
     render();
     await setJSON('evening-'+detail.id, detail, true);
+  }
+
+  async function showAddGeldstrafeModal(existingAdHoc){
+    const isEdit = !!existingAdHoc;
+    try{ state.gamesCatalog = await getJSON('games-catalog', true, state.gamesCatalog); }catch(e){}
+    const matchingGame = isEdit ? state.gamesCatalog.find(g=>g.name===existingAdHoc.name) : null;
+    const showCustom = isEdit && !matchingGame;
+    const gameOptionsHtml = state.gamesCatalog.map(g=>`<option value="${escapeHtml(g.id)}"${matchingGame && matchingGame.id===g.id ? ' selected' : ''}>${escapeHtml(g.name)}</option>`).join('');
+    showModal(`
+      <h3>${isEdit ? 'Geldstrafe bearbeiten' : 'Geldstrafe hinzufügen'}</h3>
+      <label for="geldstrafe-name-select">Name</label>
+      <select id="geldstrafe-name-select">
+        ${gameOptionsHtml}
+        <option value="__sonstiges__"${showCustom || state.gamesCatalog.length===0 ? ' selected' : ''}>Sonstiges</option>
+      </select>
+      <div id="geldstrafe-custom-name-wrap" style="${(showCustom || state.gamesCatalog.length===0) ? '' : 'display:none;'}">
+        <label for="geldstrafe-custom-name">Bezeichnung</label>
+        <input type="text" id="geldstrafe-custom-name" placeholder="z. B. Verlorene Wette" value="${showCustom?escapeHtml(existingAdHoc.name):''}">
+      </div>
+      <label for="geldstrafe-amount">Betrag (€)</label>
+      <input type="number" id="geldstrafe-amount" min="0" step="0.01" placeholder="2,00" value="${isEdit?existingAdHoc.amount.toFixed(2):''}">
+      <p class="form-error" id="geldstrafe-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="save-geldstrafe-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    const selectEl = document.getElementById('geldstrafe-name-select');
+    const customWrap = document.getElementById('geldstrafe-custom-name-wrap');
+    selectEl.addEventListener('change', ()=>{
+      customWrap.style.display = selectEl.value==='__sonstiges__' ? '' : 'none';
+    });
+    document.getElementById('save-geldstrafe-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('geldstrafe-form-error');
+      let name;
+      if(selectEl.value==='__sonstiges__'){
+        name = document.getElementById('geldstrafe-custom-name').value.trim();
+        if(!name){ if(errEl) errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+      }else{
+        const game = state.gamesCatalog.find(g=>g.id===selectEl.value);
+        if(!game){ if(errEl) errEl.textContent='Bitte ein Spiel auswählen.'; return; }
+        name = game.name;
+      }
+      const amountRaw = document.getElementById('geldstrafe-amount').value.replace(',', '.');
+      const amount = parseFloat(amountRaw);
+      if(isNaN(amount) || amount<0){ if(errEl) errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
+      const submitBtn = document.getElementById('save-geldstrafe-btn');
+      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+      const rounded = Math.round(amount*100)/100;
+      const detail = state.currentEveningDetail;
+      const seatId = state.currentFineSeatId;
+      if(!detail.adHocFinesBySeat) detail.adHocFinesBySeat = {};
+      if(!detail.adHocFinesBySeat[seatId]) detail.adHocFinesBySeat[seatId] = [];
+      if(isEdit){
+        const entry = detail.adHocFinesBySeat[seatId].find(x=>x.id===existingAdHoc.id);
+        if(entry){ entry.name=name; entry.amount=rounded; }
+      }else{
+        detail.adHocFinesBySeat[seatId].push({id:uid('adhoc'), name, amount:rounded});
+      }
+      await setJSON('evening-'+detail.id, detail, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showDeleteAdHocFineModal(adHocFine){
+    showModal(`
+      <h3>Geldstrafe löschen</h3>
+      <p>„${escapeHtml(adHocFine.name)}" (${fmtEuro(adHocFine.amount)}) wirklich löschen?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-adhoc-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-adhoc-yes').addEventListener('click', async ()=>{
+      const detail = state.currentEveningDetail;
+      const seatId = state.currentFineSeatId;
+      detail.adHocFinesBySeat[seatId] = (detail.adHocFinesBySeat[seatId]||[]).filter(x=>x.id!==adHocFine.id);
+      await setJSON('evening-'+detail.id, detail, true);
+      closeGenericModal();
+      render();
+    });
   }
 
   function buildSeatingSVG(detail){
@@ -1030,6 +1213,7 @@
     if(state.view==='settingsMenu') title = 'Einstellungen';
     else if(state.view==='settings') title = 'Mitgliederverwaltung';
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
+    else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
     else if(state.view==='personFineDetail') title = state.currentFineName || '';
@@ -1041,6 +1225,15 @@
           <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
           <path d="M10 11v6M14 11v6"/>
           <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+      </button>
+    ` : '';
+
+    const addFineBtnHtml = state.view==='personFineDetail' ? `
+      <button type="button" class="header-add-fine-btn" id="header-add-fine-btn" aria-label="Geldstrafe hinzufügen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
       </button>
     ` : '';
@@ -1060,7 +1253,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${deleteBtnHtml}
+        ${deleteBtnHtml}${addFineBtnHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -1105,6 +1298,7 @@
     else if(state.view==='settingsMenu') attachSettingsMenuListeners();
     else if(state.view==='settings') attachSettingsListeners();
     else if(state.view==='finesManagement') attachFinesManagementListeners();
+    else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
     else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
@@ -1115,6 +1309,8 @@
     if(mitgliederBtn) mitgliederBtn.addEventListener('click', goToSettings);
     const strafenBtn = document.getElementById('settings-menu-strafen-btn');
     if(strafenBtn) strafenBtn.addEventListener('click', goToFinesManagement);
+    const spieleBtn = document.getElementById('settings-menu-spiele-btn');
+    if(spieleBtn) spieleBtn.addEventListener('click', goToGamesManagement);
   }
 
   // Eigenständige Fehleransicht mit "Erneut versuchen"-Button - für Fälle, in denen eine
@@ -1203,6 +1399,29 @@
     });
     const openAddFineBtn = document.getElementById('open-add-fine-btn');
     if(openAddFineBtn) openAddFineBtn.addEventListener('click', ()=>showFineFormModal());
+    setupDragReorder('fines-list-container', async (newIdOrder)=>{
+      const byId = {};
+      state.finesCatalog.forEach(f=>{ byId[f.id]=f; });
+      state.finesCatalog = newIdOrder.map(id=>byId[id]).filter(Boolean);
+      await setJSON('fines-catalog', state.finesCatalog, true);
+    });
+  }
+
+  function attachGamesManagementListeners(){
+    document.querySelectorAll('.edit-game-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const g = state.gamesCatalog.find(x=>x.id===b.dataset.id);
+        if(g) showGameFormModal(g);
+      });
+    });
+    document.querySelectorAll('.delete-game-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const g = state.gamesCatalog.find(x=>x.id===b.dataset.id);
+        if(g) showDeleteGameModal(g);
+      });
+    });
+    const openAddGameBtn = document.getElementById('open-add-game-btn');
+    if(openAddGameBtn) openAddGameBtn.addEventListener('click', ()=>showGameFormModal());
   }
 
   function renderGuestList(){
@@ -1406,6 +1625,116 @@
     });
   }
 
+  function showDeleteGameModal(game){
+    showModal(`
+      <h3>Spiel löschen</h3>
+      <p>„${escapeHtml(game.name)}" wirklich löschen?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-game-modal-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-game-modal-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-game-modal-yes');
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      state.gamesCatalog = state.gamesCatalog.filter(g=>g.id!==game.id);
+      await setJSON('games-catalog', state.gamesCatalog, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showGameFormModal(existingGame){
+    const isEdit = !!existingGame;
+    showModal(`
+      <h3>${isEdit ? 'Spiel bearbeiten' : 'Spiel hinzufügen'}</h3>
+      <label for="new-game-name">Name</label>
+      <input type="text" id="new-game-name" placeholder="z. B. Bierlauf" value="${isEdit?escapeHtml(existingGame.name):''}">
+      <label for="new-game-type">Spielart</label>
+      <select id="new-game-type">
+        <option value="group"${(!isEdit || existingGame.type==='group')?' selected':''}>Gruppenspiel</option>
+        <option value="single"${(isEdit && existingGame.type==='single')?' selected':''}>Einzelspiel</option>
+      </select>
+      <p class="form-error" id="game-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="add-game-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('new-game-name').focus();
+    document.getElementById('add-game-btn').addEventListener('click', async ()=>{
+      const name = document.getElementById('new-game-name').value.trim();
+      const type = document.getElementById('new-game-type').value;
+      const errEl = document.getElementById('game-form-error');
+      if(!name){ if(errEl) errEl.textContent='Bitte einen Namen angeben.'; return; }
+      const submitBtn = document.getElementById('add-game-btn');
+      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+      if(isEdit){
+        const g = state.gamesCatalog.find(x=>x.id===existingGame.id);
+        if(g){ g.name=name; g.type=type; }
+      }else{
+        state.gamesCatalog.push({id:uid('game'), name, type});
+      }
+      await setJSON('games-catalog', state.gamesCatalog, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  // ---------- Drag & Drop zum manuellen Sortieren (Pointer Events, touch- und mausfähig) ----------
+  function setupDragReorder(containerId, onReorder){
+    const container = document.getElementById(containerId);
+    if(!container) return;
+    container.querySelectorAll('.draggable-row').forEach(row=>{
+      const handle = row.querySelector('.drag-handle');
+      if(!handle) return;
+      handle.addEventListener('pointerdown', (e)=>{
+        e.preventDefault();
+        const startY = e.clientY;
+        const rect = row.getBoundingClientRect();
+        const placeholder = document.createElement('div');
+        placeholder.className = 'drag-placeholder';
+        placeholder.style.height = rect.height+'px';
+        row.after(placeholder);
+        row.classList.add('dragging');
+        row.style.position='fixed';
+        row.style.zIndex='999';
+        row.style.width=rect.width+'px';
+        row.style.left=rect.left+'px';
+        row.style.top=rect.top+'px';
+        row.style.pointerEvents='none';
+
+        function onMove(ev){
+          row.style.top = (rect.top + (ev.clientY-startY)) + 'px';
+          const siblings = Array.from(container.querySelectorAll('.draggable-row:not(.dragging)'));
+          let placed = false;
+          for(const sib of siblings){
+            const sRect = sib.getBoundingClientRect();
+            if(ev.clientY < sRect.top + sRect.height/2){
+              container.insertBefore(placeholder, sib);
+              placed = true;
+              break;
+            }
+          }
+          if(!placed) container.appendChild(placeholder);
+        }
+        function onUp(){
+          document.removeEventListener('pointermove', onMove);
+          document.removeEventListener('pointerup', onUp);
+          row.style.position=''; row.style.zIndex=''; row.style.width=''; row.style.left=''; row.style.top=''; row.style.pointerEvents='';
+          row.classList.remove('dragging');
+          placeholder.replaceWith(row);
+          const newIdOrder = Array.from(container.querySelectorAll('.draggable-row')).map(el=>el.dataset.id);
+          onReorder(newIdOrder);
+        }
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+      });
+    });
+  }
+
   async function handleConfirmNewEvening(){
     const dateInput = document.getElementById('date-input');
     const date = (dateInput && dateInput.value) ? dateInput.value : todayISO();
@@ -1555,6 +1884,26 @@
       btn.addEventListener('click', (e)=>{
         e.stopPropagation();
         adjustFineCount(btn.dataset.fineId, -1);
+      });
+    });
+    const headerAddFineBtn = document.getElementById('header-add-fine-btn');
+    if(headerAddFineBtn) headerAddFineBtn.addEventListener('click', ()=>showAddGeldstrafeModal());
+    document.querySelectorAll('.edit-adhoc-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const detail = state.currentEveningDetail;
+        const seatId = state.currentFineSeatId;
+        const list = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
+        const entry = list.find(x=>x.id===btn.dataset.id);
+        if(entry) showAddGeldstrafeModal(entry);
+      });
+    });
+    document.querySelectorAll('.delete-adhoc-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const detail = state.currentEveningDetail;
+        const seatId = state.currentFineSeatId;
+        const list = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
+        const entry = list.find(x=>x.id===btn.dataset.id);
+        if(entry) showDeleteAdHocFineModal(entry);
       });
     });
   }
