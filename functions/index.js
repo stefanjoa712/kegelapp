@@ -170,6 +170,126 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function buildReopenEmailHtml(name, dateStr) {
+  return `
+    <div style="font-family:sans-serif; color:#161616; max-width:480px;">
+      <p>Hallo ${escapeHtml(name)},</p>
+      <p>beim Kegelabend am <strong>${dateStr}</strong> gab es scheinbar einen Fehler in der Strafenberechnung.</p>
+      <p><strong>Du kannst die vorherige E-Mail zu diesem Abend ignorieren – aktuell muss nichts bezahlt werden.</strong></p>
+      <p>Sobald der Abend erneut abgeschlossen wird, bekommst du eine neue, korrigierte E-Mail mit den aktuellen Strafen.</p>
+      <p>Kegelgruß,<br>Die Pudolfs</p>
+    </div>
+  `;
+}
+
+async function loadMembers() {
+  const membersSnap = await db.collection('kegelbuch').doc('members').get();
+  if (!membersSnap.exists) { logger.warn('Keine Mitgliederliste gefunden.'); return null; }
+  try { return JSON.parse(membersSnap.data().value || '[]'); } catch (e) {
+    logger.error('Konnte Mitgliederliste nicht parsen', e);
+    return null;
+  }
+}
+
+function formatEveningDate(detail) {
+  return new Date(detail.date + 'T12:00:00').toLocaleDateString('de-DE', {
+    day: '2-digit', month: '2-digit', year: 'numeric'
+  });
+}
+
+// Sammelt alle Empfänger (Anwesende + Abwesende mit Durchschnittsbetrag) mit gepflegter E-Mail.
+function collectRecipientNames(detail, members) {
+  const names = [];
+  detail.seating.filter(s => s.name && !s.isGuest).forEach(s => { names.push(s.name); });
+  (detail.absentMembersFines || []).forEach(a => { names.push(a.name); });
+  const result = [];
+  names.forEach(name => {
+    const member = members.find(m => displayName(m) === name);
+    if (member && member.email) result.push({ name, email: member.email });
+  });
+  return result;
+}
+
+async function handleEveningClosed(after, docId) {
+  const members = await loadMembers();
+  if (!members) return;
+
+  const resend = new Resend(resendApiKey.value());
+  const dateStr = formatEveningDate(after);
+  const recipients = [];
+
+  const presentSeats = after.seating.filter(s => s.name && !s.isGuest);
+  presentSeats.forEach(s => {
+    const member = members.find(m => displayName(m) === s.name);
+    if (member && member.email) {
+      recipients.push({
+        email: member.email,
+        name: s.name,
+        catalogLines: buildCatalogLines(after, s.seatId),
+        fremdstrafeLines: buildFremdstrafeChargeLines(after, s.seatId),
+        adHocLines: buildAdHocLines(after, s.seatId),
+        total: fineTotalForSeat(after, s.seatId),
+      });
+    }
+  });
+
+  (after.absentMembersFines || []).forEach(a => {
+    const member = members.find(m => displayName(m) === a.name);
+    if (member && member.email) {
+      recipients.push({
+        email: member.email,
+        name: a.name,
+        catalogLines: [],
+        fremdstrafeLines: [],
+        adHocLines: [{ label: 'Durchschnittsbetrag (nicht anwesend)', amount: a.amount }],
+        total: a.amount,
+      });
+    }
+  });
+
+  logger.info(`Sende Strafen-E-Mails für Abend ${docId} an ${recipients.length} Empfänger.`);
+
+  for (const r of recipients) {
+    const roundedTotal = roundUpToFiftyCents(r.total);
+    const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal);
+    try {
+      await resend.emails.send({
+        from: FROM_ADDRESS,
+        to: r.email,
+        subject: `Deine Strafen vom Kegelabend am ${dateStr}`,
+        html,
+      });
+    } catch (err) {
+      logger.error(`Fehler beim Senden an ${r.email}:`, err);
+    }
+  }
+}
+
+async function handleEveningReopened(before, docId) {
+  const members = await loadMembers();
+  if (!members) return;
+
+  const resend = new Resend(resendApiKey.value());
+  const dateStr = formatEveningDate(before);
+  const recipients = collectRecipientNames(before, members);
+
+  logger.info(`Sende Korrektur-E-Mails (Wiedereröffnung) für Abend ${docId} an ${recipients.length} Empfänger.`);
+
+  for (const r of recipients) {
+    const html = buildReopenEmailHtml(r.name, dateStr);
+    try {
+      await resend.emails.send({
+        from: FROM_ADDRESS,
+        to: r.email,
+        subject: `Kegelabend am ${dateStr} wurde erneut geöffnet`,
+        html,
+      });
+    } catch (err) {
+      logger.error(`Fehler beim Senden an ${r.email}:`, err);
+    }
+  }
+}
+
 // -------- Die eigentliche Cloud Function --------
 
 exports.sendFineEmailsOnClose = onDocumentUpdated(
@@ -194,68 +314,13 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
 
     const wasClosed = !!(before && before.closed);
     const isClosed = !!(after && after.closed);
-    // Nur beim Übergang offen -> abgeschlossen aktiv werden (nicht bei jeder Änderung).
-    if (!isClosed || wasClosed) return;
 
-    const membersSnap = await db.collection('kegelbuch').doc('members').get();
-    if (!membersSnap.exists) { logger.warn('Keine Mitgliederliste gefunden.'); return; }
-    let members = [];
-    try { members = JSON.parse(membersSnap.data().value || '[]'); } catch (e) {
-      logger.error('Konnte Mitgliederliste nicht parsen', e);
-      return;
+    if (isClosed && !wasClosed) {
+      await handleEveningClosed(after, docId);
+    } else if (!isClosed && wasClosed) {
+      await handleEveningReopened(before, docId);
     }
-
-    const resend = new Resend(resendApiKey.value());
-    const dateStr = new Date(after.date + 'T12:00:00').toLocaleDateString('de-DE', {
-      day: '2-digit', month: '2-digit', year: 'numeric'
-    });
-
-    const recipients = [];
-
-    const presentSeats = after.seating.filter(s => s.name && !s.isGuest);
-    presentSeats.forEach(s => {
-      const member = members.find(m => displayName(m) === s.name);
-      if (member && member.email) {
-        recipients.push({
-          email: member.email,
-          name: s.name,
-          catalogLines: buildCatalogLines(after, s.seatId),
-          fremdstrafeLines: buildFremdstrafeChargeLines(after, s.seatId),
-          adHocLines: buildAdHocLines(after, s.seatId),
-          total: fineTotalForSeat(after, s.seatId),
-        });
-      }
-    });
-
-    (after.absentMembersFines || []).forEach(a => {
-      const member = members.find(m => displayName(m) === a.name);
-      if (member && member.email) {
-        recipients.push({
-          email: member.email,
-          name: a.name,
-          catalogLines: [],
-          fremdstrafeLines: [],
-          adHocLines: [{ label: 'Durchschnittsbetrag (nicht anwesend)', amount: a.amount }],
-          total: a.amount,
-        });
-      }
-    });
-
-    logger.info(`Sende Strafen-E-Mails für Abend ${docId} an ${recipients.length} Empfänger.`);
-
-    for (const r of recipients) {
-      const roundedTotal = roundUpToFiftyCents(r.total);
-      const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal);
-      try {
-        await resend.emails.send({
-          from: FROM_ADDRESS,
-          to: r.email,
-          subject: `Deine Strafen vom Kegelabend am ${dateStr}`,
-          html,
-        });
-      } catch (err) {
-        logger.error(`Fehler beim Senden an ${r.email}:`, err);
-      }
-    }
+    // Sonst: keine für E-Mails relevante Änderung (z.B. nur eine Strafe angepasst) - nichts tun.
   }
 );
+
