@@ -255,6 +255,8 @@
   .bulk-member-left{display:flex; align-items:center; gap:10px; flex:1 1 50%; min-width:0; cursor:pointer;}
   .bulk-member-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .bulk-member-amount{flex:0 0 50%; width:50% !important; max-width:50%; margin:0 !important; box-sizing:border-box;}
+  .bulk-quick-select-row{display:flex; gap:8px; margin-bottom:10px;}
+  .bulk-quick-btn{flex:1; padding:8px 10px !important; font-size:13px !important;}
   .schriftfuehrer-row{border-bottom:none; margin-top:10px;}
   .member-check-row:last-child{border-bottom:none;}
   .member-check-row input[type="checkbox"]{width:18px; height:18px; accent-color:var(--felt); flex-shrink:0;}
@@ -291,6 +293,7 @@
   .fine-detail-icon{width:20px; height:20px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
   .fine-detail-icon svg{width:16px; height:16px; display:block;}
   .fine-detail-name{flex:1; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .fremdstrafe-hint{font-size:11px; font-weight:400; font-style:italic; color:var(--muted); margin-left:6px;}
   .fine-detail-controls{display:flex; align-items:center; gap:8px; flex-shrink:0;}
   .fine-minus-btn{
     width:28px; height:28px; border-radius:50%; border:1.5px solid var(--line); background:#fff;
@@ -387,7 +390,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.40';
+  const APP_VERSION = '0.41';
   const APP_VERSION_DATE = '23.07.2026';
 
   const SEATS = [
@@ -1012,6 +1015,19 @@
     });
     const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
     adHocList.forEach(a=>{ total += a.amount; });
+
+    // Fremdstrafen: wer sie auslöst zahlt selbst nichts, stattdessen zahlen alle anderen Anwesenden.
+    const fremdstrafeFines = catalog.filter(f=>f.type==='fremdstrafe');
+    if(fremdstrafeFines.length>0){
+      const otherPresentSeats = detail.seating.filter(s=>s.name && s.seatId!==seatId);
+      fremdstrafeFines.forEach(f=>{
+        otherPresentSeats.forEach(s=>{
+          const otherEntries = (detail.finesBySeat && detail.finesBySeat[s.seatId]) || {};
+          const count = otherEntries[f.id] || 0;
+          total += count * f.amount;
+        });
+      });
+    }
     return total;
   }
   function roundedFineTotalForSeat(detail, seatId){
@@ -1066,15 +1082,14 @@
     const seatId = state.currentFineSeatId;
     const closed = !!detail.closed;
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
-    const catalog = (detail.finesCatalogSnapshot || []).filter(f=>f.type!=='fremdstrafe');
-    let total = 0;
+    const catalog = detail.finesCatalogSnapshot || [];
     const rowsHtml = catalog.map(f=>{
       const count = entries[f.id] || 0;
       const result = count * f.amount;
-      total += result;
+      const isFremd = f.type==='fremdstrafe';
       return `
         <div class="fine-detail-row${closed?' readonly':''}" data-fine-id="${f.id}">
-          <span class="fine-detail-name">${escapeHtml(f.name)}</span>
+          <span class="fine-detail-name">${escapeHtml(f.name)}${isFremd ? '<span class="fremdstrafe-hint">wird auf alle anderen Anwesenden umgelegt</span>' : ''}</span>
           <span class="fine-detail-controls">
             ${closed ? '' : `<button type="button" class="fine-minus-btn" data-fine-id="${f.id}" aria-label="Um 1 verringern">−</button>`}
             <span class="fine-detail-count">${count}×</span>
@@ -1083,8 +1098,26 @@
         </div>
       `;
     }).join('');
+
+    const otherPresentSeats = detail.seating.filter(s=>s.name && s.seatId!==seatId);
+    const fremdstrafeChargeRows = [];
+    catalog.filter(f=>f.type==='fremdstrafe').forEach(f=>{
+      otherPresentSeats.forEach(s=>{
+        const otherEntries = (detail.finesBySeat && detail.finesBySeat[s.seatId]) || {};
+        const count = otherEntries[f.id] || 0;
+        if(count>0){
+          fremdstrafeChargeRows.push(`
+            <div class="fine-detail-row fremdstrafe-charge-row readonly">
+              <span class="fine-detail-name">Fremdstrafe „${escapeHtml(f.name)}“ durch „${escapeHtml(s.name)}“</span>
+              <span class="fine-detail-controls"><span class="fine-detail-count">${count}×</span></span>
+              <span class="fine-detail-result">${fmtEuro(count*f.amount)}</span>
+            </div>
+          `);
+        }
+      });
+    });
+
     const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
-    adHocList.forEach(a=>{ total += a.amount; });
     const adHocRowsHtml = adHocList.map(a=>`
       <div class="adhoc-fine-row" data-id="${a.id}">
         <span class="fine-detail-name">${escapeHtml(a.name)}</span>
@@ -1096,11 +1129,18 @@
         </span>`}
       </div>
     `).join('');
+
+    const total = fineTotalForSeat(detail, seatId);
     return `
       <div class="card">
         <h3 class="section-title-small">Strafen</h3>
         ${catalog.length===0 ? `<p class="empty-state">Für diesen Abend sind keine Strafen hinterlegt.</p>` : rowsHtml}
       </div>
+      ${fremdstrafeChargeRows.length>0 ? `
+      <div class="card">
+        <h3 class="section-title-small">Fremdstrafen von anderen</h3>
+        ${fremdstrafeChargeRows.join('')}
+      </div>` : ''}
       <div class="card">
         <h3 class="section-title-small">Geldstrafen</h3>
         ${adHocList.length===0 ? `<p class="empty-state">Noch keine Geldstrafen.${closed?'':' Über das „+“ oben hinzufügen.'}</p>` : adHocRowsHtml}
@@ -1317,6 +1357,10 @@
         ${games.length>0 ? `<optgroup label="Spiele">${gameOptionsHtml}</optgroup>` : ''}
       </select>
       <label>Mitglieder</label>
+      <div class="bulk-quick-select-row">
+        <button type="button" class="btn-secondary bulk-quick-btn" id="bulk-select-saal-btn">Saal</button>
+        <button type="button" class="btn-secondary bulk-quick-btn" id="bulk-select-kneipe-btn">Kneipe</button>
+      </div>
       <div id="bulk-members-list">${memberRowsHtml}</div>
       <p class="form-error" id="bulk-fine-form-error"></p>
       <div class="confirm-row-buttons">
@@ -1332,6 +1376,17 @@
     }
     selectEl.addEventListener('change', updateAmountVisibility);
     updateAmountVisibility();
+
+    document.getElementById('bulk-select-saal-btn').addEventListener('click', ()=>{
+      document.querySelectorAll('.bulk-member-checkbox').forEach(cb=>{
+        if(cb.dataset.seatId.startsWith('saal-')) cb.checked = true;
+      });
+    });
+    document.getElementById('bulk-select-kneipe-btn').addEventListener('click', ()=>{
+      document.querySelectorAll('.bulk-member-checkbox').forEach(cb=>{
+        if(cb.dataset.seatId.startsWith('kneipe-')) cb.checked = true;
+      });
+    });
 
     document.getElementById('bulk-add-confirm-btn').addEventListener('click', async ()=>{
       const errEl = document.getElementById('bulk-fine-form-error');
@@ -2170,7 +2225,7 @@
   function attachPersonFineDetailListeners(){
     const closed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
     if(!closed){
-      document.querySelectorAll('.fine-detail-row').forEach(row=>{
+      document.querySelectorAll('.fine-detail-row:not(.fremdstrafe-charge-row)').forEach(row=>{
         row.addEventListener('click', (e)=>{
           if(e.target.closest('.fine-minus-btn')) return;
           adjustFineCount(row.dataset.fineId, 1);
