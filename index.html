@@ -224,6 +224,7 @@
   .finance-total-amount{font-family:var(--font-display); font-size:36px; font-weight:700; color:#fff;}
   .finance-total-label{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:4px;}
   .transaction-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px; cursor:pointer;}
+  .transaction-row.not-clickable{cursor:default;}
   .transaction-row:last-child{border-bottom:none;}
   .transaction-info{display:flex; flex-direction:column; min-width:0;}
   .transaction-description{font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
@@ -460,7 +461,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.64';
+  const APP_VERSION = '0.65';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -928,10 +929,11 @@
       const expanded = state.financeExpandedYears.has(year);
       const rows = byYear[year].map(t=>{
         const isPositive = t.amount>=0;
+        const locked = !!t.fromArrears;
         return `
-          <div class="transaction-row" data-id="${t.id}">
+          <div class="transaction-row${locked?' not-clickable':''}" ${locked?'':`data-id="${t.id}"`}>
             <span class="transaction-info">
-              <span class="transaction-description">${escapeHtml(t.description)}</span>
+              <span class="transaction-description">${escapeHtml(t.description)}${locked?' <span class="fine-type-icon" title="Aus Rückstandszahlung, nicht bearbeitbar" style="display:inline-flex; width:14px; height:14px; vertical-align:middle;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>':''}</span>
               <span class="transaction-meta">${formatDateDE(t.date)} · ${escapeHtml(financeAccountNameById(t.accountId))}</span>
             </span>
             <span class="transaction-amount${isPositive?' positive':' negative'}">${isPositive?'+':''}${fmtEuro(t.amount)}</span>
@@ -961,7 +963,7 @@
     const guestRows = state.financeArrears
       .filter(a=> !memberNames.has(a.name) && a.amount>0)
       .map(a=>({ name:a.name, amount:a.amount }));
-    const allRows = [...memberRows, ...guestRows].sort((a,b)=> b.amount-a.amount || a.name.localeCompare(b.name,'de'));
+    const allRows = [...memberRows, ...guestRows].sort((a,b)=> a.name.localeCompare(b.name,'de'));
     const rowsHtml = allRows.map(r=>{
       const clickable = r.amount>0;
       return `
@@ -2343,7 +2345,7 @@
         if(isExpanded) state.financeExpandedYears.add(year); else state.financeExpandedYears.delete(year);
       });
     });
-    document.querySelectorAll('.transaction-row').forEach(row=>{
+    document.querySelectorAll('.transaction-row:not(.not-clickable)').forEach(row=>{
       row.addEventListener('click', ()=>{
         const t = state.financeTransactions.find(x=>x.id===row.dataset.id);
         if(t) showTransactionFormModal(t);
@@ -2831,7 +2833,7 @@
       btn.disabled = true; btn.textContent = 'Wird bestätigt…';
 
       const rounded = Math.round(paidAmount*100)/100;
-      state.financeTransactions.push({id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded});
+      state.financeTransactions.push({id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded, fromArrears:true});
 
       let entry = state.financeArrears.find(a=>a.name===name);
       if(!entry){ entry = {name, amount:0}; state.financeArrears.push(entry); }
