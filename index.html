@@ -438,7 +438,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.58';
+  const APP_VERSION = '0.59';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -863,6 +863,7 @@
   }
 
   function render(){
+    if(window.__resetPullIndicator) window.__resetPullIndicator();
     const app = document.getElementById('app');
     let body = '';
     if(state.view==='main') body = viewMain();
@@ -2680,6 +2681,7 @@
       if(container){ container.classList.remove('pull-dragging'); container.style.transform=''; }
       currentPull = 0;
     }
+    window.__resetPullIndicator = resetIndicator;
 
     async function doRefresh(){
       const el = getIndicator();
