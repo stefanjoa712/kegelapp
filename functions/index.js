@@ -73,22 +73,24 @@ function fineTotalForSeat(detail, seatId) {
   return total;
 }
 
-// Liste der einzelnen Strafen-Zeilen für die E-Mail (Name + Betrag).
-function buildFineLines(detail, seatId) {
+// Drei Bereiche - exakt wie auf der Strafenseite pro Person in der App.
+
+function buildCatalogLines(detail, seatId) {
   const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
   const catalog = detail.finesCatalogSnapshot || [];
   const lines = [];
-
   catalog.forEach(f => {
     if (f.type === 'fremdstrafe') return;
     const count = entries[f.id] || 0;
     if (count > 0) lines.push({ label: `${f.name} (${count}×)`, amount: count * f.amount });
   });
+  return lines;
+}
 
-  const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
-  adHocList.forEach(a => { lines.push({ label: a.name, amount: a.amount }); });
-
+function buildFremdstrafeChargeLines(detail, seatId) {
+  const catalog = detail.finesCatalogSnapshot || [];
   const otherPresentSeats = detail.seating.filter(s => s.name && s.seatId !== seatId);
+  const lines = [];
   catalog.filter(f => f.type === 'fremdstrafe').forEach(f => {
     otherPresentSeats.forEach(s => {
       const otherEntries = (detail.finesBySeat && detail.finesBySeat[s.seatId]) || {};
@@ -96,20 +98,69 @@ function buildFineLines(detail, seatId) {
       if (count > 0) lines.push({ label: `${f.name} durch ${s.name} (${count}×)`, amount: count * f.amount });
     });
   });
-
   return lines;
 }
 
-function buildEmailHtml(name, dateStr, lines, roundedTotal) {
-  const linesHtml = lines.length
-    ? lines.map(l => `<li>${escapeHtml(l.label)}: ${fmtEuro(l.amount)}</li>`).join('')
-    : '<li>Keine Strafen für diesen Abend.</li>';
+function buildAdHocLines(detail, seatId) {
+  const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
+  return adHocList.map(a => ({ label: a.name, amount: a.amount }));
+}
+
+const PAYPAL_ME_USERNAME = 'diepudolfs';
+
+function buildPaypalLink(amount) {
+  // PayPal.me erwartet einen Punkt als Dezimaltrennzeichen, kein Komma.
+  const amountStr = amount.toFixed(2);
+  return `https://paypal.com/paypalme/${PAYPAL_ME_USERNAME}/${amountStr}`;
+}
+
+function buildSectionHtml(title, lines) {
+  if (lines.length === 0) return '';
+  const rows = lines.map(l => `
+    <tr>
+      <td style="padding:6px 0; border-bottom:1px dashed #e5e1d8;">${escapeHtml(l.label)}</td>
+      <td style="padding:6px 0; border-bottom:1px dashed #e5e1d8; text-align:right; white-space:nowrap;">${fmtEuro(l.amount)}</td>
+    </tr>
+  `).join('');
+  return `
+    <h3 style="font-size:14px; text-transform:uppercase; letter-spacing:0.04em; color:#4a4642; margin:20px 0 6px;">${title}</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:15px;">${rows}</table>
+  `;
+}
+
+function buildEmailHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactTotal, roundedTotal) {
+  const hasAnyLines = catalogLines.length + fremdstrafeLines.length + adHocLines.length > 0;
+  const emptyHtml = hasAnyLines ? '' : '<p>Keine Strafen für diesen Abend.</p>';
+  const paypalLink = buildPaypalLink(roundedTotal);
+
   return `
     <div style="font-family:sans-serif; color:#161616; max-width:480px;">
       <p>Hallo ${escapeHtml(name)},</p>
       <p>hier deine Strafen vom Kegelabend am <strong>${dateStr}</strong>:</p>
-      <ul style="padding-left:18px;">${linesHtml}</ul>
-      <p style="font-size:17px;"><strong>Gesamt: ${fmtEuro(roundedTotal)}</strong></p>
+      ${emptyHtml}
+      ${buildSectionHtml('Strafen', catalogLines)}
+      ${buildSectionHtml('Fremdstrafen', fremdstrafeLines)}
+      ${buildSectionHtml('Geldstrafen', adHocLines)}
+
+      <div style="margin-top:18px; padding-top:10px; border-top:2px solid #161616;">
+        <table style="width:100%; border-collapse:collapse;">
+          <tr>
+            <td style="font-size:13px; color:#9a9186; padding:2px 0;">Gesamt (genau)</td>
+            <td style="font-size:13px; color:#9a9186; padding:2px 0; text-align:right;">${fmtEuro(exactTotal)}</td>
+          </tr>
+          <tr>
+            <td style="font-size:18px; font-weight:800; padding:4px 0;">Gesamt (gerundet)</td>
+            <td style="font-size:18px; font-weight:800; padding:4px 0; text-align:right;">${fmtEuro(roundedTotal)}</td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="margin-top:22px;">
+        <a href="${paypalLink}" style="display:inline-block; background:#E3421F; color:#fff; font-weight:800; text-decoration:none; padding:12px 22px; border-radius:8px;">
+          Jetzt ${fmtEuro(roundedTotal)} per PayPal bezahlen
+        </a>
+      </p>
+
       <p>Kegelgruß,<br>Die Pudolfs</p>
     </div>
   `;
@@ -168,7 +219,9 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
         recipients.push({
           email: member.email,
           name: s.name,
-          lines: buildFineLines(after, s.seatId),
+          catalogLines: buildCatalogLines(after, s.seatId),
+          fremdstrafeLines: buildFremdstrafeChargeLines(after, s.seatId),
+          adHocLines: buildAdHocLines(after, s.seatId),
           total: fineTotalForSeat(after, s.seatId),
         });
       }
@@ -180,7 +233,9 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
         recipients.push({
           email: member.email,
           name: a.name,
-          lines: [{ label: 'Durchschnittsbetrag (nicht anwesend)', amount: a.amount }],
+          catalogLines: [],
+          fremdstrafeLines: [],
+          adHocLines: [{ label: 'Durchschnittsbetrag (nicht anwesend)', amount: a.amount }],
           total: a.amount,
         });
       }
@@ -190,7 +245,7 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
 
     for (const r of recipients) {
       const roundedTotal = roundUpToFiftyCents(r.total);
-      const html = buildEmailHtml(r.name, dateStr, r.lines, roundedTotal);
+      const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal);
       try {
         await resend.emails.send({
           from: FROM_ADDRESS,
