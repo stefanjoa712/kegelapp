@@ -470,7 +470,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.71';
+  const APP_VERSION = '0.72';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -3487,6 +3487,10 @@
       // iOS berechnet env(safe-area-inset-bottom) beim allerersten Rendern manchmal fälschlich als 0.
       // Ein Reflow kurz nach dem ersten Paint behebt das (kein sichtbares Flackern, da gleicher Inhalt).
       requestAnimationFrame(()=> requestAnimationFrame(()=> render()));
+      // Bekannter iOS-Standalone-PWA-Trick: ein winziger echter Scroll zwingt WebKit dazu,
+      // die tatsächliche Bildschirmgröße/Safe-Area beim Kaltstart korrekt neu zu berechnen.
+      window.scrollTo(0, 1);
+      requestAnimationFrame(()=>{ window.scrollTo(0, 0); });
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
     }catch(e){
