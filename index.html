@@ -470,7 +470,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.70';
+  const APP_VERSION = '0.71';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -3484,6 +3484,9 @@
       state.financeArrears = arrears;
       state.view = 'main';
       render();
+      // iOS berechnet env(safe-area-inset-bottom) beim allerersten Rendern manchmal fälschlich als 0.
+      // Ein Reflow kurz nach dem ersten Paint behebt das (kein sichtbares Flackern, da gleicher Inhalt).
+      requestAnimationFrame(()=> requestAnimationFrame(()=> render()));
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
     }catch(e){
