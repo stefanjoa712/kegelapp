@@ -480,7 +480,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.76';
+  const APP_VERSION = '0.77';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1878,6 +1878,85 @@
     });
   }
 
+  // Nächster freier Platz nach den bestehenden Regeln: Seite mit weniger Besetzung zuerst
+  // (Balance halten), darin der niedrigste freie Platz (von vorne füllen).
+  function nextFreeSeatId(detail){
+    const occupied = new Set(detail.seating.filter(s=>s.name).map(s=>s.seatId));
+    const saalCount = detail.seating.filter(s=>s.seatId.startsWith('saal-') && s.name).length;
+    const kneipeCount = detail.seating.filter(s=>s.seatId.startsWith('kneipe-') && s.name).length;
+    const preferred = kneipeCount < saalCount ? 'kneipe' : 'saal';
+    const sections = [preferred, preferred==='saal'?'kneipe':'saal'];
+    for(const section of sections){
+      for(let i=1;i<=6;i++){
+        const seatId = section+'-'+i;
+        if(!occupied.has(seatId)) return seatId;
+      }
+    }
+    return null;
+  }
+
+  function showAddAttendeeModal(){
+    const detail = state.currentEveningDetail;
+    const seatId = nextFreeSeatId(detail);
+    if(!seatId){
+      showModal(`
+        <h3>Mitglied/Gast hinzufügen</h3>
+        <p class="empty-state">Alle Plätze sind bereits belegt.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+      return;
+    }
+    const seatedNames = new Set(detail.seating.filter(s=>s.name).map(s=>s.name));
+    const availableMembers = state.members.filter(m=> !seatedNames.has(displayName(m)));
+    const memberOptionsHtml = availableMembers.map(m=>`<option value="${m.id}">${escapeHtml(displayName(m))}</option>`).join('');
+    const noMembersLeft = availableMembers.length===0;
+    showModal(`
+      <h3>Mitglied/Gast hinzufügen</h3>
+      <label for="add-attendee-select">Person</label>
+      <select id="add-attendee-select">
+        ${memberOptionsHtml}
+        <option value="__guest__"${noMembersLeft?' selected':''}>Gast (Freitext)</option>
+      </select>
+      <div id="add-attendee-guest-wrap" style="${noMembersLeft?'':'display:none;'}">
+        <label for="add-attendee-guest-name">Name des Gasts</label>
+        <input type="text" id="add-attendee-guest-name" placeholder="Name">
+      </div>
+      <p class="form-error" id="add-attendee-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="confirm-add-attendee-btn">Hinzufügen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    const selectEl = document.getElementById('add-attendee-select');
+    const guestWrap = document.getElementById('add-attendee-guest-wrap');
+    selectEl.addEventListener('change', ()=>{ guestWrap.style.display = selectEl.value==='__guest__' ? '' : 'none'; });
+    document.getElementById('confirm-add-attendee-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('add-attendee-error');
+      let name, isGuest;
+      if(selectEl.value==='__guest__'){
+        name = document.getElementById('add-attendee-guest-name').value.trim();
+        if(!name){ errEl.textContent='Bitte einen Namen angeben.'; return; }
+        isGuest = true;
+      }else{
+        const member = availableMembers.find(m=>m.id===selectEl.value);
+        if(!member){ errEl.textContent='Bitte eine Person auswählen.'; return; }
+        name = displayName(member);
+        isGuest = false;
+      }
+      const btn = document.getElementById('confirm-add-attendee-btn');
+      btn.disabled = true; btn.textContent = 'Wird hinzugefügt…';
+      const seat = detail.seating.find(s=>s.seatId===seatId);
+      if(seat){ seat.name = name; seat.isGuest = isGuest; }
+      await setJSON('evening-'+detail.id, detail, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
   async function showBulkAddFineModal(){
     const detail = state.currentEveningDetail;
     try{ state.gamesCatalog = await getJSON('games-catalog', true, state.gamesCatalog); }catch(e){}
@@ -2140,6 +2219,7 @@
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
         </button>
         <div class="header-overflow-menu" id="header-overflow-menu" hidden>
+          ${isClosed ? '' : `<button type="button" class="header-overflow-item neutral" id="header-add-attendee-btn">Mitglied/Gast hinzufügen</button>`}
           ${isClosed
             ? `<button type="button" class="header-overflow-item neutral" id="header-overflow-reopen-btn">Kegelabend wieder öffnen</button>`
             : `<button type="button" class="header-overflow-item neutral" id="header-overflow-close-btn">Kegelabend abschließen</button>`
@@ -3333,6 +3413,11 @@
     if(overflowCloseBtn) overflowCloseBtn.addEventListener('click', ()=>{
       if(overflowMenu) overflowMenu.hidden = true;
       showCloseEveningModal();
+    });
+    const overflowAddAttendeeBtn = document.getElementById('header-add-attendee-btn');
+    if(overflowAddAttendeeBtn) overflowAddAttendeeBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      showAddAttendeeModal();
     });
     const overflowReopenBtn = document.getElementById('header-overflow-reopen-btn');
     if(overflowReopenBtn) overflowReopenBtn.addEventListener('click', ()=>{
