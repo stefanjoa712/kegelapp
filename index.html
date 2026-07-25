@@ -470,7 +470,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.72';
+  const APP_VERSION = '0.73';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -3491,6 +3491,16 @@
       // die tatsächliche Bildschirmgröße/Safe-Area beim Kaltstart korrekt neu zu berechnen.
       window.scrollTo(0, 1);
       requestAnimationFrame(()=>{ window.scrollTo(0, 0); });
+      // Test: ein echter Navigations-Zyklus (mit Hash-Wechsel) scheint das Problem zu beheben,
+      // ein reiner Neu-Render nicht. Simuliere daher kurz einen Wechsel und zurück (kein Netzwerk nötig).
+      setTimeout(()=>{
+        if(state.view==='main'){
+          state.view = 'settingsMenu';
+          render();
+          state.view = 'main';
+          render();
+        }
+      }, 150);
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
     }catch(e){
