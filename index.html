@@ -480,7 +480,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.78';
+  const APP_VERSION = '0.79';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -510,6 +510,7 @@
     financeTab:'umsaetze',
     currentArrearsName:'',
     currentTransactionId:null,
+    financeRecurring:[],
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -689,7 +690,12 @@
     state.view = 'financeManagement';
     renderLoading('Konten werden geladen…');
     try{
-      state.financeAccounts = await getJSONOrThrow('finance-accounts', []);
+      const [accounts, recurring] = await Promise.all([
+        getJSONOrThrow('finance-accounts', []),
+        getJSONOrThrow('finance-recurring', [])
+      ]);
+      state.financeAccounts = accounts;
+      state.financeRecurring = recurring;
       state.view = 'financeManagement';
       render();
     }catch(e){
@@ -786,10 +792,10 @@
           <button type="button" class="settings-menu-item" id="settings-menu-finanzen-btn">
             <span class="settings-menu-item-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2.5" y="6" width="19" height="13" rx="2"/>
-                <circle cx="12" cy="12.5" r="3.2"/>
-                <line x1="6" y1="6" x2="6" y2="4.5"/>
-                <line x1="18" y1="6" x2="18" y2="4.5"/>
+                <circle cx="12" cy="12" r="9.5"/>
+                <path d="M15.2 8.7a4 5 0 0 0-3.4-1.7c-2.5 0-4.5 2.4-4.5 5s2 5 4.5 5a4 5 0 0 0 3.4-1.7"/>
+                <line x1="6.5" y1="10.6" x2="13" y2="10.6"/>
+                <line x1="6.5" y1="13.4" x2="13" y2="13.4"/>
               </svg>
             </span>
             <span class="settings-menu-item-label">Finanzverwaltung</span>
@@ -917,17 +923,54 @@
     </div>`;
   }
   function viewFinanceManagement(){
-    const listHtml = state.financeAccounts.length===0
-      ? `<p class="empty-state">Noch keine Konten &amp; Kassen angelegt. Füge oben rechts das erste hinzu.</p>`
+    const accountsListHtml = state.financeAccounts.length===0
+      ? `<p class="empty-state">Noch keine Konten &amp; Kassen angelegt. Über das „+" oben hinzufügen.</p>`
       : state.financeAccounts.map(financeAccountRowHtml).join('');
+    const sortedRecurring = state.financeRecurring.slice().sort((a,b)=> a.nextDate.localeCompare(b.nextDate));
+    const recurringListHtml = sortedRecurring.length===0
+      ? `<p class="empty-state">Noch keine monatlichen Buchungen angelegt. Über das „+" oben hinzufügen.</p>`
+      : sortedRecurring.map(recurringRowHtml).join('');
     return `
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Konten &amp; Kassen <span class="member-count">(${state.financeAccounts.length})</span></h2>
+          <button type="button" class="header-circle-btn" id="header-add-finance-account-btn" aria-label="Konto hinzufügen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
         </div>
-        <div id="finance-accounts-list-container">${listHtml}</div>
+        <div id="finance-accounts-list-container">${accountsListHtml}</div>
+      </div>
+      <div class="card">
+        <div class="settings-header-row">
+          <h2 class="section-title">Monatliche Buchungen <span class="member-count">(${state.financeRecurring.length})</span></h2>
+          <button type="button" class="header-circle-btn" id="header-add-recurring-btn" aria-label="Monatliche Buchung hinzufügen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+        </div>
+        <div id="finance-recurring-list-container">${recurringListHtml}</div>
       </div>
     `;
+  }
+
+  function recurringRowHtml(r){
+    const isPositive = r.amount>=0;
+    return `<div class="member-row-full" data-id="${r.id}">
+      <div class="member-row">
+        <span class="transaction-info">
+          <span class="transaction-description">${escapeHtml(r.description)}</span>
+          <span class="transaction-meta">Nächste Ausführung: ${formatDateDE(r.nextDate)} · ${escapeHtml(financeAccountNameById(r.accountId))}</span>
+        </span>
+        <span class="row-actions">
+          <span class="fine-row-amount ${isPositive?'':'amount-due'}">${isPositive?'+':''}${fmtEuro(r.amount)}</span>
+          <button type="button" class="icon-btn edit-recurring-btn" data-id="${r.id}" aria-label="Bearbeiten">✎</button>
+          <button type="button" class="icon-btn delete-recurring-btn" data-id="${r.id}" aria-label="Löschen">✕</button>
+        </span>
+      </div>
+    </div>`;
   }
 
   function financeAccountNameById(accountId){
@@ -2233,7 +2276,6 @@
       settings: { id: 'header-add-member-btn', label: 'Mitglied hinzufügen' },
       finesManagement: { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' },
       gamesManagement: { id: 'header-add-game-btn', label: 'Spiel hinzufügen' },
-      financeManagement: { id: 'header-add-finance-account-btn', label: 'Konto hinzufügen' },
       finance: { id: 'header-add-transaction-btn', label: 'Umsatz hinzufügen' },
     }[state.view];
     const settingsAddBtnHtml = settingsAddBtnConfig ? `
@@ -2366,7 +2408,7 @@
     else if(state.view==='settings') attachSettingsListeners();
     else if(state.view==='finesManagement') attachFinesManagementListeners();
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
-    else if(state.view==='financeManagement') attachFinanceManagementListeners();
+    else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
     else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='arrearsDetail') attachArrearsDetailListeners();
     else if(state.view==='transactionDetail') attachTransactionDetailListeners();
@@ -2539,6 +2581,23 @@
       state.financeAccounts = newIdOrder.map(id=>byId[id]).filter(Boolean);
       await setJSON('finance-accounts', state.financeAccounts, true);
     });
+  }
+
+  function attachFinanceRecurringListeners(){
+    document.querySelectorAll('.edit-recurring-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const r = state.financeRecurring.find(x=>x.id===b.dataset.id);
+        if(r) showRecurringFormModal(r);
+      });
+    });
+    document.querySelectorAll('.delete-recurring-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const r = state.financeRecurring.find(x=>x.id===b.dataset.id);
+        if(r) showDeleteRecurringModal(r);
+      });
+    });
+    const openAddRecurringBtn = document.getElementById('header-add-recurring-btn');
+    if(openAddRecurringBtn) openAddRecurringBtn.addEventListener('click', ()=>showRecurringFormModal());
   }
 
   function attachFinanceListeners(){
@@ -2919,6 +2978,92 @@
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.financeAccounts = state.financeAccounts.filter(a=>a.id!==acc.id);
       await setJSON('finance-accounts', state.financeAccounts, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showDeleteRecurringModal(r){
+    showModal(`
+      <h3>Monatliche Buchung löschen</h3>
+      <p>„${escapeHtml(r.description)}" wirklich löschen?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-recurring-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-recurring-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-recurring-yes');
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      state.financeRecurring = state.financeRecurring.filter(x=>x.id!==r.id);
+      await setJSON('finance-recurring', state.financeRecurring, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showRecurringFormModal(existingRecurring){
+    const isEdit = !!existingRecurring;
+    if(state.financeAccounts.length===0){
+      showModal(`
+        <h3>Monatliche Buchung hinzufügen</h3>
+        <p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst oben eines an.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+      return;
+    }
+    const isExpenseEdit = isEdit && existingRecurring.amount<0;
+    const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${(isEdit && existingRecurring.accountId===a.id)?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
+    showModal(`
+      <h3>${isEdit ? 'Monatliche Buchung bearbeiten' : 'Monatliche Buchung hinzufügen'}</h3>
+      <label for="new-rec-description">Bezeichnung</label>
+      <input type="text" id="new-rec-description" placeholder="z. B. Bahnmiete" value="${isEdit?escapeHtml(existingRecurring.description):''}">
+      <label for="new-rec-account">Konto/Kasse</label>
+      <select id="new-rec-account">${accountOptionsHtml}</select>
+      <label for="new-rec-income">Einnahme (€)</label>
+      <input type="number" id="new-rec-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(existingRecurring.amount).toFixed(2):''}">
+      <label for="new-rec-expense">Ausgabe (€)</label>
+      <input type="number" id="new-rec-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(existingRecurring.amount).toFixed(2):''}">
+      <label for="new-rec-next-date">Nächste Ausführung</label>
+      <input type="date" id="new-rec-next-date" value="${isEdit?existingRecurring.nextDate:todayISO()}">
+      <p class="form-error" id="rec-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="save-rec-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('new-rec-description').focus();
+    document.getElementById('save-rec-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('rec-form-error');
+      const description = document.getElementById('new-rec-description').value.trim();
+      const accountId = document.getElementById('new-rec-account').value;
+      const incomeRaw = document.getElementById('new-rec-income').value.replace(',', '.');
+      const expenseRaw = document.getElementById('new-rec-expense').value.replace(',', '.');
+      const income = incomeRaw==='' ? 0 : parseFloat(incomeRaw);
+      const expense = expenseRaw==='' ? 0 : parseFloat(expenseRaw);
+      const nextDate = document.getElementById('new-rec-next-date').value;
+
+      if(!description){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+      if(!nextDate){ errEl.textContent='Bitte die nächste Ausführung angeben.'; return; }
+      if(isNaN(income) || isNaN(expense) || income<0 || expense<0){ errEl.textContent='Bitte gültige Beträge angeben.'; return; }
+      if((income>0) === (expense>0)){ errEl.textContent='Bitte entweder eine Einnahme oder eine Ausgabe angeben (nicht beides oder keins).'; return; }
+
+      const amount = income>0 ? Math.round(income*100)/100 : -Math.round(expense*100)/100;
+      const btn = document.getElementById('save-rec-btn');
+      btn.disabled = true; btn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+
+      if(isEdit){
+        const r = state.financeRecurring.find(x=>x.id===existingRecurring.id);
+        if(r){ r.description=description; r.accountId=accountId; r.amount=amount; r.nextDate=nextDate; }
+      }else{
+        state.financeRecurring.push({id:uid('rec'), description, accountId, amount, nextDate});
+      }
+      await setJSON('finance-recurring', state.financeRecurring, true);
       closeGenericModal();
       render();
     });
