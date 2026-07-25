@@ -480,7 +480,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.75';
+  const APP_VERSION = '0.76';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -509,6 +509,7 @@
     financeArrears:[],
     financeTab:'umsaetze',
     currentArrearsName:'',
+    currentTransactionId:null,
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -722,7 +723,7 @@
   }
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement') goToSettingsMenu();
-    else if(state.view==='personFineDetail' || state.view==='arrearsDetail'){ history.back(); }
+    else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
   }
   function goToNew(){
@@ -1099,6 +1100,7 @@
     if(state.view==='personFineDetail' && state.currentEveningDetail) return 'personFine:'+state.currentEveningDetail.id+':'+state.currentFineSeatId;
     if(state.view==='detail' && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
     if(state.view==='arrearsDetail') return 'arrearsDetail:'+encodeURIComponent(state.currentArrearsName);
+    if(state.view==='transactionDetail') return 'transactionDetail:'+(state.currentTransactionId||'new');
     return state.view;
   }
   function hashFor(sig){
@@ -1111,6 +1113,7 @@
     if(sig==='new') return '#neuer-abend';
     if(sig.startsWith('personFine:')) return '#strafe-person';
     if(sig.startsWith('arrearsDetail:')) return '#rueckstand-person';
+    if(sig.startsWith('transactionDetail:')) return '#umsatz';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
   }
@@ -1127,6 +1130,7 @@
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='finance') body = viewFinance();
     else if(state.view==='arrearsDetail') body = viewArrearsDetail();
+    else if(state.view==='transactionDetail') body = viewTransactionDetail();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
     else if(state.view==='personFineDetail') body = viewPersonFineDetail();
@@ -1143,7 +1147,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -1222,6 +1226,21 @@
         }
         state.currentArrearsName = name;
         state.view = 'arrearsDetail';
+        render();
+      }else if(sig.startsWith('transactionDetail:')){
+        const txId = sig.slice('transactionDetail:'.length);
+        if(state.financeAccounts.length===0 && state.financeTransactions.length===0){
+          try{
+            const [accounts, transactions] = await Promise.all([
+              getJSONOrThrow('finance-accounts', []),
+              getJSONOrThrow('finance-transactions', [])
+            ]);
+            state.financeAccounts = accounts;
+            state.financeTransactions = transactions;
+          }catch(e){}
+        }
+        state.currentTransactionId = txId==='new' ? null : txId;
+        state.view = 'transactionDetail';
         render();
       }else{
         await goToMain();
@@ -2102,6 +2121,7 @@
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='finance') title = 'Finanzen';
     else if(state.view==='arrearsDetail') title = state.currentArrearsName || '';
+    else if(state.view==='transactionDetail') title = state.currentTransactionId ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen';
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
     else if(state.view==='personFineDetail') title = state.currentFineName || '';
@@ -2182,6 +2202,17 @@
       </div>
     ` : '';
 
+    const txOverflowHtml = (state.view==='transactionDetail' && state.currentTransactionId) ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-tx-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-tx-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-tx-btn">Umsatz löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const tabsHtml = state.view==='detail' ? `
       <div class="tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
@@ -2198,7 +2229,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -2258,6 +2289,7 @@
     else if(state.view==='financeManagement') attachFinanceManagementListeners();
     else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='arrearsDetail') attachArrearsDetailListeners();
+    else if(state.view==='transactionDetail') attachTransactionDetailListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
     else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
@@ -2440,13 +2472,10 @@
       });
     });
     document.querySelectorAll('.transaction-row:not(.not-clickable)').forEach(row=>{
-      row.addEventListener('click', ()=>{
-        const t = state.financeTransactions.find(x=>x.id===row.dataset.id);
-        if(t) showTransactionFormModal(t);
-      });
+      row.addEventListener('click', ()=>{ goToTransactionDetail(row.dataset.id); });
     });
     const headerAddTxBtn = document.getElementById('header-add-transaction-btn');
-    if(headerAddTxBtn) headerAddTxBtn.addEventListener('click', ()=>showTransactionFormModal());
+    if(headerAddTxBtn) headerAddTxBtn.addEventListener('click', ()=>goToTransactionDetail(null));
     const totalCard = document.getElementById('finance-total-card-clickable');
     if(totalCard) totalCard.addEventListener('click', showFinanceBreakdownModal);
     const tabUmsaetzeBtn = document.getElementById('finance-tab-umsaetze-btn');
@@ -2874,7 +2903,7 @@
       state.financeTransactions = state.financeTransactions.filter(t=>t.id!==transaction.id);
       await setJSON('finance-transactions', state.financeTransactions, true);
       closeGenericModal();
-      render();
+      history.back();
     });
   }
 
@@ -3034,47 +3063,60 @@
     });
   }
 
-  function showTransactionFormModal(existingTransaction){
+  function goToTransactionDetail(transactionId){
+    state.currentTransactionId = transactionId || null;
+    state.view = 'transactionDetail';
+    render();
+  }
+
+  function viewTransactionDetail(){
+    const existingTransaction = state.currentTransactionId ? state.financeTransactions.find(t=>t.id===state.currentTransactionId) : null;
     const isEdit = !!existingTransaction;
     if(state.financeAccounts.length===0){
-      showModal(`
-        <h3>Umsatz hinzufügen</h3>
-        <p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in den Einstellungen unter „Finanzverwaltung" eines an.</p>
-        <div class="confirm-row-buttons">
-          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
-        </div>
-      `);
-      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-      return;
+      return `<div class="card"><p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in den Einstellungen unter „Finanzverwaltung" eines an.</p></div>`;
     }
     const isExpenseEdit = isEdit && existingTransaction.amount<0;
     const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${(isEdit && existingTransaction.accountId===a.id)?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
-    showModal(`
-      <h3>${isEdit ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen'}</h3>
-      <label for="new-tx-account">Konto/Kasse</label>
-      <select id="new-tx-account">${accountOptionsHtml}</select>
-      <label for="new-tx-description">Bezeichnung</label>
-      <input type="text" id="new-tx-description" placeholder="z. B. Kegelbahn Miete" value="${isEdit?escapeHtml(existingTransaction.description):''}">
-      <label for="new-tx-date">Datum</label>
-      <input type="date" id="new-tx-date" value="${isEdit?existingTransaction.date:todayISO()}">
-      <label for="new-tx-income">Einnahme (€)</label>
-      <input type="number" id="new-tx-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(existingTransaction.amount).toFixed(2):''}">
-      <label for="new-tx-expense">Ausgabe (€)</label>
-      <input type="number" id="new-tx-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(existingTransaction.amount).toFixed(2):''}">
-      <p class="form-error" id="tx-form-error"></p>
-      <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="save-tx-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
-        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+    return `
+      <div class="card">
+        <label for="new-tx-account">Konto/Kasse</label>
+        <select id="new-tx-account">${accountOptionsHtml}</select>
+        <label for="new-tx-description">Bezeichnung</label>
+        <input type="text" id="new-tx-description" placeholder="z. B. Kegelbahn Miete" value="${isEdit?escapeHtml(existingTransaction.description):''}">
+        <label for="new-tx-date">Datum</label>
+        <input type="date" id="new-tx-date" value="${isEdit?existingTransaction.date:todayISO()}">
+        <label for="new-tx-income">Einnahme (€)</label>
+        <input type="number" id="new-tx-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(existingTransaction.amount).toFixed(2):''}">
+        <label for="new-tx-expense">Ausgabe (€)</label>
+        <input type="number" id="new-tx-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(existingTransaction.amount).toFixed(2):''}">
+        <p class="form-error" id="tx-form-error"></p>
+        <button type="button" class="btn-primary" id="save-tx-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
       </div>
-      ${isEdit ? `<button type="button" class="btn-danger" id="delete-tx-from-edit-btn" style="width:100%; margin-top:10px;">Umsatz löschen</button>` : ''}
-    `);
-    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    if(isEdit){
-      const delBtn = document.getElementById('delete-tx-from-edit-btn');
-      if(delBtn) delBtn.addEventListener('click', ()=>showDeleteTransactionModal(existingTransaction));
+    `;
+  }
+
+  function attachTransactionDetailListeners(){
+    const overflowBtn = document.getElementById('header-tx-overflow-btn');
+    const overflowMenu = document.getElementById('header-tx-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
     }
-    document.getElementById('new-tx-description').focus();
-    document.getElementById('save-tx-btn').addEventListener('click', async ()=>{
+    const deleteBtn = document.getElementById('header-delete-tx-btn');
+    if(deleteBtn) deleteBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      const t = state.financeTransactions.find(x=>x.id===state.currentTransactionId);
+      if(t) showDeleteTransactionModal(t);
+    });
+    const descInput = document.getElementById('new-tx-description');
+    if(descInput) descInput.focus();
+    const saveBtn = document.getElementById('save-tx-btn');
+    if(!saveBtn) return;
+    saveBtn.addEventListener('click', async ()=>{
+      const existingTransaction = state.currentTransactionId ? state.financeTransactions.find(t=>t.id===state.currentTransactionId) : null;
+      const isEdit = !!existingTransaction;
       const errEl = document.getElementById('tx-form-error');
       const accountId = document.getElementById('new-tx-account').value;
       const description = document.getElementById('new-tx-description').value.trim();
@@ -3090,8 +3132,7 @@
       if((income>0) === (expense>0)){ errEl.textContent='Bitte entweder eine Einnahme oder eine Ausgabe angeben (nicht beides oder keins).'; return; }
 
       const amount = income>0 ? Math.round(income*100)/100 : -Math.round(expense*100)/100;
-      const submitBtn = document.getElementById('save-tx-btn');
-      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+      saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
 
       if(isEdit){
         const t = state.financeTransactions.find(x=>x.id===existingTransaction.id);
@@ -3100,8 +3141,7 @@
         state.financeTransactions.push({id:uid('tx'), accountId, description, date, amount});
       }
       await setJSON('finance-transactions', state.financeTransactions, true);
-      closeGenericModal();
-      render();
+      history.back();
     });
   }
 
