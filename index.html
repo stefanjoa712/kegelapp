@@ -219,7 +219,7 @@
   .evening-row .date{font-family:var(--font-display); font-size:16px; font-weight:600;}
   .finance-total-card{background:var(--felt); text-align:center; padding:28px 20px; cursor:pointer;}
   .own-arrears-card{text-align:center; padding:18px 20px;}
-  .own-arrears-card.amount-due{background:var(--wine);}
+  .own-arrears-card.amount-due{background:var(--wine); cursor:pointer;}
   .own-arrears-card.amount-clear{background:#1a7a3c;}
   .own-arrears-amount{font-family:var(--font-display); font-size:26px; font-weight:700; color:#fff;}
   .own-arrears-label{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:3px;}
@@ -468,7 +468,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.67';
+  const APP_VERSION = '0.68';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1242,6 +1242,12 @@
     `;
   }
 
+  const PAYPAL_ME_USERNAME = 'diepudolfs';
+  function buildPaypalLink(amount){
+    // PayPal.me erwartet einen Punkt als Dezimaltrennzeichen, kein Komma.
+    return `https://paypal.com/paypalme/${PAYPAL_ME_USERNAME}/${amount.toFixed(2)}`;
+  }
+
   function buildOwnArrearsCardHtml(){
     const user = auth.currentUser;
     if(!user || !user.email || user.email===ADMIN_EMAIL) return '';
@@ -1250,10 +1256,11 @@
     const name = displayName(member);
     const entry = state.financeArrears.find(a=>a.name===name);
     const amount = entry ? entry.amount : 0;
+    const isDue = amount>0;
     return `
-      <div class="card own-arrears-card ${amount>0?'amount-due':'amount-clear'}">
+      <div class="card own-arrears-card ${isDue?'amount-due':'amount-clear'}"${isDue?` id="own-arrears-pay-link" data-amount="${amount}"`:''}>
         <div class="own-arrears-amount">${fmtEuro(amount)}</div>
-        <div class="own-arrears-label">Dein Rückstand</div>
+        <div class="own-arrears-label">Dein Rückstand${isDue?' · Tippen zum Bezahlen':''}</div>
       </div>
     `;
   }
@@ -2234,6 +2241,13 @@
   function attachMainListeners(){
     const newBtn = document.getElementById('new-evening-btn');
     if(newBtn) newBtn.addEventListener('click', goToNew);
+    const ownArrearsPayLink = document.getElementById('own-arrears-pay-link');
+    if(ownArrearsPayLink){
+      ownArrearsPayLink.addEventListener('click', ()=>{
+        const amount = parseFloat(ownArrearsPayLink.dataset.amount);
+        window.open(buildPaypalLink(amount), '_blank');
+      });
+    }
     document.querySelectorAll('.year-header').forEach(header=>{
       header.addEventListener('click', ()=>{
         const group = header.closest('.year-group');
