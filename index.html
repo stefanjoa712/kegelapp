@@ -39,7 +39,7 @@
   }
   *{box-sizing:border-box;}
   html{height:100%; min-height:100dvh; background:var(--bg); overscroll-behavior-y:contain;}
-  body{margin:0; min-height:100%; min-height:100dvh; background:var(--bg); color:var(--ink); font-family:var(--font-body); line-height:1.5; touch-action:manipulation; overscroll-behavior-y:contain;}
+  body{margin:0; min-height:calc(100% + 1px); min-height:calc(100dvh + 1px); background:var(--bg); color:var(--ink); font-family:var(--font-body); line-height:1.5; touch-action:manipulation; overscroll-behavior-y:contain;}
   button{font:inherit;}
   a{color:inherit;}
   *:focus-visible{outline:2px solid var(--felt); outline-offset:2px;}
@@ -480,7 +480,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.77';
+  const APP_VERSION = '0.78';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -3752,6 +3752,13 @@
       state.financeArrears = arrears;
       state.view = 'main';
       render();
+      // iOS-Standalone-PWA-Trick: ein winziger echter Scroll zwingt WebKit dazu, die tatsächliche
+      // Viewport-/Safe-Area-Größe beim Kaltstart korrekt neu zu berechnen. Body ist jetzt immer
+      // minimal höher als der Bildschirm, damit hier wirklich etwas zum Scrollen vorhanden ist.
+      requestAnimationFrame(()=>{
+        window.scrollTo(0, 1);
+        requestAnimationFrame(()=>{ window.scrollTo(0, 0); });
+      });
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
     }catch(e){
