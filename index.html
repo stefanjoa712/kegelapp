@@ -36,7 +36,8 @@
     --font-mono:'IBM Plex Mono', monospace;
   }
   *{box-sizing:border-box;}
-  body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--font-body); line-height:1.5; touch-action:manipulation; overscroll-behavior-y:contain;}
+  html{height:100%; min-height:100dvh; background:var(--bg); overscroll-behavior-y:contain;}
+  body{margin:0; min-height:100%; min-height:100dvh; background:var(--bg); color:var(--ink); font-family:var(--font-body); line-height:1.5; touch-action:manipulation; overscroll-behavior-y:contain;}
   button{font:inherit;}
   a{color:inherit;}
   *:focus-visible{outline:2px solid var(--felt); outline-offset:2px;}
@@ -469,7 +470,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.69';
+  const APP_VERSION = '0.70';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
