@@ -141,10 +141,24 @@ function buildSectionHtml(title, lines) {
   `;
 }
 
-function buildEmailHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactTotal, roundedTotal) {
+function buildEmailHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactEveningTotal, roundedEveningTotal, priorArrears) {
   const hasAnyLines = catalogLines.length + fremdstrafeLines.length + adHocLines.length > 0;
   const emptyHtml = hasAnyLines ? '' : '<p>Keine Strafen für diesen Abend.</p>';
-  const paypalLink = buildPaypalLink(roundedTotal);
+  const hasArrears = priorArrears > 0;
+  const combinedExact = exactEveningTotal + priorArrears;
+  const combinedRounded = roundUpToFullEuro(combinedExact);
+  const paypalLink = buildPaypalLink(combinedRounded);
+
+  const totalsRowsHtml = hasArrears ? `
+    <tr>
+      <td style="padding:6px 0; border-bottom:1px dashed #e5e1d8;">Strafen vom heutigen Abend</td>
+      <td style="padding:6px 0; border-bottom:1px dashed #e5e1d8; text-align:right; white-space:nowrap;">${fmtEuro(roundedEveningTotal)}</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 0; border-bottom:1px dashed #e5e1d8;">Bisheriger Rückstand</td>
+      <td style="padding:6px 0; border-bottom:1px dashed #e5e1d8; text-align:right; white-space:nowrap;">${fmtEuro(priorArrears)}</td>
+    </tr>
+  ` : '';
 
   return `
     <div style="font-family:sans-serif; color:#161616; max-width:480px;">
@@ -157,20 +171,21 @@ function buildEmailHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLine
 
       <div style="margin-top:18px; padding-top:10px; border-top:2px solid #161616;">
         <table style="width:100%; border-collapse:collapse;">
+          ${totalsRowsHtml}
           <tr>
             <td style="font-size:13px; color:#9a9186; padding:2px 0;">Gesamt (genau)</td>
-            <td style="font-size:13px; color:#9a9186; padding:2px 0; text-align:right;">${fmtEuro(exactTotal)}</td>
+            <td style="font-size:13px; color:#9a9186; padding:2px 0; text-align:right;">${fmtEuro(combinedExact)}</td>
           </tr>
           <tr>
             <td style="font-size:18px; font-weight:800; padding:4px 0;">Gesamt (gerundet)</td>
-            <td style="font-size:18px; font-weight:800; padding:4px 0; text-align:right;">${fmtEuro(roundedTotal)}</td>
+            <td style="font-size:18px; font-weight:800; padding:4px 0; text-align:right;">${fmtEuro(combinedRounded)}</td>
           </tr>
         </table>
       </div>
 
       <p style="margin-top:22px;">
         <a href="${paypalLink}" style="display:inline-block; background:#E3421F; color:#fff; font-weight:800; text-decoration:none; padding:12px 22px; border-radius:8px;">
-          Jetzt ${fmtEuro(roundedTotal)} per PayPal bezahlen
+          Jetzt ${fmtEuro(combinedRounded)} per PayPal bezahlen
         </a>
       </p>
 
@@ -264,7 +279,8 @@ async function handleEveningClosed(after, docId) {
 
   for (const r of recipients) {
     const roundedTotal = roundUpToFullEuro(r.total);
-    const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal);
+    const priorArrears = (after.priorArrearsSnapshot && after.priorArrearsSnapshot[r.name]) || 0;
+    const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal, priorArrears);
     try {
       await resend.emails.send({
         from: FROM_ADDRESS,
