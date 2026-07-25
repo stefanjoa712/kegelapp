@@ -227,6 +227,14 @@
   .own-arrears-card.amount-clear{background:#1a7a3c;}
   .own-arrears-amount{font-family:var(--font-display); font-size:26px; font-weight:700; color:#fff;}
   .own-arrears-label{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:3px;}
+  .history-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px;}
+  .history-row:last-child{border-bottom:none;}
+  .history-info{display:flex; flex-direction:column; min-width:0;}
+  .history-note{font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .history-meta{font-size:12px; color:var(--muted); margin-top:2px;}
+  .history-delta{font-family:var(--font-mono); font-weight:700; white-space:nowrap; flex-shrink:0;}
+  .history-delta.positive{color:var(--wine);}
+  .history-delta.negative{color:#1a7a3c;}
   .finance-tab-bar{padding:0; margin:14px 0 16px; background:var(--surface); border:2px solid var(--ink); border-radius:10px; overflow:hidden;}
   .finance-tab-bar .tab-btn{color:var(--ink); background:none; border-radius:0;}
   .finance-tab-bar .tab-btn.active{background:var(--wood); color:#fff;}
@@ -472,7 +480,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.74';
+  const APP_VERSION = '0.75';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -500,6 +508,7 @@
     financeTransactions:[],
     financeArrears:[],
     financeTab:'umsaetze',
+    currentArrearsName:'',
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -706,9 +715,14 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToFinance);
     }
   }
+  function goToArrearsDetail(name){
+    state.currentArrearsName = name;
+    state.view = 'arrearsDetail';
+    render();
+  }
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement') goToSettingsMenu();
-    else if(state.view==='personFineDetail'){ history.back(); }
+    else if(state.view==='personFineDetail' || state.view==='arrearsDetail'){ history.back(); }
     else goToMain();
   }
   function goToNew(){
@@ -977,15 +991,12 @@
       .filter(a=> !memberNames.has(a.name) && a.amount>0)
       .map(a=>({ name:a.name, amount:a.amount }));
     const allRows = [...memberRows, ...guestRows].sort((a,b)=> a.name.localeCompare(b.name,'de'));
-    const rowsHtml = allRows.map(r=>{
-      const clickable = r.amount>0;
-      return `
-        <div class="fines-summary-row${clickable?'':' not-clickable'}"${clickable?` data-name="${escapeHtml(r.name)}" data-amount="${r.amount}"`:''}>
-          <span class="fines-summary-name">${escapeHtml(r.name)}</span>
-          <span class="fines-summary-amount ${r.amount>0?'amount-due':'amount-clear'}">${fmtEuro(r.amount)}</span>
-        </div>
-      `;
-    }).join('');
+    const rowsHtml = allRows.map(r=>`
+      <div class="fines-summary-row" data-name="${escapeHtml(r.name)}">
+        <span class="fines-summary-name">${escapeHtml(r.name)}</span>
+        <span class="fines-summary-amount ${r.amount>0?'amount-due':'amount-clear'}">${fmtEuro(r.amount)}</span>
+      </div>
+    `).join('');
     return `<div class="card"><h2 class="section-title">Rückstände</h2>${rowsHtml}</div>`;
   }
 
@@ -1062,10 +1073,10 @@
         ${todayButtonHtml}
         <button type="button" class="bottom-nav-item${activeTab==='finance'?' active':''}" id="nav-finance-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2.5" y="6" width="19" height="13" rx="2"/>
-            <circle cx="12" cy="12.5" r="3.2"/>
-            <line x1="6" y1="6" x2="6" y2="4.5"/>
-            <line x1="18" y1="6" x2="18" y2="4.5"/>
+            <circle cx="12" cy="12" r="9.5"/>
+            <path d="M15.2 8.7a4 5 0 0 0-3.4-1.7c-2.5 0-4.5 2.4-4.5 5s2 5 4.5 5a4 5 0 0 0 3.4-1.7"/>
+            <line x1="6.5" y1="10.6" x2="13" y2="10.6"/>
+            <line x1="6.5" y1="13.4" x2="13" y2="13.4"/>
           </svg>
           <span>Finanzen</span>
         </button>
@@ -1087,6 +1098,7 @@
   function historySignature(){
     if(state.view==='personFineDetail' && state.currentEveningDetail) return 'personFine:'+state.currentEveningDetail.id+':'+state.currentFineSeatId;
     if(state.view==='detail' && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
+    if(state.view==='arrearsDetail') return 'arrearsDetail:'+encodeURIComponent(state.currentArrearsName);
     return state.view;
   }
   function hashFor(sig){
@@ -1098,6 +1110,7 @@
     if(sig==='finance') return '#finanzen';
     if(sig==='new') return '#neuer-abend';
     if(sig.startsWith('personFine:')) return '#strafe-person';
+    if(sig.startsWith('arrearsDetail:')) return '#rueckstand-person';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
   }
@@ -1113,6 +1126,7 @@
     else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='finance') body = viewFinance();
+    else if(state.view==='arrearsDetail') body = viewArrearsDetail();
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
     else if(state.view==='personFineDetail') body = viewPersonFineDetail();
@@ -1129,7 +1143,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -1192,6 +1206,23 @@
             renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToMain);
           }
         }
+      }else if(sig.startsWith('arrearsDetail:')){
+        const name = decodeURIComponent(sig.slice('arrearsDetail:'.length));
+        if(state.financeAccounts.length===0 && state.financeArrears.length===0){
+          try{
+            const [accounts, transactions, arrears] = await Promise.all([
+              getJSONOrThrow('finance-accounts', []),
+              getJSONOrThrow('finance-transactions', []),
+              getJSONOrThrow('finance-arrears', [])
+            ]);
+            state.financeAccounts = accounts;
+            state.financeTransactions = transactions;
+            state.financeArrears = arrears;
+          }catch(e){}
+        }
+        state.currentArrearsName = name;
+        state.view = 'arrearsDetail';
+        render();
       }else{
         await goToMain();
       }
@@ -1715,8 +1746,13 @@
       function addToArrears(name, amount){
         if(!amount) return;
         let entry = arrears.find(a=>a.name===name);
-        if(!entry){ entry = {name, amount:0}; arrears.push(entry); }
+        if(!entry){ entry = {name, amount:0, history:[]}; arrears.push(entry); }
+        if(!entry.history) entry.history = [];
         entry.amount = Math.round((entry.amount + amount)*100)/100;
+        entry.history.push({
+          id: uid('hist'), date: detail.date, type:'increase', delta: amount,
+          note: `Strafen vom Kegelabend am ${formatDateDE(detail.date)}`, balanceAfter: entry.amount
+        });
       }
       detail.seating.filter(s=>s.name).forEach(s=>{
         addToArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
@@ -2065,6 +2101,7 @@
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='finance') title = 'Finanzen';
+    else if(state.view==='arrearsDetail') title = state.currentArrearsName || '';
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
     else if(state.view==='personFineDetail') title = state.currentFineName || '';
@@ -2134,6 +2171,17 @@
       </div>
     ` : '';
 
+    const arrearsOverflowHtml = state.view==='arrearsDetail' ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-arrears-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-arrears-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item neutral" id="header-correct-arrears-btn">Rückstand korrigieren</button>
+        </div>
+      </div>
+    ` : '';
+
     const tabsHtml = state.view==='detail' ? `
       <div class="tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
@@ -2150,7 +2198,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${settingsAddBtnHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -2209,6 +2257,7 @@
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='financeManagement') attachFinanceManagementListeners();
     else if(state.view==='finance') attachFinanceListeners();
+    else if(state.view==='arrearsDetail') attachArrearsDetailListeners();
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
     else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
@@ -2404,9 +2453,8 @@
     if(tabUmsaetzeBtn) tabUmsaetzeBtn.addEventListener('click', ()=>{ state.financeTab='umsaetze'; render(); });
     const tabRueckstaendeBtn = document.getElementById('finance-tab-rueckstaende-btn');
     if(tabRueckstaendeBtn) tabRueckstaendeBtn.addEventListener('click', ()=>{ state.financeTab='rueckstaende'; render(); });
-    document.querySelectorAll('.fines-summary-row:not(.not-clickable)').forEach(row=>{
-      if(row.dataset.amount===undefined) return;
-      row.addEventListener('click', ()=>{ showConfirmArrearsPaymentModal(row.dataset.name, parseFloat(row.dataset.amount)); });
+    document.querySelectorAll('#app .fines-summary-row[data-name]').forEach(row=>{
+      row.addEventListener('click', ()=>{ goToArrearsDetail(row.dataset.name); });
     });
   }
 
@@ -2830,42 +2878,130 @@
     });
   }
 
-  function showConfirmArrearsPaymentModal(name, currentAmount){
-    if(state.financeAccounts.length===0){
-      showModal(`
-        <h3>${escapeHtml(name)}</h3>
-        <p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in den Einstellungen unter „Finanzverwaltung" eines an.</p>
-        <div class="confirm-row-buttons">
-          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
-        </div>
-      `);
-      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-      return;
-    }
+  function getArrearsEntry(name){
+    return state.financeArrears.find(a=>a.name===name) || null;
+  }
+
+  function historyEntryLabel(entry){
+    if(entry.type==='correction') return 'Korrektur';
+    if(entry.type==='payment') return 'Zahlung';
+    return 'Strafen';
+  }
+
+  function viewArrearsDetail(){
+    const name = state.currentArrearsName;
+    const entry = getArrearsEntry(name);
+    const amount = entry ? entry.amount : 0;
+    const history = (entry && entry.history) ? entry.history.slice().sort((a,b)=> b.date.localeCompare(a.date)) : [];
+
     const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
-    showModal(`
-      <h3>${escapeHtml(name)}</h3>
-      <div class="fines-summary-row not-clickable" style="padding:4px 0 14px;">
-        <span class="fines-summary-name">Offener Rückstand</span>
-        <span class="fines-summary-amount">${fmtEuro(currentAmount)}</span>
+    const paymentFormHtml = state.financeAccounts.length===0
+      ? `<p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in den Einstellungen unter „Finanzverwaltung" eines an.</p>`
+      : `
+        <label for="arrears-payment-amount">Zahlungsbetrag (€)</label>
+        <input type="number" id="arrears-payment-amount" min="0" step="0.01" placeholder="${amount.toFixed(2)}">
+        <label for="arrears-payment-text">Buchungstext (optional)</label>
+        <input type="text" id="arrears-payment-text" placeholder="Bestätigte Zahlung">
+        <label for="arrears-payment-account">Konto/Kasse</label>
+        <select id="arrears-payment-account">${accountOptionsHtml}</select>
+        <label for="arrears-payment-date">Datum</label>
+        <input type="date" id="arrears-payment-date" value="${todayISO()}">
+        <p class="form-error" id="arrears-payment-error"></p>
+        <button type="button" class="btn-primary" id="confirm-arrears-payment-btn" style="width:100%;">Zahlungseingang bestätigen</button>
+      `;
+
+    const historyHtml = history.length===0
+      ? `<p class="empty-state">Noch keine Einträge im Verlauf.</p>`
+      : history.map(h=>`
+        <div class="history-row">
+          <span class="history-info">
+            <span class="history-note">${escapeHtml(h.note)}</span>
+            <span class="history-meta">${formatDateDE(h.date)} · ${historyEntryLabel(h)}</span>
+          </span>
+          <span class="history-delta ${h.delta>=0?'positive':'negative'}">${h.delta>=0?'+':''}${fmtEuro(h.delta)}</span>
+        </div>
+      `).join('');
+
+    return `
+      <div class="card own-arrears-card ${amount>0?'amount-due':'amount-clear'}">
+        <div class="own-arrears-amount">${fmtEuro(amount)}</div>
+        <div class="own-arrears-label">Offener Rückstand</div>
       </div>
-      <label for="arrears-payment-amount">Zahlungsbetrag (€)</label>
-      <input type="number" id="arrears-payment-amount" min="0" step="0.01" placeholder="${currentAmount.toFixed(2)}">
-      <label for="arrears-payment-text">Buchungstext (optional)</label>
-      <input type="text" id="arrears-payment-text" placeholder="Bestätigte Zahlung">
-      <label for="arrears-payment-account">Konto/Kasse</label>
-      <select id="arrears-payment-account">${accountOptionsHtml}</select>
-      <label for="arrears-payment-date">Datum</label>
-      <input type="date" id="arrears-payment-date" value="${todayISO()}">
-      <p class="form-error" id="arrears-payment-error"></p>
+      <div class="card">
+        <h2 class="section-title">Zahlung erfassen</h2>
+        ${paymentFormHtml}
+      </div>
+      <div class="card">
+        <h2 class="section-title">Verlauf</h2>
+        ${historyHtml}
+      </div>
+    `;
+  }
+
+  function showCorrectArrearsModal(){
+    const name = state.currentArrearsName;
+    const entry = getArrearsEntry(name);
+    const amount = entry ? entry.amount : 0;
+    showModal(`
+      <h3>Rückstand korrigieren</h3>
+      <p>Aktueller Rückstand: <strong>${fmtEuro(amount)}</strong></p>
+      <label for="correct-arrears-amount">Neuer Rückstand (€)</label>
+      <input type="number" id="correct-arrears-amount" min="0" step="0.01" value="${amount.toFixed(2)}">
+      <label for="correct-arrears-note">Grund (optional)</label>
+      <input type="text" id="correct-arrears-note" placeholder="z. B. Tippfehler korrigiert">
+      <p class="form-error" id="correct-arrears-error"></p>
       <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="confirm-arrears-payment-btn">Zahlungseingang bestätigen</button>
+        <button type="button" class="btn-primary" id="confirm-correct-arrears-btn">Speichern</button>
         <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
       </div>
     `);
     document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    document.getElementById('arrears-payment-amount').focus();
-    document.getElementById('confirm-arrears-payment-btn').addEventListener('click', async ()=>{
+    document.getElementById('correct-arrears-amount').focus();
+    document.getElementById('confirm-correct-arrears-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('correct-arrears-error');
+      const newAmountRaw = document.getElementById('correct-arrears-amount').value.replace(',', '.');
+      const newAmount = parseFloat(newAmountRaw);
+      const note = document.getElementById('correct-arrears-note').value.trim();
+      if(isNaN(newAmount) || newAmount<0){ errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
+      const btn = document.getElementById('confirm-correct-arrears-btn');
+      btn.disabled = true; btn.textContent = 'Speichert…';
+
+      const rounded = Math.round(newAmount*100)/100;
+      let e = getArrearsEntry(name);
+      if(!e){ e = {name, amount:0, history:[]}; state.financeArrears.push(e); }
+      if(!e.history) e.history = [];
+      const delta = Math.round((rounded - e.amount)*100)/100;
+      e.amount = rounded;
+      e.history.push({
+        id: uid('hist'), date: todayISO(), type:'correction', delta,
+        note: note || 'Manuelle Korrektur', balanceAfter: rounded
+      });
+
+      await setJSON('finance-arrears', state.financeArrears, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function attachArrearsDetailListeners(){
+    const overflowBtn = document.getElementById('header-arrears-overflow-btn');
+    const overflowMenu = document.getElementById('header-arrears-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
+    }
+    const correctBtn = document.getElementById('header-correct-arrears-btn');
+    if(correctBtn) correctBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      showCorrectArrearsModal();
+    });
+    const confirmPaymentBtn = document.getElementById('confirm-arrears-payment-btn');
+    if(confirmPaymentBtn) confirmPaymentBtn.addEventListener('click', async ()=>{
+      const name = state.currentArrearsName;
+      const entry = getArrearsEntry(name);
+      const currentAmount = entry ? entry.amount : 0;
       const errEl = document.getElementById('arrears-payment-error');
       const amountRaw = document.getElementById('arrears-payment-amount').value.replace(',', '.');
       const paidAmount = amountRaw==='' ? currentAmount : parseFloat(amountRaw);
@@ -2874,21 +3010,26 @@
       const date = document.getElementById('arrears-payment-date').value;
       if(isNaN(paidAmount) || paidAmount<=0){ errEl.textContent='Bitte einen gültigen Zahlungsbetrag angeben.'; return; }
       if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
-      const btn = document.getElementById('confirm-arrears-payment-btn');
-      btn.disabled = true; btn.textContent = 'Wird bestätigt…';
+      confirmPaymentBtn.disabled = true; confirmPaymentBtn.textContent = 'Wird bestätigt…';
 
       const rounded = Math.round(paidAmount*100)/100;
       state.financeTransactions.push({id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded, fromArrears:true});
 
-      let entry = state.financeArrears.find(a=>a.name===name);
-      if(!entry){ entry = {name, amount:0}; state.financeArrears.push(entry); }
-      entry.amount = Math.max(0, Math.round((entry.amount - rounded)*100)/100);
+      let e = entry;
+      if(!e){ e = {name, amount:0, history:[]}; state.financeArrears.push(e); }
+      if(!e.history) e.history = [];
+      const before = e.amount;
+      e.amount = Math.max(0, Math.round((e.amount - rounded)*100)/100);
+      const actualDelta = Math.round((e.amount - before)*100)/100;
+      e.history.push({
+        id: uid('hist'), date, type:'payment', delta: actualDelta,
+        note: bookingText, balanceAfter: e.amount
+      });
 
       await Promise.all([
         setJSON('finance-transactions', state.financeTransactions, true),
         setJSON('finance-arrears', state.financeArrears, true)
       ]);
-      closeGenericModal();
       render();
     });
   }
