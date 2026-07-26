@@ -238,6 +238,14 @@
   .finance-tab-bar{padding:0; margin:14px 0 16px; background:var(--surface); border:2px solid var(--ink); border-radius:10px; overflow:hidden;}
   .finance-tab-bar .tab-btn{color:var(--ink); background:none; border-radius:0;}
   .finance-tab-bar .tab-btn.active{background:var(--wood); color:#fff;}
+  .savings-pot-row{padding:14px 0; border-bottom:1px dashed var(--line);}
+  .savings-pot-row:last-child{border-bottom:none;}
+  .savings-pot-header{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;}
+  .savings-pot-name{font-weight:700; font-size:16px;}
+  .savings-pot-percent{font-family:var(--font-mono); font-weight:700; color:var(--wood);}
+  .savings-pot-bar-track{background:var(--bg); border:1px solid var(--line); border-radius:8px; height:14px; overflow:hidden;}
+  .savings-pot-bar-fill{background:var(--wood); height:100%; border-radius:8px 0 0 8px; transition:width 0.3s ease;}
+  .savings-pot-meta{display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:6px;}
   .finance-total-amount{font-family:var(--font-display); font-size:36px; font-weight:700; color:#fff;}
   .finance-total-label{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:4px;}
   .transaction-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px; cursor:pointer;}
@@ -480,7 +488,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.89';
+  const APP_VERSION = '0.90';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -511,6 +519,7 @@
     currentArrearsName:'',
     currentTransactionId:null,
     financeRecurring:[],
+    financeSavingsPots:[],
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -690,12 +699,14 @@
     state.view = 'financeManagement';
     renderLoading('Konten werden geladen…');
     try{
-      const [accounts, recurring] = await Promise.all([
+      const [accounts, recurring, pots] = await Promise.all([
         getJSONOrThrow('finance-accounts', []),
-        getJSONOrThrow('finance-recurring', [])
+        getJSONOrThrow('finance-recurring', []),
+        getJSONOrThrow('finance-savings-pots', [])
       ]);
       state.financeAccounts = accounts;
       state.financeRecurring = recurring;
+      state.financeSavingsPots = pots;
       state.view = 'financeManagement';
       render();
     }catch(e){
@@ -706,16 +717,18 @@
     state.view = 'finance';
     renderLoading('Finanzen werden geladen…');
     try{
-      const [accounts, transactions, arrears, members] = await Promise.all([
+      const [accounts, transactions, arrears, members, pots] = await Promise.all([
         getJSONOrThrow('finance-accounts', []),
         getJSONOrThrow('finance-transactions', []),
         getJSONOrThrow('finance-arrears', []),
-        getJSONOrThrow('members', state.members)
+        getJSONOrThrow('members', state.members),
+        getJSONOrThrow('finance-savings-pots', [])
       ]);
       state.financeAccounts = accounts;
       state.financeTransactions = transactions;
       state.financeArrears = arrears;
       state.members = members;
+      state.financeSavingsPots = pots;
       state.view = 'finance';
       render();
     }catch(e){
@@ -930,6 +943,10 @@
     const recurringListHtml = sortedRecurring.length===0
       ? `<p class="empty-state">Noch keine monatlichen Buchungen angelegt. Über das „+" oben hinzufügen.</p>`
       : sortedRecurring.map(recurringRowHtml).join('');
+    const sortedPots = state.financeSavingsPots.slice().sort((a,b)=> a.targetDate.localeCompare(b.targetDate));
+    const potsListHtml = sortedPots.length===0
+      ? `<p class="empty-state">Noch keine Spartöpfe angelegt. Über das „+" oben hinzufügen.</p>`
+      : sortedPots.map(savingsPotRowHtml).join('');
     return `
       <div class="card">
         <div class="settings-header-row">
@@ -953,8 +970,35 @@
         </div>
         <div id="finance-recurring-list-container">${recurringListHtml}</div>
       </div>
+      <div class="card">
+        <div class="settings-header-row">
+          <h2 class="section-title">Spartöpfe <span class="member-count">(${state.financeSavingsPots.length})</span></h2>
+          <button type="button" class="header-circle-btn" id="header-add-pot-btn" aria-label="Spartopf hinzufügen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+        </div>
+        <div id="finance-pots-list-container">${potsListHtml}</div>
+      </div>
     `;
   }
+
+  function savingsPotRowHtml(p){
+    return `<div class="member-row-full" data-id="${p.id}">
+      <div class="member-row">
+        <span class="fine-row-info">
+          <span class="fine-row-name">${escapeHtml(p.name)}</span>
+          <span class="transaction-meta">Ziel: ${fmtEuro(p.targetAmount)} bis ${formatDateDE(p.targetDate)}</span>
+        </span>
+        <span class="row-actions">
+          <button type="button" class="icon-btn edit-pot-btn" data-id="${p.id}" aria-label="Bearbeiten">✎</button>
+          <button type="button" class="icon-btn delete-pot-btn" data-id="${p.id}" aria-label="Löschen">✕</button>
+        </span>
+      </div>
+    </div>`;
+  }
+
 
   function recurringRowHtml(r){
     const isPositive = r.amount>=0;
@@ -1041,13 +1085,51 @@
       .filter(a=> !memberNames.has(a.name) && a.amount>0)
       .map(a=>({ name:a.name, amount:a.amount }));
     const allRows = [...memberRows, ...guestRows].sort((a,b)=> a.name.localeCompare(b.name,'de'));
+    const totalDue = allRows.reduce((sum,r)=> sum + r.amount, 0);
     const rowsHtml = allRows.map(r=>`
       <div class="fines-summary-row" data-name="${escapeHtml(r.name)}">
         <span class="fines-summary-name">${escapeHtml(r.name)}</span>
         <span class="fines-summary-amount ${r.amount>0?'amount-due':'amount-clear'}">${fmtEuro(r.amount)}</span>
       </div>
     `).join('');
-    return `<div class="card"><h2 class="section-title">Rückstände</h2>${rowsHtml}</div>`;
+    return `
+      <div class="card"><h2 class="section-title">Rückstände</h2>${rowsHtml}</div>
+      <div class="card">
+        <div class="stat-total"><span>Summe offener Rückstände</span><span>${fmtEuro(totalDue)}</span></div>
+      </div>
+    `;
+  }
+
+  function buildFinanceSavingsPotsTab(totalAmount){
+    const today = todayISO();
+    const activePots = state.financeSavingsPots
+      .filter(p=> p.targetDate >= today)
+      .sort((a,b)=> a.targetDate.localeCompare(b.targetDate));
+
+    if(activePots.length===0){
+      return `<div class="card"><p class="empty-state">Keine anstehenden Spartöpfe. In den Einstellungen unter „Finanzverwaltung" anlegen.</p></div>`;
+    }
+
+    let remaining = totalAmount;
+    const rowsHtml = activePots.map(p=>{
+      const allocated = Math.max(0, Math.min(remaining, p.targetAmount));
+      remaining -= allocated;
+      const percent = p.targetAmount>0 ? Math.min(100, Math.round(allocated/p.targetAmount*100)) : 0;
+      return `
+        <div class="savings-pot-row">
+          <div class="savings-pot-header">
+            <span class="savings-pot-name">${escapeHtml(p.name)}</span>
+            <span class="savings-pot-percent">${percent}%</span>
+          </div>
+          <div class="savings-pot-bar-track"><div class="savings-pot-bar-fill" style="width:${percent}%;"></div></div>
+          <div class="savings-pot-meta">
+            <span>${fmtEuro(allocated)} von ${fmtEuro(p.targetAmount)}</span>
+            <span>Ziel: ${formatDateDE(p.targetDate)}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+    return `<div class="card"><h2 class="section-title">Spartöpfe</h2>${rowsHtml}</div>`;
   }
 
   function viewFinance(){
@@ -1056,7 +1138,7 @@
     const totalAmount = totalStartBalances + totalTransactions;
 
     const tab = state.financeTab || 'umsaetze';
-    const tabBody = tab==='rueckstaende' ? buildFinanceArrearsTab() : buildFinanceTransactionsTab();
+    const tabBody = tab==='rueckstaende' ? buildFinanceArrearsTab() : tab==='spartoepfe' ? buildFinanceSavingsPotsTab(totalAmount) : buildFinanceTransactionsTab();
 
     return `
       <div class="card finance-total-card" id="finance-total-card-clickable">
@@ -1066,6 +1148,7 @@
       <div class="tab-bar finance-tab-bar">
         <button type="button" class="tab-btn${tab==='umsaetze'?' active':''}" id="finance-tab-umsaetze-btn">Umsätze</button>
         <button type="button" class="tab-btn${tab==='rueckstaende'?' active':''}" id="finance-tab-rueckstaende-btn">Rückstände</button>
+        <button type="button" class="tab-btn${tab==='spartoepfe'?' active':''}" id="finance-tab-spartoepfe-btn">Spartöpfe</button>
       </div>
       ${tabBody}
     `;
@@ -2689,6 +2772,20 @@
     });
     const openAddRecurringBtn = document.getElementById('header-add-recurring-btn');
     if(openAddRecurringBtn) openAddRecurringBtn.addEventListener('click', ()=>showRecurringFormModal());
+    document.querySelectorAll('.edit-pot-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const p = state.financeSavingsPots.find(x=>x.id===b.dataset.id);
+        if(p) showSavingsPotFormModal(p);
+      });
+    });
+    document.querySelectorAll('.delete-pot-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const p = state.financeSavingsPots.find(x=>x.id===b.dataset.id);
+        if(p) showDeleteSavingsPotModal(p);
+      });
+    });
+    const openAddPotBtn = document.getElementById('header-add-pot-btn');
+    if(openAddPotBtn) openAddPotBtn.addEventListener('click', ()=>showSavingsPotFormModal());
   }
 
   function attachFinanceListeners(){
@@ -2712,6 +2809,8 @@
     if(tabUmsaetzeBtn) tabUmsaetzeBtn.addEventListener('click', ()=>{ state.financeTab='umsaetze'; render(); });
     const tabRueckstaendeBtn = document.getElementById('finance-tab-rueckstaende-btn');
     if(tabRueckstaendeBtn) tabRueckstaendeBtn.addEventListener('click', ()=>{ state.financeTab='rueckstaende'; render(); });
+    const tabSpartoepfeBtn = document.getElementById('finance-tab-spartoepfe-btn');
+    if(tabSpartoepfeBtn) tabSpartoepfeBtn.addEventListener('click', ()=>{ state.financeTab='spartoepfe'; render(); });
     document.querySelectorAll('#app .fines-summary-row[data-name]').forEach(row=>{
       row.addEventListener('click', ()=>{ goToArrearsDetail(row.dataset.name); });
     });
@@ -3155,6 +3254,70 @@
         state.financeRecurring.push({id:uid('rec'), description, accountId, amount, nextDate});
       }
       await setJSON('finance-recurring', state.financeRecurring, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showDeleteSavingsPotModal(p){
+    showModal(`
+      <h3>Spartopf löschen</h3>
+      <p>„${escapeHtml(p.name)}" wirklich löschen?</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-pot-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-pot-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-pot-yes');
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      state.financeSavingsPots = state.financeSavingsPots.filter(x=>x.id!==p.id);
+      await setJSON('finance-savings-pots', state.financeSavingsPots, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showSavingsPotFormModal(existingPot){
+    const isEdit = !!existingPot;
+    showModal(`
+      <h3>${isEdit ? 'Spartopf bearbeiten' : 'Spartopf hinzufügen'}</h3>
+      <label for="new-pot-name">Bezeichnung</label>
+      <input type="text" id="new-pot-name" placeholder="z. B. Weihnachtsfeier" value="${isEdit?escapeHtml(existingPot.name):''}">
+      <label for="new-pot-target">Sparziel (€)</label>
+      <input type="number" id="new-pot-target" min="0" step="0.01" placeholder="0,00" value="${isEdit?existingPot.targetAmount.toFixed(2):''}">
+      <label for="new-pot-date">Zieldatum</label>
+      <input type="date" id="new-pot-date" value="${isEdit?existingPot.targetDate:''}">
+      <p class="form-error" id="pot-form-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="save-pot-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('new-pot-name').focus();
+    document.getElementById('save-pot-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('pot-form-error');
+      const name = document.getElementById('new-pot-name').value.trim();
+      const targetRaw = document.getElementById('new-pot-target').value.replace(',', '.');
+      const targetAmount = parseFloat(targetRaw);
+      const targetDate = document.getElementById('new-pot-date').value;
+
+      if(!name){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+      if(isNaN(targetAmount) || targetAmount<=0){ errEl.textContent='Bitte ein gültiges Sparziel angeben.'; return; }
+      if(!targetDate){ errEl.textContent='Bitte ein Zieldatum angeben.'; return; }
+
+      const btn = document.getElementById('save-pot-btn');
+      btn.disabled = true; btn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+
+      if(isEdit){
+        const p = state.financeSavingsPots.find(x=>x.id===existingPot.id);
+        if(p){ p.name=name; p.targetAmount=Math.round(targetAmount*100)/100; p.targetDate=targetDate; }
+      }else{
+        state.financeSavingsPots.push({id:uid('pot'), name, targetAmount:Math.round(targetAmount*100)/100, targetDate});
+      }
+      await setJSON('finance-savings-pots', state.financeSavingsPots, true);
       closeGenericModal();
       render();
     });
