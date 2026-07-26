@@ -480,7 +480,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.86';
+  const APP_VERSION = '0.87';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -2364,9 +2364,10 @@
       : null;
     const personIsInvalid = !!(currentPersonSeat && currentPersonSeat.invalid);
     const personWasAddedLater = !!(currentPersonSeat && currentPersonSeat.addedLater);
+    const personIsGuest = !!(currentPersonSeat && currentPersonSeat.isGuest);
 
-    const addFineBtnHtml = (state.view==='personFineDetail' && !isClosed) ? `
-      ${personIsInvalid ? '' : `
+    const addFineBtnHtml = (state.view==='personFineDetail') ? `
+      ${(personIsInvalid || isClosed) ? '' : `
       <button type="button" class="header-circle-btn" id="header-add-fine-btn" aria-label="Geldstrafe hinzufügen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"/>
@@ -2378,11 +2379,12 @@
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
         </button>
         <div class="header-overflow-menu" id="header-person-overflow-menu" hidden>
-          ${personWasAddedLater ? `<button type="button" class="header-overflow-item neutral" id="header-switch-side-btn">Auf andere Seite wechseln</button>` : ''}
-          ${personIsInvalid
+          ${personIsGuest ? `<button type="button" class="header-overflow-item neutral" id="header-share-guest-btn">Teilen</button>` : ''}
+          ${(!isClosed && personWasAddedLater) ? `<button type="button" class="header-overflow-item neutral" id="header-switch-side-btn">Auf andere Seite wechseln</button>` : ''}
+          ${!isClosed ? (personIsInvalid
             ? `<button type="button" class="header-overflow-item neutral" id="header-unmark-invalid-btn">Wieder aktivieren</button>`
             : `<button type="button" class="header-overflow-item" id="header-mark-invalid-btn">Als invalide markieren</button>`
-          }
+          ) : ''}
         </div>
       </div>
     ` : '';
@@ -3760,6 +3762,44 @@
     if(unmarkInvalidBtn) unmarkInvalidBtn.addEventListener('click', ()=>{
       if(personOverflowMenu) personOverflowMenu.hidden = true;
       showUnmarkInvalidModal();
+    });
+    const shareGuestBtn = document.getElementById('header-share-guest-btn');
+    if(shareGuestBtn) shareGuestBtn.addEventListener('click', async ()=>{
+      if(personOverflowMenu) personOverflowMenu.hidden = true;
+      const detail = state.currentEveningDetail;
+      const seat = detail.seating.find(s=>s.seatId===state.currentFineSeatId);
+      if(!seat) return;
+      if(!seat.shareToken){
+        seat.shareToken = uid('share');
+        await setJSON('evening-'+detail.id, detail, true);
+      }
+      const shareUrl = `https://us-central1-die-pudolfs.cloudfunctions.net/shareGuestBill?token=${seat.shareToken}`;
+      const shareTitle = `Strafen vom Kegelabend – ${seat.name}`;
+      if(navigator.share){
+        try{ await navigator.share({ title: shareTitle, url: shareUrl }); }catch(e){ /* Abgebrochen - ignorieren */ }
+      }else{
+        try{
+          await navigator.clipboard.writeText(shareUrl);
+          showModal(`
+            <h3>Link kopiert</h3>
+            <p>Der Link wurde in die Zwischenablage kopiert:</p>
+            <p style="word-break:break-all; font-family:var(--font-mono); font-size:13px;">${escapeHtml(shareUrl)}</p>
+            <div class="confirm-row-buttons">
+              <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+            </div>
+          `);
+          document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+        }catch(e){
+          showModal(`
+            <h3>Link zum Teilen</h3>
+            <p style="word-break:break-all; font-family:var(--font-mono); font-size:13px;">${escapeHtml(shareUrl)}</p>
+            <div class="confirm-row-buttons">
+              <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+            </div>
+          `);
+          document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+        }
+      }
     });
     const switchSideBtn = document.getElementById('header-switch-side-btn');
     if(switchSideBtn) switchSideBtn.addEventListener('click', async ()=>{

@@ -11,7 +11,7 @@
  */
 
 const { onDocumentUpdated } = require('firebase-functions/v2/firestore');
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onCall, HttpsError, onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
@@ -452,4 +452,92 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   }
 
   return { success: true };
+});
+
+// -------- Öffentliche Strafen-Übersicht für Gäste (kein Login nötig) --------
+
+function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactTotal, roundedTotal, paypalLink) {
+  const hasAnyLines = catalogLines.length + fremdstrafeLines.length + adHocLines.length > 0;
+  const emptyHtml = hasAnyLines ? '' : '<p>Keine Strafen für diesen Abend.</p>';
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strafen vom Kegelabend</title>
+<style>
+  body{margin:0; background:#F6F6F4; color:#161616; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+  .header{background:#161616; border-bottom:4px solid #E3421F; padding:22px 20px; text-align:center;}
+  .header h1{margin:0; color:#fff; font-size:20px;}
+  .container{max-width:480px; margin:0 auto; padding:20px 16px 60px;}
+  .card{background:#fff; border-radius:14px; padding:18px 20px; margin-bottom:16px; box-shadow:0 2px 8px rgba(0,0,0,0.06);}
+  h3{margin:0 0 10px; font-size:15px; text-transform:uppercase; letter-spacing:0.04em; color:#9A9186;}
+  table{width:100%; border-collapse:collapse;}
+  td{padding:6px 0; border-bottom:1px dashed #e5e1d8;}
+  .total-card{background:#E3421F; color:#fff; text-align:center; padding:22px 20px;}
+  .total-amount{font-size:30px; font-weight:800;}
+  .total-label{font-size:12px; text-transform:uppercase; letter-spacing:0.06em; opacity:0.9; margin-top:4px;}
+  .paypal-btn{display:block; text-align:center; background:#161616; color:#fff; font-weight:800; text-decoration:none; padding:14px 22px; border-radius:10px; margin-top:6px;}
+  .exact{font-size:13px; color:#9A9186; text-align:right; margin-top:8px;}
+</style>
+</head>
+<body>
+  <div class="header"><h1>Die Pudolfs</h1></div>
+  <div class="container">
+    <div class="card total-card">
+      <div class="total-amount">${fmtEuro(roundedTotal)}</div>
+      <div class="total-label">Strafen von ${escapeHtml(name)} · ${dateStr}</div>
+    </div>
+    ${emptyHtml}
+    ${buildSectionHtml('Strafen', catalogLines)}
+    ${buildSectionHtml('Fremdstrafen', fremdstrafeLines)}
+    ${buildSectionHtml('Geldstrafen', adHocLines)}
+    <div class="exact">Gesamt (genau): ${fmtEuro(exactTotal)}</div>
+    <a class="paypal-btn" href="${paypalLink}">Jetzt ${fmtEuro(roundedTotal)} per PayPal bezahlen</a>
+  </div>
+</body>
+</html>`;
+}
+
+function buildShareNotFoundHtml() {
+  return `<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Link ungültig</title>
+<style>body{font-family:-apple-system,sans-serif; background:#F6F6F4; color:#161616; text-align:center; padding:60px 20px;}</style>
+</head><body><h2>Link ungültig oder abgelaufen</h2><p>Bitte wende dich an die Person, die dir diesen Link geschickt hat.</p></body></html>`;
+}
+
+exports.shareGuestBill = onRequest(async (req, res) => {
+  const token = req.query.token;
+  if (!token || typeof token !== 'string') {
+    res.status(400).set('Content-Type', 'text/html; charset=utf-8').send(buildShareNotFoundHtml());
+    return;
+  }
+
+  const db = getFirestore();
+  const snapshot = await db.collection('kegelbuch').get();
+  let foundDetail = null, foundSeat = null;
+  for (const doc of snapshot.docs) {
+    if (!doc.id.startsWith('evening-')) continue;
+    let detail;
+    try { detail = JSON.parse(doc.data().value || '{}'); } catch (e) { continue; }
+    const seat = (detail.seating || []).find(s => s.shareToken === token);
+    if (seat) { foundDetail = detail; foundSeat = seat; break; }
+  }
+
+  if (!foundDetail || !foundSeat) {
+    res.status(404).set('Content-Type', 'text/html; charset=utf-8').send(buildShareNotFoundHtml());
+    return;
+  }
+
+  const dateStr = formatEveningDate(foundDetail);
+  const catalogLines = buildCatalogLines(foundDetail, foundSeat.seatId);
+  const fremdstrafeLines = buildFremdstrafeChargeLines(foundDetail, foundSeat.seatId);
+  const adHocLines = buildAdHocLines(foundDetail, foundSeat.seatId);
+  const total = fineTotalForSeat(foundDetail, foundSeat.seatId);
+  const roundedTotal = roundUpToFullEuro(total);
+  const paypalLink = buildPaypalLink(roundedTotal);
+
+  const html = buildShareGuestBillHtml(foundSeat.name, dateStr, catalogLines, fremdstrafeLines, adHocLines, total, roundedTotal, paypalLink);
+  res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
