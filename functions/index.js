@@ -53,7 +53,7 @@ function fineTotalForSeat(detail, seatId) {
     if (seat.invalidAmount !== undefined) return seat.invalidAmount;
     // Dynamisch berechnet (sollte nach Abschluss nicht mehr vorkommen)
     const validTotals = detail.seating
-      .filter(s => s.name && !s.isGuest && !s.invalid && !s.addedLater && s.seatId !== seatId)
+      .filter(s => s.name && !s.isGuest && !s.invalid && s.seatId !== seatId)
       .map(s => roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
     return validTotals.length > 0 ? roundUpToFullEuro(validTotals.reduce((a, b) => a + b, 0) / validTotals.length) : 0;
   }
@@ -250,14 +250,27 @@ async function handleEveningClosed(after, docId) {
   presentSeats.forEach(s => {
     const member = members.find(m => displayName(m) === s.name);
     if (member && member.email) {
-      recipients.push({
-        email: member.email,
-        name: s.name,
-        catalogLines: buildCatalogLines(after, s.seatId),
-        fremdstrafeLines: buildFremdstrafeChargeLines(after, s.seatId),
-        adHocLines: buildAdHocLines(after, s.seatId),
-        total: fineTotalForSeat(after, s.seatId),
-      });
+      if (s.invalid) {
+        // Invalide: alle gepflegten Strafen ignorieren, nur der Durchschnittsbetrag zählt.
+        const avgAmount = s.invalidAmount !== undefined ? s.invalidAmount : fineTotalForSeat(after, s.seatId);
+        recipients.push({
+          email: member.email,
+          name: s.name,
+          catalogLines: [],
+          fremdstrafeLines: [],
+          adHocLines: [{ label: 'Durchschnittsbetrag (als invalide markiert)', amount: avgAmount }],
+          total: avgAmount,
+        });
+      } else {
+        recipients.push({
+          email: member.email,
+          name: s.name,
+          catalogLines: buildCatalogLines(after, s.seatId),
+          fremdstrafeLines: buildFremdstrafeChargeLines(after, s.seatId),
+          adHocLines: buildAdHocLines(after, s.seatId),
+          total: fineTotalForSeat(after, s.seatId),
+        });
+      }
     }
   });
 
