@@ -356,8 +356,11 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
 
     const wasClosed = !!(before && before.closed);
     const isClosed = !!(after && after.closed);
+    const skipEmail = !!(after && after.skipNotificationEmail);
 
-    if (isClosed && !wasClosed) {
+    if (skipEmail) {
+      logger.info(`Mailversand für Abend ${docId} übersprungen (Checkbox deaktiviert).`);
+    } else if (isClosed && !wasClosed) {
       await handleEveningClosed(after, docId);
     } else if (!isClosed && wasClosed) {
       await handleEveningReopened(before, docId);
