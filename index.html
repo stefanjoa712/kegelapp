@@ -488,7 +488,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.90';
+  const APP_VERSION = '0.91';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1924,7 +1924,7 @@
         entry.amount = Math.round((entry.amount + amount)*100)/100;
         entry.history.push({
           id: uid('hist'), date: detail.date, type:'increase', delta: amount,
-          note: `Strafen vom Kegelabend am ${formatDateDE(detail.date)}`, balanceAfter: entry.amount
+          note: `Strafen vom Kegelabend am ${formatDateDE(detail.date)}`, balanceAfter: entry.amount, createdAt: Date.now()
         });
       }
       detail.seating.filter(s=>s.name).forEach(s=>{
@@ -3393,7 +3393,7 @@
         entry.amount = Math.round((entry.amount + addBack)*100)/100;
         entry.history.push({
           id: uid('hist'), date: todayISO(), type:'correction', delta: addBack,
-          note: `Umsatz „${transaction.description}" gelöscht`, balanceAfter: entry.amount
+          note: `Umsatz „${transaction.description}" gelöscht`, balanceAfter: entry.amount, createdAt: Date.now()
         });
         saves.push(setJSON('finance-arrears', state.financeArrears, true));
       }
@@ -3417,7 +3417,13 @@
     const name = state.currentArrearsName;
     const entry = getArrearsEntry(name);
     const amount = entry ? entry.amount : 0;
-    const history = (entry && entry.history) ? entry.history.slice().sort((a,b)=> b.date.localeCompare(a.date)) : [];
+    const history = (entry && entry.history) ? entry.history.slice().sort((a,b)=>{
+      const dateCompare = b.date.localeCompare(a.date);
+      if(dateCompare!==0) return dateCompare;
+      const aCreated = a.createdAt || new Date(a.date).getTime();
+      const bCreated = b.createdAt || new Date(b.date).getTime();
+      return bCreated - aCreated;
+    }) : [];
 
     const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
     const paymentFormHtml = state.financeAccounts.length===0
@@ -3499,7 +3505,7 @@
       e.amount = rounded;
       e.history.push({
         id: uid('hist'), date: todayISO(), type:'correction', delta,
-        note: note || 'Manuelle Korrektur', balanceAfter: rounded
+        note: note || 'Manuelle Korrektur', balanceAfter: rounded, createdAt: Date.now()
       });
 
       await setJSON('finance-arrears', state.financeArrears, true);
@@ -3548,7 +3554,7 @@
       const actualDelta = Math.round((e.amount - before)*100)/100;
       e.history.push({
         id: uid('hist'), date, type:'payment', delta: actualDelta,
-        note: bookingText, balanceAfter: e.amount
+        note: bookingText, balanceAfter: e.amount, createdAt: Date.now()
       });
 
       await Promise.all([
