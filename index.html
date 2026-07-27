@@ -232,6 +232,11 @@
   .own-arrears-card.amount-clear{background:#1a7a3c;}
   .own-arrears-amount{font-family:var(--font-display); font-size:26px; font-weight:700; color:#fff;}
   .own-arrears-label{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:3px;}
+  .overview-top-row{display:flex; gap:12px; align-items:stretch;}
+  .overview-top-row > .card{flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center;}
+  .next-event-card{background:var(--ink); text-align:center; cursor:pointer;}
+  .next-event-date{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.04em; color:rgba(255,255,255,0.75);}
+  .next-event-title{font-family:var(--font-display); font-size:19px; font-weight:700; color:#fff; margin-top:4px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;}
   .history-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px;}
   .history-row:last-child{border-bottom:none;}
   .history-info{display:flex; flex-direction:column; min-width:0;}
@@ -537,7 +542,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.4';
+  const APP_VERSION = '1.5';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -804,14 +809,18 @@
     state.view = 'main';
     renderLoading('Übersicht wird geladen…');
     try{
-      const [members, eveningsIndex, arrears] = await Promise.all([
+      const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getJSONOrThrow('members', []),
         getJSONOrThrow('evenings-index', []),
-        getJSONOrThrow('finance-arrears', state.financeArrears)
+        getJSONOrThrow('finance-arrears', state.financeArrears),
+        getJSONOrThrow('calendar-events', []),
+        getJSONOrThrow('calendar-occurrence-edits', [])
       ]);
       state.members = members;
       state.eveningsIndex = eveningsIndex;
       state.financeArrears = arrears;
+      state.calendarEvents = calendarEvents;
+      state.calendarOccurrenceEdits = calendarOccurrenceEdits;
       state.mainError = '';
       state.view = 'main';
       render();
@@ -1739,9 +1748,9 @@
         `;
       }).join('');
     }
-    const ownArrearsHtml = buildOwnArrearsCardHtml();
+    const overviewTopRowHtml = buildOverviewTopRowHtml();
     return `
-      ${ownArrearsHtml}
+      ${overviewTopRowHtml}
       <div class="card" style="text-align:center;">
         <button type="button" class="btn-primary" id="new-evening-btn">+ Neuer Kegelabend</button>
       </div>
@@ -1782,6 +1791,47 @@
         <div class="own-arrears-label">Dein Rückstand${isDue?' · Tippen zum Bezahlen':''}</div>
       </div>
     `;
+  }
+
+  // Sucht den chronologisch nächsten anstehenden Termin (heute oder später), über Serien hinweg.
+  function getNextUpcomingEvent(){
+    const today = todayISO();
+    let m = new Date().getMonth()+1;
+    let yy = new Date().getFullYear();
+    for(let i=0;i<24;i++){
+      const events = [];
+      state.calendarEvents.forEach(ev=>{
+        getOccurrencesInMonth(ev, yy, m).forEach(occDate=>{
+          const occ = buildOccurrenceObject(ev, occDate);
+          if(occ && occ.date>=today) events.push(occ);
+        });
+      });
+      if(events.length>0){
+        events.sort((a,b)=> a.date.localeCompare(b.date) || (a.startTime||'').localeCompare(b.startTime||''));
+        return events[0];
+      }
+      m++;
+      if(m>12){ m=1; yy++; }
+    }
+    return null;
+  }
+
+  function buildNextEventCardHtml(){
+    const occ = getNextUpcomingEvent();
+    if(!occ) return '';
+    return `
+      <div class="card next-event-card" id="next-event-card" data-series-id="${occ.seriesId}" data-occurrence-date="${occ.occurrenceDate}">
+        <div class="next-event-date">${formatDateDE(occ.date)}</div>
+        <div class="next-event-title">${escapeHtml(occ.title)}</div>
+      </div>
+    `;
+  }
+
+  function buildOverviewTopRowHtml(){
+    const arrearsHtml = buildOwnArrearsCardHtml();
+    const nextEventHtml = buildNextEventCardHtml();
+    if(arrearsHtml && nextEventHtml) return `<div class="overview-top-row">${arrearsHtml}${nextEventHtml}</div>`;
+    return arrearsHtml || nextEventHtml;
   }
 
   function formatDateTimeDE(iso){
@@ -2988,6 +3038,15 @@
       ownArrearsPayLink.addEventListener('click', ()=>{
         const amount = parseFloat(ownArrearsPayLink.dataset.amount);
         window.open(buildPaypalLink(amount), '_blank');
+      });
+    }
+    const nextEventCard = document.getElementById('next-event-card');
+    if(nextEventCard){
+      nextEventCard.addEventListener('click', async ()=>{
+        const occurrence = findOccurrenceByIds(nextEventCard.dataset.seriesId, nextEventCard.dataset.occurrenceDate);
+        if(!occurrence) return;
+        try{ state.calendarRsvps = await getJSONOrThrow('calendar-rsvps', state.calendarRsvps); }catch(e){}
+        goToEventDetail(occurrence);
       });
     }
     document.querySelectorAll('.year-header').forEach(header=>{
@@ -4913,14 +4972,18 @@
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
     try{
-      const [members, eveningsIndex, arrears] = await Promise.all([
+      const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getJSONOrThrow('members', []),
         getJSONOrThrow('evenings-index', []),
-        getJSONOrThrow('finance-arrears', [])
+        getJSONOrThrow('finance-arrears', []),
+        getJSONOrThrow('calendar-events', []),
+        getJSONOrThrow('calendar-occurrence-edits', [])
       ]);
       state.members = members;
       state.eveningsIndex = eveningsIndex;
       state.financeArrears = arrears;
+      state.calendarEvents = calendarEvents;
+      state.calendarOccurrenceEdits = calendarOccurrenceEdits;
       state.view = 'main';
       render();
       // iOS-Standalone-PWA-Trick: ein winziger echter Scroll zwingt WebKit dazu, die tatsächliche
