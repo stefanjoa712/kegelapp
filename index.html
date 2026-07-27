@@ -488,7 +488,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.91';
+  const APP_VERSION = '0.92';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -3768,17 +3768,38 @@
     state.finesCatalog = finesCatalogAtCreation;
 
     const occupiedSeatIds = buildSeatPriorityOrder().slice(0, participants.length);
-    const shuffledParticipants = shuffle(participants);
+    const schriftfuehrerCheckbox = document.getElementById('schriftfuehrer-checkbox');
+    const drawSchriftfuehrer = !!(schriftfuehrerCheckbox && schriftfuehrerCheckbox.checked);
+
+    let shuffledParticipants;
+    if(!drawSchriftfuehrer && occupiedSeatIds.includes('kneipe-1')){
+      // K1 wird automatisch Schriftführer - dort darf deshalb kein Gast landen.
+      const members = participants.filter(p=>!p.isGuest);
+      if(members.length>0){
+        const forcedMember = members[Math.floor(Math.random()*members.length)];
+        const rest = shuffle(participants.filter(p=>p!==forcedMember));
+        const otherSeatIds = occupiedSeatIds.filter(id=>id!=='kneipe-1');
+        const tempAssignment = { 'kneipe-1': forcedMember };
+        otherSeatIds.forEach((seatId, i)=>{ tempAssignment[seatId] = rest[i]; });
+        shuffledParticipants = occupiedSeatIds.map(id=>tempAssignment[id]);
+      }else{
+        shuffledParticipants = shuffle(participants);
+      }
+    }else{
+      shuffledParticipants = shuffle(participants);
+    }
+
     const seatAssignment = {};
     occupiedSeatIds.forEach((seatId, i)=>{ seatAssignment[seatId] = shuffledParticipants[i]; });
 
-    const schriftfuehrerCheckbox = document.getElementById('schriftfuehrer-checkbox');
     let schriftfuehrerSeatId = null;
-    if(schriftfuehrerCheckbox && schriftfuehrerCheckbox.checked){
+    if(drawSchriftfuehrer){
       const memberSeatIds = occupiedSeatIds.filter((seatId, i)=> !shuffledParticipants[i].isGuest);
       if(memberSeatIds.length>0){
         schriftfuehrerSeatId = memberSeatIds[Math.floor(Math.random()*memberSeatIds.length)];
       }
+    }else if(seatAssignment['kneipe-1'] && !seatAssignment['kneipe-1'].isGuest){
+      schriftfuehrerSeatId = 'kneipe-1';
     }
 
     const seating = SEATS.map(seat=>{
