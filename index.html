@@ -555,7 +555,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.15';
+  const APP_VERSION = '1.16';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1533,31 +1533,37 @@
       return `<div class="card"><p class="empty-state">Keine anstehenden Spartöpfe. In den Einstellungen unter „Finanzverwaltung" anlegen.</p></div>`;
     }
 
-    // Töpfe mit verknüpfter monatlicher Buchung werden direkt finanziert (Startbetrag + alle
-    // bisher gebuchten Beträge dieser Buchung) - sie nehmen NICHT am Wasserfall teil, und ihr
-    // Betrag wird vom Gesamtbetrag abgezogen, bevor der Rest auf die übrigen Töpfe verteilt wird.
+    // Reihenfolge der Verteilung:
+    // 1. Jeder Topf mit einem Startbetrag bekommt diesen direkt zugewiesen - wird vom
+    //    noch zu verteilenden Gesamtbetrag abgezogen.
+    // 2. Töpfe mit verknüpfter monatlicher Buchung bekommen zusätzlich die Summe aller
+    //    bisher dafür gebuchten Beträge direkt zugewiesen - ebenfalls abgezogen.
+    // 3. Der verbleibende Betrag wird per Wasserfall (nächstes Zieldatum zuerst) auf den
+    //    jeweils noch offenen Bedarf (Sparziel abzüglich bereits direkt Zugewiesenem) verteilt.
     const linkedPotIds = new Set(state.financeRecurring.filter(r=>r.potId).map(r=>r.potId));
-    let directlyFundedTotal = 0;
-    function directlyFundedAmount(pot){
-      const startAmount = pot.startAmount || 0;
-      const bookedSum = state.financeTransactions
+    function bookedSumForPot(pot){
+      return state.financeTransactions
         .filter(t=>t.potId===pot.id)
         .reduce((sum,t)=> sum + t.amount, 0);
-      return Math.round((startAmount + bookedSum)*100)/100;
     }
-    activePots.forEach(p=>{
-      if(linkedPotIds.has(p.id)) directlyFundedTotal += directlyFundedAmount(p);
-    });
 
-    let remaining = Math.max(0, totalAmount - directlyFundedTotal);
+    const directFunding = {};
+    let remaining = totalAmount;
+    activePots.forEach(p=>{
+      let funded = p.startAmount || 0;
+      if(linkedPotIds.has(p.id)) funded += bookedSumForPot(p);
+      funded = Math.round(funded*100)/100;
+      directFunding[p.id] = funded;
+      remaining -= funded;
+    });
+    remaining = Math.max(0, remaining);
+
     const rowsHtml = activePots.map(p=>{
-      let allocated;
-      if(linkedPotIds.has(p.id)){
-        allocated = directlyFundedAmount(p);
-      }else{
-        allocated = Math.max(0, Math.min(remaining, p.targetAmount));
-        remaining -= allocated;
-      }
+      const alreadyFunded = directFunding[p.id];
+      const stillNeeded = Math.max(0, p.targetAmount - alreadyFunded);
+      const waterfallShare = Math.max(0, Math.min(remaining, stillNeeded));
+      remaining -= waterfallShare;
+      const allocated = Math.round((alreadyFunded + waterfallShare)*100)/100;
       const percent = p.targetAmount>0 ? Math.min(100, Math.round(allocated/p.targetAmount*100)) : 0;
       return `
         <div class="savings-pot-row">
