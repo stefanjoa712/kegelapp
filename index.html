@@ -555,7 +555,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.14';
+  const APP_VERSION = '1.15';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -601,6 +601,7 @@
     calendarSelectedDate: todayISO(),
     calendarEditingOccurrence: null,
     currentMemberId: null,
+    currentRecurringId: null,
     currentMemberStats: {},
     eventDetailOrigin: 'calendar',
     currentEveningDetail:null,
@@ -994,6 +995,11 @@
     state.view = 'settingsMenu';
     render();
   }
+  function goToRecurringDetail(existingRecurring){
+    state.currentRecurringId = existingRecurring ? existingRecurring.id : null;
+    state.view = 'recurringDetail';
+    render();
+  }
   async function goToFinesManagement(){
     state.view = 'finesManagement';
     renderLoading('Strafen werden geladen…');
@@ -1038,18 +1044,20 @@
     state.view = 'finance';
     renderLoading('Finanzen werden geladen…');
     try{
-      const [accounts, transactions, arrears, members, pots] = await Promise.all([
+      const [accounts, transactions, arrears, members, pots, recurring] = await Promise.all([
         getJSONOrThrow('finance-accounts', []),
         getJSONOrThrow('finance-transactions', []),
         getJSONOrThrow('finance-arrears', []),
         getJSONOrThrow('members', state.members),
-        getJSONOrThrow('finance-savings-pots', [])
+        getJSONOrThrow('finance-savings-pots', []),
+        getJSONOrThrow('finance-recurring', [])
       ]);
       state.financeAccounts = accounts;
       state.financeTransactions = transactions;
       state.financeArrears = arrears;
       state.members = members;
       state.financeSavingsPots = pots;
+      state.financeRecurring = recurring;
       state.view = 'finance';
       render();
     }catch(e){
@@ -1108,6 +1116,7 @@
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
     else if(state.view==='memberDetail') goToSettings();
+    else if(state.view==='recurringDetail') goToFinanceManagement();
     else if(state.view==='eventDetail') goBackFromEventDetail();
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
@@ -1316,6 +1325,39 @@
       </span>
     </div>`;
   }
+  function viewRecurringDetail(){
+    const r = state.financeRecurring.find(x=>x.id===state.currentRecurringId);
+    const isEdit = !!r;
+    if(state.financeAccounts.length===0){
+      return `<div class="card"><p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in der Finanzverwaltung eines an.</p></div>`;
+    }
+    const isExpenseEdit = isEdit && r.amount<0;
+    const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${(isEdit && r.accountId===a.id)?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
+    const potOptionsHtml = state.financeSavingsPots.map(p=>`<option value="${p.id}"${(isEdit && r.potId===p.id)?' selected':''}>${escapeHtml(p.name)}</option>`).join('');
+    return `
+      <div class="card">
+        <label for="rec-description">Bezeichnung</label>
+        <input type="text" id="rec-description" placeholder="z. B. Bahnmiete" value="${isEdit?escapeHtml(r.description):''}">
+        <label for="rec-account">Konto/Kasse</label>
+        <select id="rec-account">${accountOptionsHtml}</select>
+        <label for="rec-income">Einnahme (€)</label>
+        <input type="number" id="rec-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(r.amount).toFixed(2):''}">
+        <label for="rec-expense">Ausgabe (€)</label>
+        <input type="number" id="rec-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(r.amount).toFixed(2):''}">
+        <label for="rec-next-date">Nächste Ausführung</label>
+        <input type="date" id="rec-next-date" value="${isEdit?r.nextDate:todayISO()}">
+        <label for="rec-pot">Spartopf (optional)</label>
+        <select id="rec-pot">
+          <option value="">Kein Spartopf</option>
+          ${potOptionsHtml}
+        </select>
+        <p class="hint">Ist ein Spartopf ausgewählt, fließt diese Buchung immer direkt in diesen Topf statt in die allgemeine Aufteilung.</p>
+        <p class="form-error" id="rec-detail-error"></p>
+        <button type="button" class="btn-primary" id="save-rec-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+      </div>
+    `;
+  }
+
   function viewFinanceManagement(){
     const accountsListHtml = state.financeAccounts.length===0
       ? `<p class="empty-state">Noch keine Konten &amp; Kassen angelegt. Über das „+" oben hinzufügen.</p>`
@@ -1383,16 +1425,16 @@
 
   function recurringRowHtml(r){
     const isPositive = r.amount>=0;
-    return `<div class="member-row-full" data-id="${r.id}">
+    const potName = r.potId ? state.financeSavingsPots.find(p=>p.id===r.potId) : null;
+    return `<div class="member-row-full member-row-clickable" data-id="${r.id}">
       <div class="member-row">
         <span class="transaction-info">
           <span class="transaction-description">${escapeHtml(r.description)}</span>
-          <span class="transaction-meta">Nächste Ausführung: ${formatDateDE(r.nextDate)} · ${escapeHtml(financeAccountNameById(r.accountId))}</span>
+          <span class="transaction-meta">Nächste Ausführung: ${formatDateDE(r.nextDate)} · ${escapeHtml(financeAccountNameById(r.accountId))}${potName?` · Spartopf: ${escapeHtml(potName.name)}`:''}</span>
         </span>
         <span class="row-actions">
           <span class="fine-row-amount ${isPositive?'':'amount-due'}">${isPositive?'+':''}${fmtEuro(r.amount)}</span>
-          <button type="button" class="icon-btn edit-recurring-btn" data-id="${r.id}" aria-label="Bearbeiten">✎</button>
-          <button type="button" class="icon-btn delete-recurring-btn" data-id="${r.id}" aria-label="Löschen">✕</button>
+          <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
         </span>
       </div>
     </div>`;
@@ -1491,10 +1533,31 @@
       return `<div class="card"><p class="empty-state">Keine anstehenden Spartöpfe. In den Einstellungen unter „Finanzverwaltung" anlegen.</p></div>`;
     }
 
-    let remaining = totalAmount;
+    // Töpfe mit verknüpfter monatlicher Buchung werden direkt finanziert (Startbetrag + alle
+    // bisher gebuchten Beträge dieser Buchung) - sie nehmen NICHT am Wasserfall teil, und ihr
+    // Betrag wird vom Gesamtbetrag abgezogen, bevor der Rest auf die übrigen Töpfe verteilt wird.
+    const linkedPotIds = new Set(state.financeRecurring.filter(r=>r.potId).map(r=>r.potId));
+    let directlyFundedTotal = 0;
+    function directlyFundedAmount(pot){
+      const startAmount = pot.startAmount || 0;
+      const bookedSum = state.financeTransactions
+        .filter(t=>t.potId===pot.id)
+        .reduce((sum,t)=> sum + t.amount, 0);
+      return Math.round((startAmount + bookedSum)*100)/100;
+    }
+    activePots.forEach(p=>{
+      if(linkedPotIds.has(p.id)) directlyFundedTotal += directlyFundedAmount(p);
+    });
+
+    let remaining = Math.max(0, totalAmount - directlyFundedTotal);
     const rowsHtml = activePots.map(p=>{
-      const allocated = Math.max(0, Math.min(remaining, p.targetAmount));
-      remaining -= allocated;
+      let allocated;
+      if(linkedPotIds.has(p.id)){
+        allocated = directlyFundedAmount(p);
+      }else{
+        allocated = Math.max(0, Math.min(remaining, p.targetAmount));
+        remaining -= allocated;
+      }
       const percent = p.targetAmount>0 ? Math.min(100, Math.round(allocated/p.targetAmount*100)) : 0;
       return `
         <div class="savings-pot-row">
@@ -1755,6 +1818,7 @@
     if(state.view==='arrearsDetail') return 'arrearsDetail:'+encodeURIComponent(state.currentArrearsName);
     if(state.view==='transactionDetail') return 'transactionDetail:'+(state.currentTransactionId||'new');
     if(state.view==='memberDetail') return 'memberDetail:'+(state.currentMemberId||'new');
+    if(state.view==='recurringDetail') return 'recurringDetail:'+(state.currentRecurringId||'new');
     if(state.view==='eventDetail') return 'eventDetail:'+(state.calendarEditingOccurrence ? state.calendarEditingOccurrence.seriesId+':'+state.calendarEditingOccurrence.occurrenceDate : 'new');
     return state.view;
   }
@@ -1772,6 +1836,7 @@
     if(sig.startsWith('arrearsDetail:')) return '#rueckstand-person';
     if(sig.startsWith('transactionDetail:')) return '#umsatz';
     if(sig.startsWith('memberDetail:')) return '#mitglied';
+    if(sig.startsWith('recurringDetail:')) return '#buchung';
     if(sig.startsWith('eventDetail:')) return '#termin';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
@@ -1788,6 +1853,7 @@
     else if(state.view==='finesManagement') body = viewFinesManagement();
     else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='financeManagement') body = viewFinanceManagement();
+    else if(state.view==='recurringDetail') body = viewRecurringDetail();
     else if(state.view==='finance') body = viewFinance();
     else if(state.view==='calendar') body = viewCalendar();
     else if(state.view==='eventManagement') body = viewEventManagement();
@@ -1810,7 +1876,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -1929,6 +1995,23 @@
             }catch(e){}
           }
         }
+      }else if(sig.startsWith('recurringDetail:')){
+        const recId = sig.slice('recurringDetail:'.length);
+        if(state.financeAccounts.length===0 && state.financeRecurring.length===0 && state.financeSavingsPots.length===0){
+          try{
+            const [accounts, recurring, pots] = await Promise.all([
+              getJSONOrThrow('finance-accounts', []),
+              getJSONOrThrow('finance-recurring', []),
+              getJSONOrThrow('finance-savings-pots', [])
+            ]);
+            state.financeAccounts = accounts;
+            state.financeRecurring = recurring;
+            state.financeSavingsPots = pots;
+          }catch(e){}
+        }
+        state.currentRecurringId = recId==='new' ? null : recId;
+        state.view = 'recurringDetail';
+        render();
       }else if(sig.startsWith('eventDetail:')){
         const rest = sig.slice('eventDetail:'.length);
         if(state.calendarEvents.length===0 && state.calendarOccurrenceEdits.length===0){
@@ -3183,6 +3266,7 @@
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
+    else if(state.view==='recurringDetail') title = state.currentRecurringId ? 'Buchung bearbeiten' : 'Monatliche Buchung hinzufügen';
     else if(state.view==='finance') title = 'Finanzen';
     else if(state.view==='calendar') title = 'Kalender';
     else if(state.view==='eventManagement') title = 'Terminverwaltung';
@@ -3344,6 +3428,17 @@
       </div>
     ` : '';
 
+    const recurringOverflowHtml = (state.view==='recurringDetail' && state.currentRecurringId) ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-recurring-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-recurring-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-recurring-btn">Buchung löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const tabsHtml = state.view==='detail' ? `
       <div class="tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
@@ -3360,7 +3455,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${recurringOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -3421,6 +3516,7 @@
     else if(state.view==='finesManagement') attachFinesManagementListeners();
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
+    else if(state.view==='recurringDetail') attachRecurringDetailListeners();
     else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='calendar') attachCalendarListeners();
     else if(state.view==='eventManagement') attachEventManagementListeners();
@@ -3576,6 +3672,57 @@
     });
   }
 
+  function attachRecurringDetailListeners(){
+    const r = state.financeRecurring.find(x=>x.id===state.currentRecurringId);
+
+    const overflowBtn = document.getElementById('header-recurring-overflow-btn');
+    const overflowMenu = document.getElementById('header-recurring-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
+    }
+    const deleteBtn = document.getElementById('header-delete-recurring-btn');
+    if(deleteBtn) deleteBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      if(r) showDeleteRecurringModal(r);
+    });
+
+    const saveBtn = document.getElementById('save-rec-detail-btn');
+    if(!saveBtn) return;
+    saveBtn.addEventListener('click', async ()=>{
+      const errEl = document.getElementById('rec-detail-error');
+      const description = document.getElementById('rec-description').value.trim();
+      const accountId = document.getElementById('rec-account').value;
+      const incomeRaw = document.getElementById('rec-income').value.replace(',', '.');
+      const expenseRaw = document.getElementById('rec-expense').value.replace(',', '.');
+      const income = incomeRaw==='' ? 0 : parseFloat(incomeRaw);
+      const expense = expenseRaw==='' ? 0 : parseFloat(expenseRaw);
+      const nextDate = document.getElementById('rec-next-date').value;
+      const potId = document.getElementById('rec-pot').value;
+
+      if(!description){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+      if(!nextDate){ errEl.textContent='Bitte die nächste Ausführung angeben.'; return; }
+      if(isNaN(income) || isNaN(expense) || income<0 || expense<0){ errEl.textContent='Bitte gültige Beträge angeben.'; return; }
+      if((income>0) === (expense>0)){ errEl.textContent='Bitte entweder eine Einnahme oder eine Ausgabe angeben (nicht beides oder keins).'; return; }
+
+      const amount = income>0 ? Math.round(income*100)/100 : -Math.round(expense*100)/100;
+      saveBtn.disabled = true; saveBtn.textContent = r ? 'Speichert…' : 'Wird hinzugefügt…';
+
+      if(r){
+        r.description=description; r.accountId=accountId; r.amount=amount; r.nextDate=nextDate;
+        if(potId) r.potId=potId; else delete r.potId;
+      }else{
+        const newRec = {id:uid('rec'), description, accountId, amount, nextDate};
+        if(potId) newRec.potId = potId;
+        state.financeRecurring.push(newRec);
+      }
+      await setJSON('finance-recurring', state.financeRecurring, true);
+      goToFinanceManagement();
+    });
+  }
+
   function attachFinesManagementListeners(){
     document.querySelectorAll('.edit-fine-btn').forEach(b=>{
       b.addEventListener('click', ()=>{
@@ -3640,20 +3787,15 @@
   }
 
   function attachFinanceRecurringListeners(){
-    document.querySelectorAll('.edit-recurring-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const r = state.financeRecurring.find(x=>x.id===b.dataset.id);
-        if(r) showRecurringFormModal(r);
-      });
-    });
-    document.querySelectorAll('.delete-recurring-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const r = state.financeRecurring.find(x=>x.id===b.dataset.id);
-        if(r) showDeleteRecurringModal(r);
+    document.querySelectorAll('.member-row-clickable[data-id]').forEach(row=>{
+      if(!row.closest('#finance-recurring-list-container')) return;
+      row.addEventListener('click', ()=>{
+        const r = state.financeRecurring.find(x=>x.id===row.dataset.id);
+        if(r) goToRecurringDetail(r);
       });
     });
     const openAddRecurringBtn = document.getElementById('header-add-recurring-btn');
-    if(openAddRecurringBtn) openAddRecurringBtn.addEventListener('click', ()=>showRecurringFormModal());
+    if(openAddRecurringBtn) openAddRecurringBtn.addEventListener('click', ()=>goToRecurringDetail(null));
     document.querySelectorAll('.edit-pot-btn').forEach(b=>{
       b.addEventListener('click', ()=>{
         const p = state.financeSavingsPots.find(x=>x.id===b.dataset.id);
@@ -4081,73 +4223,7 @@
       state.financeRecurring = state.financeRecurring.filter(x=>x.id!==r.id);
       await setJSON('finance-recurring', state.financeRecurring, true);
       closeGenericModal();
-      render();
-    });
-  }
-
-  function showRecurringFormModal(existingRecurring){
-    const isEdit = !!existingRecurring;
-    if(state.financeAccounts.length===0){
-      showModal(`
-        <h3>Monatliche Buchung hinzufügen</h3>
-        <p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst oben eines an.</p>
-        <div class="confirm-row-buttons">
-          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
-        </div>
-      `);
-      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-      return;
-    }
-    const isExpenseEdit = isEdit && existingRecurring.amount<0;
-    const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${(isEdit && existingRecurring.accountId===a.id)?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
-    showModal(`
-      <h3>${isEdit ? 'Monatliche Buchung bearbeiten' : 'Monatliche Buchung hinzufügen'}</h3>
-      <label for="new-rec-description">Bezeichnung</label>
-      <input type="text" id="new-rec-description" placeholder="z. B. Bahnmiete" value="${isEdit?escapeHtml(existingRecurring.description):''}">
-      <label for="new-rec-account">Konto/Kasse</label>
-      <select id="new-rec-account">${accountOptionsHtml}</select>
-      <label for="new-rec-income">Einnahme (€)</label>
-      <input type="number" id="new-rec-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(existingRecurring.amount).toFixed(2):''}">
-      <label for="new-rec-expense">Ausgabe (€)</label>
-      <input type="number" id="new-rec-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(existingRecurring.amount).toFixed(2):''}">
-      <label for="new-rec-next-date">Nächste Ausführung</label>
-      <input type="date" id="new-rec-next-date" value="${isEdit?existingRecurring.nextDate:todayISO()}">
-      <p class="form-error" id="rec-form-error"></p>
-      <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="save-rec-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
-        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
-      </div>
-    `);
-    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    document.getElementById('new-rec-description').focus();
-    document.getElementById('save-rec-btn').addEventListener('click', async ()=>{
-      const errEl = document.getElementById('rec-form-error');
-      const description = document.getElementById('new-rec-description').value.trim();
-      const accountId = document.getElementById('new-rec-account').value;
-      const incomeRaw = document.getElementById('new-rec-income').value.replace(',', '.');
-      const expenseRaw = document.getElementById('new-rec-expense').value.replace(',', '.');
-      const income = incomeRaw==='' ? 0 : parseFloat(incomeRaw);
-      const expense = expenseRaw==='' ? 0 : parseFloat(expenseRaw);
-      const nextDate = document.getElementById('new-rec-next-date').value;
-
-      if(!description){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
-      if(!nextDate){ errEl.textContent='Bitte die nächste Ausführung angeben.'; return; }
-      if(isNaN(income) || isNaN(expense) || income<0 || expense<0){ errEl.textContent='Bitte gültige Beträge angeben.'; return; }
-      if((income>0) === (expense>0)){ errEl.textContent='Bitte entweder eine Einnahme oder eine Ausgabe angeben (nicht beides oder keins).'; return; }
-
-      const amount = income>0 ? Math.round(income*100)/100 : -Math.round(expense*100)/100;
-      const btn = document.getElementById('save-rec-btn');
-      btn.disabled = true; btn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
-
-      if(isEdit){
-        const r = state.financeRecurring.find(x=>x.id===existingRecurring.id);
-        if(r){ r.description=description; r.accountId=accountId; r.amount=amount; r.nextDate=nextDate; }
-      }else{
-        state.financeRecurring.push({id:uid('rec'), description, accountId, amount, nextDate});
-      }
-      await setJSON('finance-recurring', state.financeRecurring, true);
-      closeGenericModal();
-      render();
+      goToFinanceManagement();
     });
   }
 
@@ -4181,6 +4257,8 @@
       <input type="number" id="new-pot-target" min="0" step="0.01" placeholder="0,00" value="${isEdit?existingPot.targetAmount.toFixed(2):''}">
       <label for="new-pot-date">Zieldatum</label>
       <input type="date" id="new-pot-date" value="${isEdit?existingPot.targetDate:''}">
+      <label for="new-pot-start">Startbetrag (€, optional)</label>
+      <input type="number" id="new-pot-start" min="0" step="0.01" placeholder="0,00" value="${(isEdit && existingPot.startAmount)?existingPot.startAmount.toFixed(2):''}">
       <p class="form-error" id="pot-form-error"></p>
       <div class="confirm-row-buttons">
         <button type="button" class="btn-primary" id="save-pot-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
@@ -4195,19 +4273,22 @@
       const targetRaw = document.getElementById('new-pot-target').value.replace(',', '.');
       const targetAmount = parseFloat(targetRaw);
       const targetDate = document.getElementById('new-pot-date').value;
+      const startRaw = document.getElementById('new-pot-start').value.replace(',', '.');
+      const startAmount = startRaw==='' ? 0 : parseFloat(startRaw);
 
       if(!name){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
       if(isNaN(targetAmount) || targetAmount<=0){ errEl.textContent='Bitte ein gültiges Sparziel angeben.'; return; }
       if(!targetDate){ errEl.textContent='Bitte ein Zieldatum angeben.'; return; }
+      if(isNaN(startAmount) || startAmount<0){ errEl.textContent='Bitte einen gültigen Startbetrag angeben.'; return; }
 
       const btn = document.getElementById('save-pot-btn');
       btn.disabled = true; btn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
 
       if(isEdit){
         const p = state.financeSavingsPots.find(x=>x.id===existingPot.id);
-        if(p){ p.name=name; p.targetAmount=Math.round(targetAmount*100)/100; p.targetDate=targetDate; }
+        if(p){ p.name=name; p.targetAmount=Math.round(targetAmount*100)/100; p.targetDate=targetDate; p.startAmount=Math.round(startAmount*100)/100; }
       }else{
-        state.financeSavingsPots.push({id:uid('pot'), name, targetAmount:Math.round(targetAmount*100)/100, targetDate});
+        state.financeSavingsPots.push({id:uid('pot'), name, targetAmount:Math.round(targetAmount*100)/100, targetDate, startAmount:Math.round(startAmount*100)/100});
       }
       await setJSON('finance-savings-pots', state.financeSavingsPots, true);
       closeGenericModal();

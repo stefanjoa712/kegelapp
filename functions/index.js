@@ -602,14 +602,16 @@ exports.processRecurringBookings = onSchedule(
 
     dueBookings.forEach(r => {
       const description = `${r.description} (${monthLabel})`;
-      transactions.push({
+      const transaction = {
         id: 'tx-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
         accountId: r.accountId,
         description,
         date: todayStr,
         amount: r.amount,
         createdAt: Date.now(),
-      });
+      };
+      if (r.potId) transaction.potId = r.potId;
+      transactions.push(transaction);
       r.nextDate = addOneMonthSameDay(r.nextDate);
       logger.info(`Monatliche Buchung verbucht: "${description}", Betrag ${r.amount}, nächste Ausführung ${r.nextDate}`);
     });
