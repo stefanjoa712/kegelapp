@@ -550,7 +550,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.12';
+  const APP_VERSION = '1.13';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -927,17 +927,38 @@
 
   // Ermittelt für ein Mitglied, an wie vielen Kegelabenden pro Jahr es teilgenommen hat
   // (im Verhältnis zu allen Abenden in diesem Jahr).
+  // Aktualisiert das vorab aggregierte Statistik-Dokument (attendance-stats) für einen Abend.
+  // direction = +1 beim Abschließen, -1 beim Wieder-Öffnen oder Löschen eines abgeschlossenen Abends.
+  async function updateAttendanceStatsForEvening(detail, direction){
+    let stats;
+    try{ stats = await getJSONOrThrow('attendance-stats', {totalsByYear:{}, attendanceByMember:{}}); }
+    catch(e){ stats = {totalsByYear:{}, attendanceByMember:{}}; }
+    if(!stats.totalsByYear) stats.totalsByYear = {};
+    if(!stats.attendanceByMember) stats.attendanceByMember = {};
+
+    const year = detail.date.slice(0,4);
+    const newTotal = (stats.totalsByYear[year]||0) + direction;
+    if(newTotal>0) stats.totalsByYear[year] = newTotal; else delete stats.totalsByYear[year];
+
+    const presentMemberNames = new Set(detail.seating.filter(s=>s.name && !s.isGuest).map(s=>s.name));
+    presentMemberNames.forEach(name=>{
+      if(!stats.attendanceByMember[name]) stats.attendanceByMember[name] = {};
+      const newCount = (stats.attendanceByMember[name][year]||0) + direction;
+      if(newCount>0) stats.attendanceByMember[name][year] = newCount; else delete stats.attendanceByMember[name][year];
+    });
+    await setJSON('attendance-stats', stats, true);
+  }
+
+  // Liest die vorab aggregierte Statistik (ein einziges Dokument statt aller Abende einzeln).
   async function computeMemberAttendanceStats(memberName){
+    let raw;
+    try{ raw = await getJSONOrThrow('attendance-stats', {totalsByYear:{}, attendanceByMember:{}}); }
+    catch(e){ raw = {totalsByYear:{}, attendanceByMember:{}}; }
+    const totalsByYear = raw.totalsByYear || {};
+    const attendedByYear = (raw.attendanceByMember && raw.attendanceByMember[memberName]) || {};
     const stats = {};
-    const details = await Promise.all(
-      state.eveningsIndex.map(e => getJSONOrThrow('evening-'+e.id, null).catch(()=>null))
-    );
-    details.forEach(detail=>{
-      if(!detail || !detail.date) return;
-      const year = detail.date.slice(0,4);
-      if(!stats[year]) stats[year] = {attended:0, total:0};
-      stats[year].total++;
-      if(detail.seating && detail.seating.some(s=>s.name===memberName)) stats[year].attended++;
+    Object.keys(totalsByYear).forEach(year=>{
+      stats[year] = { attended: attendedByYear[year]||0, total: totalsByYear[year] };
     });
     return stats;
   }
@@ -949,7 +970,6 @@
     if(!member){ render(); return; }
     renderLoading('Statistik wird geladen…');
     try{
-      state.eveningsIndex = await getJSONOrThrow('evenings-index', state.eveningsIndex);
       state.currentMemberStats = await computeMemberAttendanceStats(displayName(member));
     }catch(e){
       state.currentMemberStats = {};
@@ -1892,7 +1912,6 @@
           render();
           if(m){
             try{
-              state.eveningsIndex = await getJSONOrThrow('evenings-index', state.eveningsIndex);
               state.currentMemberStats = await computeMemberAttendanceStats(displayName(m));
               render();
             }catch(e){}
@@ -2619,6 +2638,7 @@
         setJSON('evenings-index', state.eveningsIndex, true),
         setJSON('finance-arrears', arrears, true)
       ]);
+      await updateAttendanceStatsForEvening(detail, 1);
       closeGenericModal();
       render();
     });
@@ -2662,6 +2682,7 @@
         setJSON('evening-'+detail.id, detail, true),
         setJSON('evenings-index', state.eveningsIndex, true)
       ]);
+      await updateAttendanceStatsForEvening(detail, -1);
       closeGenericModal();
       render();
     });
@@ -5006,6 +5027,9 @@
       }
 
       await Promise.all(saves);
+      if(detail.closed){
+        await updateAttendanceStatsForEvening(detail, -1);
+      }
       state.eveningsIndex = newIndex;
       state.confirmDeleteEveningId = null;
       goToMain();
