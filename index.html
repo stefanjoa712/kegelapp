@@ -488,7 +488,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.94';
+  const APP_VERSION = '0.95';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1581,7 +1581,7 @@
   // Pool für Durchschnittsberechnungen: anwesende, gültige (nicht invalide) Mitglieder - ohne Gäste.
   function validPresentMemberTotals(detail, excludeSeatId){
     return detail.seating
-      .filter(s=> s.name && !s.isGuest && !s.invalid && s.seatId!==excludeSeatId)
+      .filter(s=> s.name && !s.invalid && s.seatId!==excludeSeatId)
       .map(s=> roundedFineTotalForSeat(detail, s.seatId));
   }
   function averageOfTotalsRounded(totals){

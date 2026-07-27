@@ -54,7 +54,7 @@ function fineTotalForSeat(detail, seatId) {
     if (seat.invalidAmount !== undefined) return seat.invalidAmount;
     // Dynamisch berechnet (sollte nach Abschluss nicht mehr vorkommen)
     const validTotals = detail.seating
-      .filter(s => s.name && !s.isGuest && !s.invalid && s.seatId !== seatId)
+      .filter(s => s.name && !s.invalid && s.seatId !== seatId)
       .map(s => roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
     return validTotals.length > 0 ? roundUpToFullEuro(validTotals.reduce((a, b) => a + b, 0) / validTotals.length) : 0;
   }
