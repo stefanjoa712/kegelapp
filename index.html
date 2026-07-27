@@ -509,7 +509,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.97';
+  const APP_VERSION = '0.98';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -667,6 +667,31 @@
   }
 
   // Liefert alle Termine (inkl. Serien-Vorkommen, mit angewendeten Ausnahmen) für einen bestimmten Tag.
+  function buildOccurrenceObject(ev, occDate){
+    const edit = findOccurrenceEdit(ev.id, occDate);
+    if(edit && edit.deleted) return null;
+    if(edit){
+      return {
+        seriesId: ev.id, occurrenceDate: occDate, isException: true,
+        title: edit.title!==undefined ? edit.title : ev.title,
+        location: edit.location!==undefined ? edit.location : ev.location,
+        date: edit.date!==undefined ? edit.date : occDate,
+        startTime: edit.startTime!==undefined ? edit.startTime : ev.startTime,
+        endTime: edit.endTime!==undefined ? edit.endTime : ev.endTime,
+        recurrence: ev.recurrence
+      };
+    }
+    return {
+      seriesId: ev.id, occurrenceDate: occDate, isException: false,
+      title: ev.title, location: ev.location, date: occDate,
+      startTime: ev.startTime, endTime: ev.endTime, recurrence: ev.recurrence
+    };
+  }
+  function findOccurrenceByIds(seriesId, occurrenceDate){
+    const ev = state.calendarEvents.find(e=>e.id===seriesId);
+    if(!ev) return null;
+    return buildOccurrenceObject(ev, occurrenceDate);
+  }
   function getEventsOnDate(dateStr){
     const [y, m] = dateStr.split('-').map(Number);
     const results = [];
@@ -674,25 +699,8 @@
       const occDates = getOccurrencesInMonth(ev, y, m);
       occDates.forEach(occDate=>{
         if(occDate!==dateStr) return;
-        const edit = findOccurrenceEdit(ev.id, occDate);
-        if(edit && edit.deleted) return;
-        if(edit){
-          results.push({
-            seriesId: ev.id, occurrenceDate: occDate, isException: true,
-            title: edit.title!==undefined ? edit.title : ev.title,
-            location: edit.location!==undefined ? edit.location : ev.location,
-            date: edit.date!==undefined ? edit.date : occDate,
-            startTime: edit.startTime!==undefined ? edit.startTime : ev.startTime,
-            endTime: edit.endTime!==undefined ? edit.endTime : ev.endTime,
-            recurrence: ev.recurrence
-          });
-        }else{
-          results.push({
-            seriesId: ev.id, occurrenceDate: occDate, isException: false,
-            title: ev.title, location: ev.location, date: occDate,
-            startTime: ev.startTime, endTime: ev.endTime, recurrence: ev.recurrence
-          });
-        }
+        const occ = buildOccurrenceObject(ev, occDate);
+        if(occ) results.push(occ);
       });
     });
     return results.sort((a,b)=> (a.startTime||'').localeCompare(b.startTime||''));
@@ -876,7 +884,7 @@
   }
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement') goToSettingsMenu();
-    else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
+    else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail' || state.view==='eventDetail'){ history.back(); }
     else goToMain();
   }
   function goToNew(){
@@ -1440,6 +1448,7 @@
     if(state.view==='detail' && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
     if(state.view==='arrearsDetail') return 'arrearsDetail:'+encodeURIComponent(state.currentArrearsName);
     if(state.view==='transactionDetail') return 'transactionDetail:'+(state.currentTransactionId||'new');
+    if(state.view==='eventDetail') return 'eventDetail:'+(state.calendarEditingOccurrence ? state.calendarEditingOccurrence.seriesId+':'+state.calendarEditingOccurrence.occurrenceDate : 'new');
     return state.view;
   }
   function hashFor(sig){
@@ -1453,6 +1462,7 @@
     if(sig.startsWith('personFine:')) return '#strafe-person';
     if(sig.startsWith('arrearsDetail:')) return '#rueckstand-person';
     if(sig.startsWith('transactionDetail:')) return '#umsatz';
+    if(sig.startsWith('eventDetail:')) return '#termin';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
   }
@@ -1469,6 +1479,7 @@
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='finance') body = viewFinance();
     else if(state.view==='calendar') body = viewCalendar();
+    else if(state.view==='eventDetail') body = viewEventDetail();
     else if(state.view==='arrearsDetail') body = viewArrearsDetail();
     else if(state.view==='transactionDetail') body = viewTransactionDetail();
     else if(state.view==='new') body = viewNew();
@@ -1487,7 +1498,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -1581,6 +1592,28 @@
         }
         state.currentTransactionId = txId==='new' ? null : txId;
         state.view = 'transactionDetail';
+        render();
+      }else if(sig.startsWith('eventDetail:')){
+        const rest = sig.slice('eventDetail:'.length);
+        if(state.calendarEvents.length===0 && state.calendarOccurrenceEdits.length===0){
+          try{
+            const [events, edits] = await Promise.all([
+              getJSONOrThrow('calendar-events', []),
+              getJSONOrThrow('calendar-occurrence-edits', [])
+            ]);
+            state.calendarEvents = events;
+            state.calendarOccurrenceEdits = edits;
+          }catch(e){}
+        }
+        if(rest==='new'){
+          state.calendarEditingOccurrence = null;
+        }else{
+          const sepIdx = rest.indexOf(':');
+          const seriesId = rest.slice(0, sepIdx);
+          const occurrenceDate = rest.slice(sepIdx+1);
+          state.calendarEditingOccurrence = findOccurrenceByIds(seriesId, occurrenceDate);
+        }
+        state.view = 'eventDetail';
         render();
       }else{
         await goToMain();
@@ -2612,6 +2645,7 @@
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='finance') title = 'Finanzen';
     else if(state.view==='calendar') title = 'Kalender';
+    else if(state.view==='eventDetail') title = state.calendarEditingOccurrence ? 'Termin bearbeiten' : 'Termin hinzufügen';
     else if(state.view==='arrearsDetail') title = state.currentArrearsName || '';
     else if(state.view==='transactionDetail') title = state.currentTransactionId ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen';
     else if(state.view==='new') title = 'Neuer Kegelabend';
@@ -2719,6 +2753,17 @@
       </div>
     ` : '';
 
+    const eventOverflowHtml = (state.view==='eventDetail' && state.calendarEditingOccurrence) ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-event-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-event-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-event-btn">Termin löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const tabsHtml = state.view==='detail' ? `
       <div class="tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
@@ -2735,7 +2780,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -2797,6 +2842,7 @@
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
     else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='calendar') attachCalendarListeners();
+    else if(state.view==='eventDetail') attachEventDetailListeners();
     else if(state.view==='arrearsDetail') attachArrearsDetailListeners();
     else if(state.view==='transactionDetail') attachTransactionDetailListeners();
     else if(state.view==='new') attachNewListeners();
@@ -3006,12 +3052,14 @@
     if(prevBtn) prevBtn.addEventListener('click', ()=>{
       state.calendarViewMonth--;
       if(state.calendarViewMonth<1){ state.calendarViewMonth=12; state.calendarViewYear--; }
+      state.calendarSelectedDate = isoDate(state.calendarViewYear, state.calendarViewMonth, 1);
       render();
     });
     const nextBtn = document.getElementById('cal-next-month-btn');
     if(nextBtn) nextBtn.addEventListener('click', ()=>{
       state.calendarViewMonth++;
       if(state.calendarViewMonth>12){ state.calendarViewMonth=1; state.calendarViewYear++; }
+      state.calendarSelectedDate = isoDate(state.calendarViewYear, state.calendarViewMonth, 1);
       render();
     });
     document.querySelectorAll('.cal-cell[data-date]').forEach(cell=>{
@@ -3024,11 +3072,11 @@
       row.addEventListener('click', ()=>{
         const events = getEventsOnDate(state.calendarSelectedDate);
         const ev = events.find(e=> e.seriesId===row.dataset.seriesId && e.occurrenceDate===row.dataset.occurrenceDate);
-        if(ev) showEventFormModal(ev);
+        if(ev) goToEventDetail(ev);
       });
     });
     const addEventBtn = document.getElementById('header-add-event-btn');
-    if(addEventBtn) addEventBtn.addEventListener('click', ()=>showEventFormModal());
+    if(addEventBtn) addEventBtn.addEventListener('click', ()=>goToEventDetail());
   }
 
   function attachFinanceListeners(){
@@ -3566,6 +3614,47 @@
     });
   }
 
+  function goToEventDetail(occurrence){
+    state.calendarEditingOccurrence = occurrence || null;
+    state.view = 'eventDetail';
+    render();
+  }
+
+  function viewEventDetail(){
+    const occurrence = state.calendarEditingOccurrence;
+    const isEdit = !!occurrence;
+    const isSeriesOccurrence = isEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
+    const recurrenceOptionsHtml = isSeriesOccurrence ? '' : `
+      <label for="cal-ev-recurrence">Wiederholen</label>
+      <select id="cal-ev-recurrence">
+        <option value="none"${(!isEdit || occurrence.recurrence==='none' || !occurrence.recurrence)?' selected':''}>Nein</option>
+        <option value="weekly"${(isEdit && occurrence.recurrence==='weekly')?' selected':''}>Wöchentlich</option>
+        <option value="biweekly"${(isEdit && occurrence.recurrence==='biweekly')?' selected':''}>Zweiwöchentlich</option>
+        <option value="every4weeks"${(isEdit && occurrence.recurrence==='every4weeks')?' selected':''}>Vierwöchentlich</option>
+        <option value="monthly"${(isEdit && occurrence.recurrence==='monthly')?' selected':''}>Monatlich</option>
+        <option value="yearly"${(isEdit && occurrence.recurrence==='yearly')?' selected':''}>Jährlich</option>
+      </select>
+    `;
+    return `
+      <div class="card">
+        <label for="cal-ev-title">Titel</label>
+        <input type="text" id="cal-ev-title" placeholder="z. B. Kegeln" value="${isEdit?escapeHtml(occurrence.title):''}">
+        <label for="cal-ev-location">Ort (optional)</label>
+        <input type="text" id="cal-ev-location" placeholder="z. B. Zur Dorfschmiede" value="${isEdit?escapeHtml(occurrence.location||''):''}">
+        <label for="cal-ev-date">Datum</label>
+        <input type="date" id="cal-ev-date" value="${isEdit?occurrence.date:state.calendarSelectedDate}">
+        <label for="cal-ev-start">Startzeit (optional)</label>
+        <input type="time" id="cal-ev-start" value="${isEdit?(occurrence.startTime||''):''}">
+        <label for="cal-ev-end">Endzeit (optional)</label>
+        <input type="time" id="cal-ev-end" value="${isEdit?(occurrence.endTime||''):''}">
+        ${recurrenceOptionsHtml}
+        ${isSeriesOccurrence ? `<p class="hint">Dies ist Teil einer Terminserie. Änderungen betreffen nur diesen einen Termin.</p>` : ''}
+        <p class="form-error" id="cal-ev-error"></p>
+        <button type="button" class="btn-primary" id="save-cal-ev-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+      </div>
+    `;
+  }
+
   function showDeleteEventModal(occurrence){
     const isSeriesOccurrence = !!(occurrence.recurrence && occurrence.recurrence!=='none');
     showModal(`
@@ -3590,52 +3679,34 @@
         await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
       }
       closeGenericModal();
-      render();
+      history.back();
     });
   }
 
-  function showEventFormModal(occurrence){
+  function attachEventDetailListeners(){
+    const occurrence = state.calendarEditingOccurrence;
     const isEdit = !!occurrence;
     const isSeriesOccurrence = isEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
-    const recurrenceOptionsHtml = isSeriesOccurrence ? '' : `
-      <label for="cal-ev-recurrence">Wiederholen</label>
-      <select id="cal-ev-recurrence">
-        <option value="none"${(!isEdit || occurrence.recurrence==='none' || !occurrence.recurrence)?' selected':''}>Nein</option>
-        <option value="weekly"${(isEdit && occurrence.recurrence==='weekly')?' selected':''}>Wöchentlich</option>
-        <option value="biweekly"${(isEdit && occurrence.recurrence==='biweekly')?' selected':''}>Zweiwöchentlich</option>
-        <option value="every4weeks"${(isEdit && occurrence.recurrence==='every4weeks')?' selected':''}>Vierwöchentlich</option>
-        <option value="monthly"${(isEdit && occurrence.recurrence==='monthly')?' selected':''}>Monatlich</option>
-        <option value="yearly"${(isEdit && occurrence.recurrence==='yearly')?' selected':''}>Jährlich</option>
-      </select>
-    `;
-    showModal(`
-      <h3>${isEdit ? 'Termin bearbeiten' : 'Termin hinzufügen'}</h3>
-      <label for="cal-ev-title">Titel</label>
-      <input type="text" id="cal-ev-title" placeholder="z. B. Kegeln" value="${isEdit?escapeHtml(occurrence.title):''}">
-      <label for="cal-ev-location">Ort (optional)</label>
-      <input type="text" id="cal-ev-location" placeholder="z. B. Zur Dorfschmiede" value="${isEdit?escapeHtml(occurrence.location||''):''}">
-      <label for="cal-ev-date">Datum</label>
-      <input type="date" id="cal-ev-date" value="${isEdit?occurrence.date:state.calendarSelectedDate}">
-      <label for="cal-ev-start">Startzeit (optional)</label>
-      <input type="time" id="cal-ev-start" value="${isEdit?(occurrence.startTime||''):''}">
-      <label for="cal-ev-end">Endzeit (optional)</label>
-      <input type="time" id="cal-ev-end" value="${isEdit?(occurrence.endTime||''):''}">
-      ${recurrenceOptionsHtml}
-      ${isSeriesOccurrence ? `<p class="hint">Dies ist Teil einer Terminserie. Änderungen betreffen nur diesen einen Termin.</p>` : ''}
-      <p class="form-error" id="cal-ev-error"></p>
-      <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="save-cal-ev-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
-        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
-      </div>
-      ${isEdit ? `<button type="button" class="btn-danger" id="delete-cal-ev-btn" style="width:100%; margin-top:10px;">Termin löschen</button>` : ''}
-    `);
-    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    if(isEdit){
-      const delBtn = document.getElementById('delete-cal-ev-btn');
-      if(delBtn) delBtn.addEventListener('click', ()=>showDeleteEventModal(occurrence));
+
+    const overflowBtn = document.getElementById('header-event-overflow-btn');
+    const overflowMenu = document.getElementById('header-event-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
     }
-    document.getElementById('cal-ev-title').focus();
-    document.getElementById('save-cal-ev-btn').addEventListener('click', async ()=>{
+    const deleteBtn = document.getElementById('header-delete-event-btn');
+    if(deleteBtn) deleteBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      showDeleteEventModal(occurrence);
+    });
+
+    const titleInput = document.getElementById('cal-ev-title');
+    if(titleInput) titleInput.focus();
+    const saveBtn = document.getElementById('save-cal-ev-btn');
+    if(!saveBtn) return;
+    saveBtn.addEventListener('click', async ()=>{
       const errEl = document.getElementById('cal-ev-error');
       const title = document.getElementById('cal-ev-title').value.trim();
       const location = document.getElementById('cal-ev-location').value.trim();
@@ -3648,8 +3719,7 @@
       if(!title){ errEl.textContent='Bitte einen Titel angeben.'; return; }
       if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
 
-      const btn = document.getElementById('save-cal-ev-btn');
-      btn.disabled = true; btn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+      saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
 
       if(!isEdit){
         state.calendarEvents.push({id:uid('cal'), title, location, date, startTime, endTime, recurrence});
@@ -3666,8 +3736,7 @@
         await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
       }
       state.calendarSelectedDate = date;
-      closeGenericModal();
-      render();
+      history.back();
     });
   }
 
