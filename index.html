@@ -509,7 +509,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.98';
+  const APP_VERSION = '0.99';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -884,7 +884,8 @@
   }
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement') goToSettingsMenu();
-    else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail' || state.view==='eventDetail'){ history.back(); }
+    else if(state.view==='eventDetail') goToCalendar();
+    else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
   }
   function goToNew(){
@@ -3679,7 +3680,7 @@
         await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
       }
       closeGenericModal();
-      history.back();
+      goToCalendar();
     });
   }
 
@@ -3736,7 +3737,7 @@
         await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
       }
       state.calendarSelectedDate = date;
-      history.back();
+      goToCalendar();
     });
   }
 
