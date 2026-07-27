@@ -542,7 +542,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.5';
+  const APP_VERSION = '1.6';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -581,6 +581,7 @@
     calendarViewMonth: new Date().getMonth()+1,
     calendarSelectedDate: todayISO(),
     calendarEditingOccurrence: null,
+    eventDetailOrigin: 'calendar',
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -656,16 +657,30 @@
   }
   function pad2(n){ return String(n).padStart(2,'0'); }
   function isoDate(y,m,d){ return `${y}-${pad2(m)}-${pad2(d)}`; }
+  function addDaysISO(dateStr, days){
+    const [y,m,d] = dateStr.split('-').map(Number);
+    const dt = new Date(Date.UTC(y,m-1,d));
+    dt.setUTCDate(dt.getUTCDate()+days);
+    return isoDate(dt.getUTCFullYear(), dt.getUTCMonth()+1, dt.getUTCDate());
+  }
+  // Anzahl Tage, die ein Termin dauert (0 = eintägig, 1 = zwei Tage usw.) - Basis für die Serie.
+  function getEventSpanDays(event){
+    const [sy,sm,sd] = event.startDate.split('-').map(Number);
+    const [ey,em,ed] = event.endDate.split('-').map(Number);
+    const s = Date.UTC(sy, sm-1, sd);
+    const e = Date.UTC(ey, em-1, ed);
+    return Math.max(0, Math.round((e-s)/86400000));
+  }
 
-  // Berechnet, an welchen Tagen eines bestimmten Monats ein Termin (einmalig oder Serie) auftritt.
-  function getOccurrencesInMonth(event, year, month){
+  // Liefert die Beginn-Daten aller Serien-Vorkommen, die in einem bestimmten Monat beginnen.
+  function getRecurrenceStartsInMonth(event, year, month){
     const occurrences = [];
     const daysInMonth = new Date(year, month, 0).getDate();
-    const [by, bm, bd] = event.date.split('-').map(Number);
+    const [by, bm, bd] = event.startDate.split('-').map(Number);
     const baseUTC = Date.UTC(by, bm-1, bd);
 
     if(event.recurrence==='none' || !event.recurrence){
-      if(by===year && bm===month) occurrences.push(event.date);
+      if(by===year && bm===month) occurrences.push(event.startDate);
       return occurrences;
     }
     if(event.recurrence==='weekly' || event.recurrence==='biweekly' || event.recurrence==='every4weeks'){
@@ -695,29 +710,52 @@
     return occurrences;
   }
 
-  // Findet eine Ausnahme (bearbeitet/gelöscht) für einen bestimmten Serientermin an einem bestimmten Tag.
+  // Liefert alle Vorkommen (Beginn-Datum), deren Zeitraum einen bestimmten Monat berührt - prüft
+  // dafür auch die Vormonate mit, damit mehrtägige Termine erfasst werden, die dort begonnen haben.
+  function getOccurrenceStartsOverlappingMonth(event, year, month){
+    const span = getEventSpanDays(event);
+    const monthsBack = Math.min(6, Math.ceil((span+1)/28) + 1);
+    const starts = new Set();
+    let y = year, m = month;
+    for(let i=0;i<=monthsBack;i++){
+      getRecurrenceStartsInMonth(event, y, m).forEach(d=>starts.add(d));
+      m--; if(m<1){ m=12; y--; }
+    }
+    const monthStart = isoDate(year, month, 1);
+    const monthEnd = isoDate(year, month, new Date(year,month,0).getDate());
+    return Array.from(starts).filter(startDate=>{
+      const endDate = addDaysISO(startDate, span);
+      return endDate>=monthStart && startDate<=monthEnd;
+    });
+  }
+
+  // Findet eine Ausnahme (bearbeitet/gelöscht) für einen bestimmten Serientermin.
   function findOccurrenceEdit(eventId, occurrenceDate){
     return state.calendarOccurrenceEdits.find(e=> e.seriesId===eventId && e.occurrenceDate===occurrenceDate) || null;
   }
 
-  // Liefert alle Termine (inkl. Serien-Vorkommen, mit angewendeten Ausnahmen) für einen bestimmten Tag.
-  function buildOccurrenceObject(ev, occDate){
-    const edit = findOccurrenceEdit(ev.id, occDate);
+  // Baut ein vollständiges Vorkommen-Objekt (inkl. angewendeter Ausnahme) für ein Serien-Vorkommen.
+  function buildOccurrenceObject(ev, occurrenceDate){
+    const edit = findOccurrenceEdit(ev.id, occurrenceDate);
     if(edit && edit.deleted) return null;
+    const span = getEventSpanDays(ev);
+    const defaultEndDate = addDaysISO(occurrenceDate, span);
     if(edit){
       return {
-        seriesId: ev.id, occurrenceDate: occDate, isException: true,
+        seriesId: ev.id, occurrenceDate, isException: true,
         title: edit.title!==undefined ? edit.title : ev.title,
         location: edit.location!==undefined ? edit.location : ev.location,
-        date: edit.date!==undefined ? edit.date : occDate,
+        startDate: edit.startDate!==undefined ? edit.startDate : occurrenceDate,
+        endDate: edit.endDate!==undefined ? edit.endDate : defaultEndDate,
         startTime: edit.startTime!==undefined ? edit.startTime : ev.startTime,
         endTime: edit.endTime!==undefined ? edit.endTime : ev.endTime,
         recurrence: ev.recurrence
       };
     }
     return {
-      seriesId: ev.id, occurrenceDate: occDate, isException: false,
-      title: ev.title, location: ev.location, date: occDate,
+      seriesId: ev.id, occurrenceDate, isException: false,
+      title: ev.title, location: ev.location,
+      startDate: occurrenceDate, endDate: defaultEndDate,
       startTime: ev.startTime, endTime: ev.endTime, recurrence: ev.recurrence
     };
   }
@@ -754,29 +792,40 @@
     return groups;
   }
 
+  // Liefert alle Termine (inkl. Serien-Vorkommen, mit angewendeten Ausnahmen), deren Zeitraum
+  // einen bestimmten Tag einschließt (auch bei mehrtägigen Terminen).
   function getEventsOnDate(dateStr){
     const [y, m] = dateStr.split('-').map(Number);
     const results = [];
     state.calendarEvents.forEach(ev=>{
-      const occDates = getOccurrencesInMonth(ev, y, m);
-      occDates.forEach(occDate=>{
-        if(occDate!==dateStr) return;
-        const occ = buildOccurrenceObject(ev, occDate);
-        if(occ) results.push(occ);
+      const seen = new Set();
+      [-1,0,1].forEach(offset=>{
+        let mm=m+offset, yy=y;
+        if(mm<1){ mm=12; yy--; } if(mm>12){ mm=1; yy++; }
+        getOccurrenceStartsOverlappingMonth(ev, yy, mm).forEach(startDate=>{
+          if(seen.has(startDate)) return;
+          seen.add(startDate);
+          const occ = buildOccurrenceObject(ev, startDate);
+          if(occ && dateStr>=occ.startDate && dateStr<=occ.endDate) results.push(occ);
+        });
       });
     });
     return results.sort((a,b)=> (a.startTime||'').localeCompare(b.startTime||''));
   }
 
-  // Liefert alle Tage (als Set von YYYY-MM-DD) in einem Monat, an denen mindestens ein Termin liegt.
+  // Liefert alle Tage (als Set von YYYY-MM-DD) in einem Monat, an denen mindestens ein Termin liegt
+  // (bei mehrtägigen Terminen: jeder Tag im Zeitraum).
   function getEventDatesInMonth(year, month){
     const dateSet = new Set();
     state.calendarEvents.forEach(ev=>{
-      getOccurrencesInMonth(ev, year, month).forEach(occDate=>{
-        const edit = findOccurrenceEdit(ev.id, occDate);
-        if(edit && edit.deleted) return;
-        // Falls eine Ausnahme das Datum verschoben hat, zählt das NEUE Datum, nicht das alte.
-        dateSet.add(edit && edit.date!==undefined ? edit.date : occDate);
+      getOccurrenceStartsOverlappingMonth(ev, year, month).forEach(startDate=>{
+        const occ = buildOccurrenceObject(ev, startDate);
+        if(!occ) return;
+        let cur = occ.startDate;
+        while(cur<=occ.endDate){
+          dateSet.add(cur);
+          cur = addDaysISO(cur, 1);
+        }
       });
     });
     return dateSet;
@@ -954,7 +1003,7 @@
   }
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement') goToSettingsMenu();
-    else if(state.view==='eventDetail') goToCalendar();
+    else if(state.view==='eventDetail'){ state.eventDetailOrigin==='main' ? goToMain() : goToCalendar(); }
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
   }
@@ -1394,7 +1443,7 @@
           <div class="cal-event-main">
             <div class="cal-event-title">${escapeHtml(ev.title)}</div>
             ${ev.location ? `<div class="cal-event-meta">${escapeHtml(ev.location)}</div>` : ''}
-            <div class="cal-event-meta">${formatDateDE(ev.date)}${ev.startTime?` · ${ev.startTime}${ev.endTime?'–'+ev.endTime:''}`:''}</div>
+            <div class="cal-event-meta">${formatOccurrenceRange(ev)}</div>
             ${summaryHtml}
           </div>
           <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
@@ -1801,13 +1850,14 @@
     for(let i=0;i<24;i++){
       const events = [];
       state.calendarEvents.forEach(ev=>{
-        getOccurrencesInMonth(ev, yy, m).forEach(occDate=>{
-          const occ = buildOccurrenceObject(ev, occDate);
-          if(occ && occ.date>=today) events.push(occ);
+        getOccurrenceStartsOverlappingMonth(ev, yy, m).forEach(startDate=>{
+          const occ = buildOccurrenceObject(ev, startDate);
+          // "Anstehend" heißt: der Termin ist noch nicht vollständig vorbei (Ende >= heute).
+          if(occ && occ.endDate>=today) events.push(occ);
         });
       });
       if(events.length>0){
-        events.sort((a,b)=> a.date.localeCompare(b.date) || (a.startTime||'').localeCompare(b.startTime||''));
+        events.sort((a,b)=> a.startDate.localeCompare(b.startDate) || (a.startTime||'').localeCompare(b.startTime||''));
         return events[0];
       }
       m++;
@@ -1821,7 +1871,7 @@
     if(!occ) return '';
     return `
       <div class="card next-event-card" id="next-event-card" data-series-id="${occ.seriesId}" data-occurrence-date="${occ.occurrenceDate}">
-        <div class="next-event-date">${formatDateDE(occ.date)}</div>
+        <div class="next-event-date">${formatOccurrenceRange(occ)}</div>
         <div class="next-event-title">${escapeHtml(occ.title)}</div>
       </div>
     `;
@@ -3046,7 +3096,7 @@
         const occurrence = findOccurrenceByIds(nextEventCard.dataset.seriesId, nextEventCard.dataset.occurrenceDate);
         if(!occurrence) return;
         try{ state.calendarRsvps = await getJSONOrThrow('calendar-rsvps', state.calendarRsvps); }catch(e){}
-        goToEventDetail(occurrence);
+        goToEventDetail(occurrence, 'main');
       });
     }
     document.querySelectorAll('.year-header').forEach(header=>{
@@ -3784,8 +3834,9 @@
     });
   }
 
-  function goToEventDetail(occurrence){
+  function goToEventDetail(occurrence, origin){
     state.calendarEditingOccurrence = occurrence || null;
+    state.eventDetailOrigin = origin || 'calendar';
     state.view = 'eventDetail';
     render();
   }
@@ -3842,6 +3893,16 @@
     `;
   }
 
+  // Baut eine lesbare Anzeige für den Zeitraum eines Termins (auch mehrtägig).
+  function formatOccurrenceRange(occ){
+    const startPart = `${formatDateDE(occ.startDate)}${occ.startTime?` · ${occ.startTime}`:''}`;
+    if(occ.startDate===occ.endDate){
+      return `${startPart}${occ.endTime?'–'+occ.endTime:''}`;
+    }
+    const endPart = `${formatDateDE(occ.endDate)}${occ.endTime?` · ${occ.endTime}`:''}`;
+    return `${startPart} – ${endPart}`;
+  }
+
   function viewEventDetail(){
     const occurrence = state.calendarEditingOccurrence;
     const isEdit = !!occurrence;
@@ -3855,7 +3916,7 @@
         <div class="card">
           <h2 class="section-title">${escapeHtml(occurrence.title)}</h2>
           ${occurrence.location ? `<p class="cal-event-meta">${escapeHtml(occurrence.location)}</p>` : ''}
-          <p class="cal-event-meta">${formatDateDE(occurrence.date)}${occurrence.startTime?` · ${occurrence.startTime}${occurrence.endTime?'–'+occurrence.endTime:''}`:''}</p>
+          <p class="cal-event-meta">${formatOccurrenceRange(occurrence)}</p>
           ${baseEvent && baseEvent.createdBy ? `<p class="hint" style="margin-top:10px;">Erstellt von ${escapeHtml(baseEvent.createdBy)}. Nur der Ersteller kann diesen Termin bearbeiten.</p>` : ''}
         </div>
         ${buildRsvpSectionHtml(occurrence)}
@@ -3873,17 +3934,21 @@
         <option value="yearly"${(isEdit && occurrence.recurrence==='yearly')?' selected':''}>Jährlich</option>
       </select>
     `;
+    const defaultStartDate = isEdit ? occurrence.startDate : state.calendarSelectedDate;
+    const defaultEndDate = isEdit ? occurrence.endDate : state.calendarSelectedDate;
     return `
       <div class="card">
         <label for="cal-ev-title">Titel</label>
         <input type="text" id="cal-ev-title" placeholder="z. B. Kegeln" value="${isEdit?escapeHtml(occurrence.title):''}">
         <label for="cal-ev-location">Ort (optional)</label>
         <input type="text" id="cal-ev-location" placeholder="z. B. Zur Dorfschmiede" value="${isEdit?escapeHtml(occurrence.location||''):''}">
-        <label for="cal-ev-date">Datum</label>
-        <input type="date" id="cal-ev-date" value="${isEdit?occurrence.date:state.calendarSelectedDate}">
-        <label for="cal-ev-start">Startzeit (optional)</label>
+        <label for="cal-ev-start-date">Beginn</label>
+        <input type="date" id="cal-ev-start-date" value="${defaultStartDate}">
+        <label for="cal-ev-start">Beginn-Uhrzeit (optional)</label>
         <input type="time" id="cal-ev-start" value="${isEdit?(occurrence.startTime||''):''}">
-        <label for="cal-ev-end">Endzeit (optional)</label>
+        <label for="cal-ev-end-date">Ende</label>
+        <input type="date" id="cal-ev-end-date" value="${defaultEndDate}">
+        <label for="cal-ev-end">Ende-Uhrzeit (optional)</label>
         <input type="time" id="cal-ev-end" value="${isEdit?(occurrence.endTime||''):''}">
         ${recurrenceOptionsHtml}
         ${isSeriesOccurrence ? `<p class="hint">Dies ist Teil einer Terminserie. Änderungen betreffen nur diesen einen Termin.</p>` : ''}
@@ -3918,7 +3983,7 @@
         await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
       }
       closeGenericModal();
-      goToCalendar();
+      state.eventDetailOrigin==='main' ? goToMain() : goToCalendar();
     });
   }
 
@@ -3958,38 +4023,43 @@
       const errEl = document.getElementById('cal-ev-error');
       const title = document.getElementById('cal-ev-title').value.trim();
       const location = document.getElementById('cal-ev-location').value.trim();
-      const date = document.getElementById('cal-ev-date').value;
+      const startDate = document.getElementById('cal-ev-start-date').value;
       const startTime = document.getElementById('cal-ev-start').value;
+      const endDate = document.getElementById('cal-ev-end-date').value;
       const endTime = document.getElementById('cal-ev-end').value;
       const recurrenceEl = document.getElementById('cal-ev-recurrence');
       const recurrence = recurrenceEl ? recurrenceEl.value : (isEdit ? occurrence.recurrence : 'none');
 
       if(!title){ errEl.textContent='Bitte einen Titel angeben.'; return; }
-      if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
+      if(!startDate){ errEl.textContent='Bitte einen Beginn angeben.'; return; }
+      if(!endDate){ errEl.textContent='Bitte ein Ende angeben.'; return; }
+      if(endDate<startDate || (endDate===startDate && endTime && startTime && endTime<startTime)){
+        errEl.textContent='Das Ende darf nicht vor dem Beginn liegen.'; return;
+      }
 
       saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
 
       if(!isEdit){
         const newId = uid('cal');
         const creatorName = getCurrentMemberName();
-        state.calendarEvents.push({id:newId, title, location, date, startTime, endTime, recurrence, createdBy: creatorName});
+        state.calendarEvents.push({id:newId, title, location, startDate, startTime, endDate, endTime, recurrence, createdBy: creatorName});
         await setJSON('calendar-events', state.calendarEvents, true);
         if(creatorName){
-          await setRsvpStatus(newId, date, creatorName, 'accepted');
+          await setRsvpStatus(newId, startDate, creatorName, 'accepted');
         }
       }else if(!isSeriesOccurrence){
         const base = state.calendarEvents.find(e=>e.id===occurrence.seriesId);
-        if(base){ base.title=title; base.location=location; base.date=date; base.startTime=startTime; base.endTime=endTime; base.recurrence=recurrence; }
+        if(base){ base.title=title; base.location=location; base.startDate=startDate; base.startTime=startTime; base.endDate=endDate; base.endTime=endTime; base.recurrence=recurrence; }
         await setJSON('calendar-events', state.calendarEvents, true);
       }else{
         let edit = findOccurrenceEdit(occurrence.seriesId, occurrence.occurrenceDate);
         if(!edit){ edit = {id:uid('caledit'), seriesId:occurrence.seriesId, occurrenceDate:occurrence.occurrenceDate}; state.calendarOccurrenceEdits.push(edit); }
-        edit.title=title; edit.location=location; edit.date=date; edit.startTime=startTime; edit.endTime=endTime;
+        edit.title=title; edit.location=location; edit.startDate=startDate; edit.startTime=startTime; edit.endDate=endDate; edit.endTime=endTime;
         delete edit.deleted;
         await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
       }
-      state.calendarSelectedDate = date;
-      goToCalendar();
+      state.calendarSelectedDate = startDate;
+      state.eventDetailOrigin==='main' ? goToMain() : goToCalendar();
     });
   }
 
