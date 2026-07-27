@@ -12,6 +12,7 @@
 
 const { onDocumentUpdated } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError, onRequest } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
@@ -547,3 +548,75 @@ exports.shareGuestBill = onRequest(async (req, res) => {
   const html = buildShareGuestBillHtml(foundSeat.name, dateStr, catalogLines, fremdstrafeLines, adHocLines, total, roundedTotal, paypalLink);
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
+
+// -------- Monatliche Buchungen automatisch verbuchen (täglich um Mitternacht) --------
+
+const MONTH_NAMES_DE = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+];
+
+function getTodayInBerlin() {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  return formatter.format(new Date()); // liefert YYYY-MM-DD
+}
+
+// Gibt das gleiche Datum im nächsten Monat zurück. Existiert der Tag im Zielmonat nicht
+// (z.B. 31. bei einem 30-Tage-Monat), wird stattdessen der letzte Tag des Zielmonats genutzt.
+function addOneMonthSameDay(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m, d)); // m ist 1-indiziert -> +1 Monat gegenüber dem Original
+  if (next.getUTCDate() !== d) {
+    next.setUTCDate(0); // letzter Tag des Vormonats von "next" = letzter Tag des eigentlichen Zielmonats
+  }
+  return next.toISOString().slice(0, 10);
+}
+
+exports.processRecurringBookings = onSchedule(
+  { schedule: '0 0 * * *', timeZone: 'Europe/Berlin' },
+  async () => {
+    const db = getFirestore();
+    const recurringDoc = await db.collection('kegelbuch').doc('finance-recurring').get();
+    if (!recurringDoc.exists) return;
+
+    let recurring;
+    try { recurring = JSON.parse(recurringDoc.data().value || '[]'); } catch (e) {
+      logger.error('Konnte finance-recurring nicht parsen', e);
+      return;
+    }
+
+    const todayStr = getTodayInBerlin();
+    const dueBookings = recurring.filter(r => r.nextDate === todayStr);
+    if (dueBookings.length === 0) return;
+
+    const transactionsDoc = await db.collection('kegelbuch').doc('finance-transactions').get();
+    let transactions = [];
+    if (transactionsDoc.exists) {
+      try { transactions = JSON.parse(transactionsDoc.data().value || '[]'); } catch (e) { /* ignorieren, mit leerer Liste starten */ }
+    }
+
+    const [year, month] = todayStr.split('-').map(Number);
+    const monthLabel = `${MONTH_NAMES_DE[month - 1]} ${year}`;
+
+    dueBookings.forEach(r => {
+      const description = `${r.description} (${monthLabel})`;
+      transactions.push({
+        id: 'tx-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+        accountId: r.accountId,
+        description,
+        date: todayStr,
+        amount: r.amount,
+        createdAt: Date.now(),
+      });
+      r.nextDate = addOneMonthSameDay(r.nextDate);
+      logger.info(`Monatliche Buchung verbucht: "${description}", Betrag ${r.amount}, nächste Ausführung ${r.nextDate}`);
+    });
+
+    await Promise.all([
+      db.collection('kegelbuch').doc('finance-recurring').set({ value: JSON.stringify(recurring) }),
+      db.collection('kegelbuch').doc('finance-transactions').set({ value: JSON.stringify(transactions) }),
+    ]);
+  }
+);
