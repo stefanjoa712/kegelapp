@@ -38,14 +38,18 @@
     --font-mono:'IBM Plex Mono', monospace;
   }
   *{box-sizing:border-box;}
-  html{height:100%; min-height:100dvh; background:var(--bg); overscroll-behavior-y:contain;}
-  body{margin:0; min-height:calc(100% + 1px); min-height:calc(100dvh + 1px); background:var(--bg); color:var(--ink); font-family:var(--font-body); line-height:1.5; touch-action:manipulation; overscroll-behavior-y:contain;}
+  html{height:100%; background:var(--bg);}
+  body{
+    margin:0; height:100%; background:var(--bg); color:var(--ink); font-family:var(--font-body);
+    line-height:1.5; touch-action:manipulation; overflow:hidden;
+  }
+  #app{height:100dvh; display:flex; flex-direction:column;}
   button{font:inherit;}
   a{color:inherit;}
   *:focus-visible{outline:2px solid var(--felt); outline-offset:2px;}
 
   .app-header{
-    position:sticky; top:0; z-index:800;
+    flex-shrink:0; z-index:800;
     background:var(--ink);
     border-bottom:4px solid var(--wood);
     box-sizing:border-box;
@@ -98,10 +102,15 @@
   }
   .tab-btn.active{background:var(--wood); color:#fff;}
 
-  .container{max-width:640px; margin:0 auto; padding:24px 16px 100px; transition:transform 0.25s ease;}
+  .container{
+    flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    overscroll-behavior-y:contain;
+    max-width:640px; margin:0 auto; padding:24px 16px 24px; transition:transform 0.25s ease;
+    width:100%;
+  }
 
   .login-screen{
-    min-height:100vh; min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    height:100%; overflow-y:auto; display:flex; flex-direction:column; align-items:center; justify-content:center;
     gap:26px; padding:24px 16px; box-sizing:border-box; background:var(--bg);
   }
   .login-logo{height:64px; width:auto; display:block;}
@@ -122,7 +131,7 @@
   @keyframes pull-spin{from{transform:rotate(0deg);} to{transform:rotate(360deg);}}
 
   .bottom-nav{
-    position:fixed; left:0; right:0; bottom:0; z-index:900;
+    flex-shrink:0; z-index:900;
     display:flex; background:var(--surface); border-top:3px solid var(--ink);
     padding:6px 8px calc(6px + env(safe-area-inset-bottom));
   }
@@ -555,7 +564,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.18';
+  const APP_VERSION = '1.19';
 
   // Public Key für Web Push (VAPID). Das Gegenstück (Private Key) liegt als
   // Firebase Secret PUSH_VAPID_PRIVATE_KEY bei den Cloud Functions.
@@ -704,13 +713,6 @@
   }
 
   async function enablePushNotifications(){
-    // TEMPORÄR DEAKTIVIERT (27.07.2026): Sobald der Service Worker registriert wird,
-    // bricht auf iOS die fixed-position Bottom-Nav beim Scrollen (springt nach oben).
-    // Vermutlich verändert ein aktiver SW, wie iOS die installierte PWA behandelt,
-    // was mit dem body{min-height:calc(100% + 1px)}-Scroll-Nudge-Trick kollidiert.
-    // Reaktivieren: diesen throw entfernen, sobald der Nudge-Trick SW-robust ist.
-    throw new Error('temporarily-disabled');
-
     if(!pushSupported()) throw new Error('unsupported');
     const memberId = getCurrentMemberId();
     if(!memberId) throw new Error('no-member');
@@ -3730,7 +3732,6 @@
         if(errEl){
           if(e.message==='denied') errEl.textContent = 'Berechtigung wurde nicht erteilt.';
           else if(e.message==='no-member') errEl.textContent = 'Kein verknüpftes Mitgliedskonto gefunden.';
-          else if(e.message==='temporarily-disabled') errEl.textContent = 'Benachrichtigungen sind aktuell wegen eines Layout-Problems vorübergehend deaktiviert.';
           else errEl.textContent = 'Das hat leider nicht geklappt. Bitte versuche es erneut.';
         }
       }
@@ -5514,7 +5515,7 @@
     let pulling = false;
     let currentPull = 0;
 
-    function scrollTop(){ return window.scrollY || document.documentElement.scrollTop || 0; }
+    function scrollTop(){ const c = getContainer(); return c ? c.scrollTop : 0; }
     function getIndicator(){ return document.getElementById('pull-refresh-indicator'); }
     function getContainer(){ return document.querySelector('main.container'); }
 
@@ -5750,13 +5751,6 @@
       state.view = 'main';
       render();
       backfillEveningSummaries();
-      // iOS-Standalone-PWA-Trick: ein winziger echter Scroll zwingt WebKit dazu, die tatsächliche
-      // Viewport-/Safe-Area-Größe beim Kaltstart korrekt neu zu berechnen. Body ist jetzt immer
-      // minimal höher als der Bildschirm, damit hier wirklich etwas zum Scrollen vorhanden ist.
-      requestAnimationFrame(()=>{
-        window.scrollTo(0, 1);
-        requestAnimationFrame(()=>{ window.scrollTo(0, 0); });
-      });
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
     }catch(e){
