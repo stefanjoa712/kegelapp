@@ -514,7 +514,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, getDoc, getDocFromCache, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
     setPersistence, browserLocalPersistence, browserSessionPersistence,
@@ -555,7 +555,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.17';
+  const APP_VERSION = '1.18';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -631,24 +631,71 @@
     ]);
   }
 
-  async function getJSON(key, shared, fallback){
+  // Cache-First-Strategie: Firestores Standard-getDoc() wartet auf eine Server-Antwort und
+  // fällt erst bei einem KOMPLETTEN Verbindungsabbruch auf den lokalen Cache zurück - bei
+  // "Netz da, aber langsam" (schwaches Mobilfunknetz, überlastetes WLAN) wartet es dagegen
+  // brav bis zum Timeout. Da ein persistenter lokaler Cache aktiv ist (siehe initializeFirestore
+  // oben), lesen wir stattdessen zuerst direkt aus dem Cache (quasi verzögerungsfrei) und lösen
+  // parallel einen Server-Request aus, der die Anzeige im Hintergrund still aktualisiert, falls
+  // sich zwischenzeitlich etwas geändert hat. Das bedeutet: minimal veraltete Daten sind für einen
+  // Moment möglich, aber praktisch kein Timeout-Risiko mehr bei schlechter Verbindung.
+  async function getJSON(key, shared, fallback, onBackgroundUpdate){
+    let cacheResult;
+    try{
+      const cacheSnap = await getDocFromCache(doc(db, 'kegelbuch', key));
+      cacheResult = cacheSnap.exists() ? JSON.parse(cacheSnap.data().value) : fallback;
+    }catch(e){
+      cacheResult = undefined; // noch nichts im Cache (z.B. allererster Start)
+    }
+
+    // Server-Abgleich im Hintergrund anstoßen, unabhängig davon ob Cache etwas hatte.
+    withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS).then(snap=>{
+      const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
+      if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
+        onBackgroundUpdate(serverResult);
+      }
+    }).catch(e=>{
+      // Kein Server erreichbar - Cache-Ergebnis (falls vorhanden) bleibt einfach stehen.
+      console.error('getJSON Server-Abgleich fehlgeschlagen für', key, e);
+    });
+
+    if(cacheResult!==undefined) return cacheResult;
+
+    // Nichts im Cache: auf den Server-Request warten müssen wir hier zwangsläufig.
     try{
       const snap = await withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS);
-      if(!snap.exists()) return fallback;
-      const data = snap.data();
-      return JSON.parse(data.value);
+      return snap.exists() ? JSON.parse(snap.data().value) : fallback;
     }catch(e){
       console.error('getJSON fehlgeschlagen für', key, e);
       return fallback;
     }
   }
-  // Wie getJSON, aber wirft bei Fehler/Timeout weiter statt still den Fallback zu liefern -
-  // für Stellen, an denen dem Nutzer eine Fehlermeldung mit "Erneut versuchen" gezeigt werden soll.
-  async function getJSONOrThrow(key, fallback){
+  // Wie getJSON, aber wirft bei Fehler weiter statt still den Fallback zu liefern - für Stellen,
+  // an denen dem Nutzer eine Fehlermeldung mit "Erneut versuchen" gezeigt werden soll. Nutzt
+  // dieselbe Cache-First-Strategie; wirft nur, wenn WEDER Cache NOCH Server etwas liefern konnten.
+  async function getJSONOrThrow(key, fallback, onBackgroundUpdate){
+    let cacheResult;
+    try{
+      const cacheSnap = await getDocFromCache(doc(db, 'kegelbuch', key));
+      cacheResult = cacheSnap.exists() ? JSON.parse(cacheSnap.data().value) : fallback;
+    }catch(e){
+      cacheResult = undefined;
+    }
+
+    withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS).then(snap=>{
+      const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
+      if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
+        onBackgroundUpdate(serverResult);
+      }
+    }).catch(e=>{
+      console.error('getJSONOrThrow Server-Abgleich fehlgeschlagen für', key, e);
+    });
+
+    if(cacheResult!==undefined) return cacheResult;
+
+    // Nichts im Cache: hier muss der Server-Request durch, Fehler/Timeout wird weitergeworfen.
     const snap = await withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS);
-    if(!snap.exists()) return fallback;
-    const data = snap.data();
-    return JSON.parse(data.value);
+    return snap.exists() ? JSON.parse(snap.data().value) : fallback;
   }
   async function setJSON(key, value, shared){
     try{
@@ -930,7 +977,13 @@
     state.view = 'settings';
     renderLoading('Mitglieder werden geladen…');
     try{
-      state.members = await getJSONOrThrow('members', []);
+      state.members = await getJSONOrThrow('members', [], (fresh)=>{
+        // Stiller Hintergrund-Refresh: nur neu rendern, wenn wir noch auf dieser Ansicht sind.
+        if(state.view==='settings'){
+          state.members = fresh;
+          render();
+        }
+      });
       state.view = 'settings';
       render();
     }catch(e){
