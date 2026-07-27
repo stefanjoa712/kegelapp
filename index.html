@@ -488,7 +488,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.92';
+  const APP_VERSION = '0.93';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1619,7 +1619,7 @@
         const crownHtml = hasCrown ? `<span class="pudel-crown" title="Pudelkönig"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/></svg></span>` : '';
         return `
         <div class="fines-summary-row" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
-          <span class="fines-summary-name">${escapeHtml(s.name)}${crownHtml}${s.invalid ? `<span class="invalid-icon" title="Invalide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4.5" y1="4.5" x2="19.5" y2="19.5"/><circle cx="12" cy="12" r="9"/></svg></span>` : ''}</span>
+          <span class="fines-summary-name">${escapeHtml(s.name)}${crownHtml}${s.invalid ? `<span class="invalid-icon" title="Invalide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4.5" r="1.7" fill="currentColor" stroke="none"/><path d="M12 6.5v5h4.5"/><path d="M12 11.5l2.5 6.5"/><circle cx="10.5" cy="16" r="5"/></svg></span>` : ''}</span>
           <span class="fines-summary-amount">${fmtEuro(roundedFineTotalForSeat(detail, s.seatId))}</span>
         </div>
       `;
@@ -2329,8 +2329,12 @@
       const invalidBadgeHtml = (!empty && seat.invalid) ? `
         <g class="invalid-seat-badge">
           <circle cx="${invalidBadgeCx}" cy="${crownCy}" r="14"/>
-          <line x1="${invalidBadgeCx-7}" y1="${crownCy-7}" x2="${invalidBadgeCx+7}" y2="${crownCy+7}" stroke-linecap="round" stroke-width="2.5" stroke="#fff"/>
-          <circle cx="${invalidBadgeCx}" cy="${crownCy}" r="9" fill="none" stroke="#fff" stroke-width="2.5"/>
+          <g transform="translate(${invalidBadgeCx-8},${crownCy-8}) scale(0.67)" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="4.5" r="1.7" fill="#fff" stroke="none"/>
+            <path d="M12 6.5v5h4.5"/>
+            <path d="M12 11.5l2.5 6.5"/>
+            <circle cx="10.5" cy="16" r="5"/>
+          </g>
         </g>
       ` : '';
       const sfText = 'SCHRIFTFÜHRER';
