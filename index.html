@@ -246,6 +246,27 @@
   .savings-pot-bar-track{background:var(--bg); border:1px solid var(--line); border-radius:8px; height:14px; overflow:hidden;}
   .savings-pot-bar-fill{background:var(--wood); height:100%; border-radius:8px 0 0 8px; transition:width 0.3s ease;}
   .savings-pot-meta{display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:6px;}
+  .cal-card{padding-bottom:8px;}
+  .cal-month-nav{display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;}
+  .cal-month-label{font-family:var(--font-display); font-weight:700; font-size:18px;}
+  .cal-nav-btn{background:none; border:none; color:var(--ink); padding:4px; cursor:pointer; display:flex;}
+  .cal-nav-btn svg{width:22px; height:22px;}
+  .cal-weekday-row{display:grid; grid-template-columns:repeat(7,1fr); text-align:center; margin-bottom:6px;}
+  .cal-weekday-row span{font-family:var(--font-mono); font-size:11px; color:var(--muted); letter-spacing:0.04em;}
+  .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); row-gap:4px;}
+  .cal-cell{
+    background:none; border:none; cursor:pointer; aspect-ratio:1; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; border-radius:50%; position:relative; font-size:15px; color:var(--ink);
+  }
+  .cal-cell-empty{cursor:default;}
+  .cal-cell.today{font-weight:800; color:var(--wood);}
+  .cal-cell.selected{background:var(--wood); color:#fff;}
+  .cal-cell-dot{width:5px; height:5px; border-radius:50%; background:var(--wood); position:absolute; bottom:5px;}
+  .cal-cell.selected .cal-cell-dot{background:#fff;}
+  .cal-event-row{padding:12px 0; border-bottom:1px dashed var(--line); cursor:pointer;}
+  .cal-event-row:last-child{border-bottom:none;}
+  .cal-event-title{font-weight:700; font-size:16px;}
+  .cal-event-meta{font-size:13px; color:var(--muted); margin-top:2px;}
   .finance-total-amount{font-family:var(--font-display); font-size:36px; font-weight:700; color:#fff;}
   .finance-total-label{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:4px;}
   .transaction-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px; cursor:pointer;}
@@ -488,7 +509,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.96';
+  const APP_VERSION = '0.97';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -520,6 +541,12 @@
     currentTransactionId:null,
     financeRecurring:[],
     financeSavingsPots:[],
+    calendarEvents:[],
+    calendarOccurrenceEdits:[],
+    calendarViewYear: new Date().getFullYear(),
+    calendarViewMonth: new Date().getMonth()+1,
+    calendarSelectedDate: todayISO(),
+    calendarEditingOccurrence: null,
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
     justCreated:false,
@@ -592,6 +619,97 @@
     const parts = iso.split('-').map(Number);
     const months = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
     return `${parts[2]}. ${months[parts[1]-1]} ${parts[0]}`;
+  }
+  function pad2(n){ return String(n).padStart(2,'0'); }
+  function isoDate(y,m,d){ return `${y}-${pad2(m)}-${pad2(d)}`; }
+
+  // Berechnet, an welchen Tagen eines bestimmten Monats ein Termin (einmalig oder Serie) auftritt.
+  function getOccurrencesInMonth(event, year, month){
+    const occurrences = [];
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const [by, bm, bd] = event.date.split('-').map(Number);
+    const baseUTC = Date.UTC(by, bm-1, bd);
+
+    if(event.recurrence==='none' || !event.recurrence){
+      if(by===year && bm===month) occurrences.push(event.date);
+      return occurrences;
+    }
+    if(event.recurrence==='weekly' || event.recurrence==='biweekly' || event.recurrence==='every4weeks'){
+      const intervalDays = event.recurrence==='weekly' ? 7 : event.recurrence==='biweekly' ? 14 : 28;
+      for(let d=1; d<=daysInMonth; d++){
+        const currentUTC = Date.UTC(year, month-1, d);
+        if(currentUTC < baseUTC) continue;
+        const diffDays = Math.round((currentUTC - baseUTC) / 86400000);
+        if(diffDays % intervalDays === 0) occurrences.push(isoDate(year,month,d));
+      }
+      return occurrences;
+    }
+    if(event.recurrence==='monthly'){
+      if(year>by || (year===by && month>=bm)){
+        const targetDay = Math.min(bd, daysInMonth);
+        occurrences.push(isoDate(year,month,targetDay));
+      }
+      return occurrences;
+    }
+    if(event.recurrence==='yearly'){
+      if(month===bm && year>=by){
+        const targetDay = Math.min(bd, daysInMonth);
+        occurrences.push(isoDate(year,month,targetDay));
+      }
+      return occurrences;
+    }
+    return occurrences;
+  }
+
+  // Findet eine Ausnahme (bearbeitet/gelöscht) für einen bestimmten Serientermin an einem bestimmten Tag.
+  function findOccurrenceEdit(eventId, occurrenceDate){
+    return state.calendarOccurrenceEdits.find(e=> e.seriesId===eventId && e.occurrenceDate===occurrenceDate) || null;
+  }
+
+  // Liefert alle Termine (inkl. Serien-Vorkommen, mit angewendeten Ausnahmen) für einen bestimmten Tag.
+  function getEventsOnDate(dateStr){
+    const [y, m] = dateStr.split('-').map(Number);
+    const results = [];
+    state.calendarEvents.forEach(ev=>{
+      const occDates = getOccurrencesInMonth(ev, y, m);
+      occDates.forEach(occDate=>{
+        if(occDate!==dateStr) return;
+        const edit = findOccurrenceEdit(ev.id, occDate);
+        if(edit && edit.deleted) return;
+        if(edit){
+          results.push({
+            seriesId: ev.id, occurrenceDate: occDate, isException: true,
+            title: edit.title!==undefined ? edit.title : ev.title,
+            location: edit.location!==undefined ? edit.location : ev.location,
+            date: edit.date!==undefined ? edit.date : occDate,
+            startTime: edit.startTime!==undefined ? edit.startTime : ev.startTime,
+            endTime: edit.endTime!==undefined ? edit.endTime : ev.endTime,
+            recurrence: ev.recurrence
+          });
+        }else{
+          results.push({
+            seriesId: ev.id, occurrenceDate: occDate, isException: false,
+            title: ev.title, location: ev.location, date: occDate,
+            startTime: ev.startTime, endTime: ev.endTime, recurrence: ev.recurrence
+          });
+        }
+      });
+    });
+    return results.sort((a,b)=> (a.startTime||'').localeCompare(b.startTime||''));
+  }
+
+  // Liefert alle Tage (als Set von YYYY-MM-DD) in einem Monat, an denen mindestens ein Termin liegt.
+  function getEventDatesInMonth(year, month){
+    const dateSet = new Set();
+    state.calendarEvents.forEach(ev=>{
+      getOccurrencesInMonth(ev, year, month).forEach(occDate=>{
+        const edit = findOccurrenceEdit(ev.id, occDate);
+        if(edit && edit.deleted) return;
+        // Falls eine Ausnahme das Datum verschoben hat, zählt das NEUE Datum, nicht das alte.
+        dateSet.add(edit && edit.date!==undefined ? edit.date : occDate);
+      });
+    });
+    return dateSet;
   }
   function escapeHtml(str){
     return String(str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -739,6 +857,22 @@
     state.currentArrearsName = name;
     state.view = 'arrearsDetail';
     render();
+  }
+  async function goToCalendar(){
+    state.view = 'calendar';
+    renderLoading('Kalender wird geladen…');
+    try{
+      const [events, edits] = await Promise.all([
+        getJSONOrThrow('calendar-events', []),
+        getJSONOrThrow('calendar-occurrence-edits', [])
+      ]);
+      state.calendarEvents = events;
+      state.calendarOccurrenceEdits = edits;
+      state.view = 'calendar';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToCalendar);
+    }
   }
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement') goToSettingsMenu();
@@ -1132,6 +1266,66 @@
     return `<div class="card"><h2 class="section-title">Spartöpfe</h2>${rowsHtml}</div>`;
   }
 
+  const MONTH_NAMES_DE_CAL = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+  const WEEKDAY_LABELS_DE = ['MO','DI','MI','DO','FR','SA','SO'];
+
+  function viewCalendar(){
+    const year = state.calendarViewYear;
+    const month = state.calendarViewMonth;
+    const eventDates = getEventDatesInMonth(year, month);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const firstWeekday = (new Date(year, month-1, 1).getDay()+6)%7; // 0=Montag
+
+    const cells = [];
+    for(let i=0;i<firstWeekday;i++) cells.push('');
+    for(let d=1; d<=daysInMonth; d++) cells.push(isoDate(year,month,d));
+
+    const cellsHtml = cells.map(dateStr=>{
+      if(!dateStr) return `<div class="cal-cell cal-cell-empty"></div>`;
+      const day = Number(dateStr.split('-')[2]);
+      const isSelected = dateStr===state.calendarSelectedDate;
+      const isToday = dateStr===todayISO();
+      const hasEvent = eventDates.has(dateStr);
+      return `
+        <button type="button" class="cal-cell${isSelected?' selected':''}${isToday && !isSelected?' today':''}" data-date="${dateStr}">
+          <span class="cal-cell-num">${day}</span>
+          ${hasEvent ? '<span class="cal-cell-dot"></span>' : ''}
+        </button>
+      `;
+    }).join('');
+
+    const selectedEvents = getEventsOnDate(state.calendarSelectedDate);
+    const eventsHtml = selectedEvents.length===0
+      ? `<p class="empty-state">Keine Termine an diesem Tag.</p>`
+      : selectedEvents.map(ev=>`
+        <div class="cal-event-row" data-series-id="${ev.seriesId}" data-occurrence-date="${ev.occurrenceDate}">
+          <div class="cal-event-title">${escapeHtml(ev.title)}</div>
+          ${ev.location ? `<div class="cal-event-meta">${escapeHtml(ev.location)}</div>` : ''}
+          <div class="cal-event-meta">${formatDateDE(ev.date)}${ev.startTime?` · ${ev.startTime}${ev.endTime?'–'+ev.endTime:''}`:''}</div>
+        </div>
+      `).join('');
+
+    return `
+      <div class="card cal-card">
+        <div class="cal-month-nav">
+          <button type="button" class="cal-nav-btn" id="cal-prev-month-btn" aria-label="Vorheriger Monat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+          </button>
+          <span class="cal-month-label">${MONTH_NAMES_DE_CAL[month-1]} ${year}</span>
+          <button type="button" class="cal-nav-btn" id="cal-next-month-btn" aria-label="Nächster Monat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+        <div class="cal-weekday-row">${WEEKDAY_LABELS_DE.map(w=>`<span>${w}</span>`).join('')}</div>
+        <div class="cal-grid">${cellsHtml}</div>
+      </div>
+      <div class="card">
+        <h2 class="section-title">${formatDateDE(state.calendarSelectedDate)}</h2>
+        ${eventsHtml}
+      </div>
+    `;
+  }
+
   function viewFinance(){
     const totalStartBalances = state.financeAccounts.reduce((sum,a)=> sum + a.startBalance, 0);
     const totalTransactions = state.financeTransactions.reduce((sum,t)=> sum + t.amount, 0);
@@ -1183,7 +1377,8 @@
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
     const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement';
     const isFinanceActive = state.view==='finance';
-    const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isTodayActive ? 'today' : 'overview'));
+    const isCalendarActive = state.view==='calendar';
+    const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isCalendarActive ? 'calendar' : (isTodayActive ? 'today' : 'overview')));
     const todayButtonHtml = todayEve ? `
         <button type="button" class="bottom-nav-item${activeTab==='today'?' active':''}" id="nav-today-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1212,6 +1407,18 @@
             <line x1="6.5" y1="13.4" x2="13" y2="13.4"/>
           </svg>
           <span>Finanzen</span>
+        </button>
+        <button type="button" class="bottom-nav-item${activeTab==='calendar'?' active':''}" id="nav-calendar-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="17" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="7" y1="2" x2="7" y2="6"/>
+            <line x1="17" y1="2" x2="17" y2="6"/>
+            <circle cx="8" cy="14" r="1.2" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="14" r="1.2" fill="currentColor" stroke="none"/>
+            <circle cx="16" cy="14" r="1.2" fill="currentColor" stroke="none"/>
+          </svg>
+          <span>Kalender</span>
         </button>
         <button type="button" class="bottom-nav-item${activeTab==='settings'?' active':''}" id="nav-settings-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1261,6 +1468,7 @@
     else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='finance') body = viewFinance();
+    else if(state.view==='calendar') body = viewCalendar();
     else if(state.view==='arrearsDetail') body = viewArrearsDetail();
     else if(state.view==='transactionDetail') body = viewTransactionDetail();
     else if(state.view==='new') body = viewNew();
@@ -2403,6 +2611,7 @@
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='finance') title = 'Finanzen';
+    else if(state.view==='calendar') title = 'Kalender';
     else if(state.view==='arrearsDetail') title = state.currentArrearsName || '';
     else if(state.view==='transactionDetail') title = state.currentTransactionId ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen';
     else if(state.view==='new') title = 'Neuer Kegelabend';
@@ -2438,6 +2647,7 @@
       finesManagement: { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' },
       gamesManagement: { id: 'header-add-game-btn', label: 'Spiel hinzufügen' },
       finance: { id: 'header-add-transaction-btn', label: 'Umsatz hinzufügen' },
+      calendar: { id: 'header-add-event-btn', label: 'Termin hinzufügen' },
     }[state.view];
     const settingsAddBtnHtml = settingsAddBtnConfig ? `
       <button type="button" class="header-circle-btn" id="${settingsAddBtnConfig.id}" aria-label="${settingsAddBtnConfig.label}">
@@ -2568,6 +2778,8 @@
     if(navSettingsBtn) navSettingsBtn.addEventListener('click', goToSettingsMenu);
     const navFinanceBtn = document.getElementById('nav-finance-btn');
     if(navFinanceBtn) navFinanceBtn.addEventListener('click', goToFinance);
+    const navCalendarBtn = document.getElementById('nav-calendar-btn');
+    if(navCalendarBtn) navCalendarBtn.addEventListener('click', goToCalendar);
     const logoBtn = document.getElementById('logo-home-btn');
     if(logoBtn) logoBtn.addEventListener('click', goToMain);
     const headerBackBtn = document.getElementById('header-back-btn');
@@ -2584,6 +2796,7 @@
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
     else if(state.view==='finance') attachFinanceListeners();
+    else if(state.view==='calendar') attachCalendarListeners();
     else if(state.view==='arrearsDetail') attachArrearsDetailListeners();
     else if(state.view==='transactionDetail') attachTransactionDetailListeners();
     else if(state.view==='new') attachNewListeners();
@@ -2786,6 +2999,36 @@
     });
     const openAddPotBtn = document.getElementById('header-add-pot-btn');
     if(openAddPotBtn) openAddPotBtn.addEventListener('click', ()=>showSavingsPotFormModal());
+  }
+
+  function attachCalendarListeners(){
+    const prevBtn = document.getElementById('cal-prev-month-btn');
+    if(prevBtn) prevBtn.addEventListener('click', ()=>{
+      state.calendarViewMonth--;
+      if(state.calendarViewMonth<1){ state.calendarViewMonth=12; state.calendarViewYear--; }
+      render();
+    });
+    const nextBtn = document.getElementById('cal-next-month-btn');
+    if(nextBtn) nextBtn.addEventListener('click', ()=>{
+      state.calendarViewMonth++;
+      if(state.calendarViewMonth>12){ state.calendarViewMonth=1; state.calendarViewYear++; }
+      render();
+    });
+    document.querySelectorAll('.cal-cell[data-date]').forEach(cell=>{
+      cell.addEventListener('click', ()=>{
+        state.calendarSelectedDate = cell.dataset.date;
+        render();
+      });
+    });
+    document.querySelectorAll('.cal-event-row').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const events = getEventsOnDate(state.calendarSelectedDate);
+        const ev = events.find(e=> e.seriesId===row.dataset.seriesId && e.occurrenceDate===row.dataset.occurrenceDate);
+        if(ev) showEventFormModal(ev);
+      });
+    });
+    const addEventBtn = document.getElementById('header-add-event-btn');
+    if(addEventBtn) addEventBtn.addEventListener('click', ()=>showEventFormModal());
   }
 
   function attachFinanceListeners(){
@@ -3318,6 +3561,111 @@
         state.financeSavingsPots.push({id:uid('pot'), name, targetAmount:Math.round(targetAmount*100)/100, targetDate});
       }
       await setJSON('finance-savings-pots', state.financeSavingsPots, true);
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showDeleteEventModal(occurrence){
+    const isSeriesOccurrence = !!(occurrence.recurrence && occurrence.recurrence!=='none');
+    showModal(`
+      <h3>Termin löschen</h3>
+      <p>„${escapeHtml(occurrence.title)}" wirklich löschen?${isSeriesOccurrence ? ' Nur dieser eine Termin der Serie wird entfernt.' : ''}</p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-event-yes">Ja, löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-delete-event-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-event-yes');
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      if(!isSeriesOccurrence){
+        state.calendarEvents = state.calendarEvents.filter(e=>e.id!==occurrence.seriesId);
+        await setJSON('calendar-events', state.calendarEvents, true);
+      }else{
+        let edit = findOccurrenceEdit(occurrence.seriesId, occurrence.occurrenceDate);
+        if(!edit){ edit = {id:uid('caledit'), seriesId:occurrence.seriesId, occurrenceDate:occurrence.occurrenceDate}; state.calendarOccurrenceEdits.push(edit); }
+        edit.deleted = true;
+        await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
+      }
+      closeGenericModal();
+      render();
+    });
+  }
+
+  function showEventFormModal(occurrence){
+    const isEdit = !!occurrence;
+    const isSeriesOccurrence = isEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
+    const recurrenceOptionsHtml = isSeriesOccurrence ? '' : `
+      <label for="cal-ev-recurrence">Wiederholen</label>
+      <select id="cal-ev-recurrence">
+        <option value="none"${(!isEdit || occurrence.recurrence==='none' || !occurrence.recurrence)?' selected':''}>Nein</option>
+        <option value="weekly"${(isEdit && occurrence.recurrence==='weekly')?' selected':''}>Wöchentlich</option>
+        <option value="biweekly"${(isEdit && occurrence.recurrence==='biweekly')?' selected':''}>Zweiwöchentlich</option>
+        <option value="every4weeks"${(isEdit && occurrence.recurrence==='every4weeks')?' selected':''}>Vierwöchentlich</option>
+        <option value="monthly"${(isEdit && occurrence.recurrence==='monthly')?' selected':''}>Monatlich</option>
+        <option value="yearly"${(isEdit && occurrence.recurrence==='yearly')?' selected':''}>Jährlich</option>
+      </select>
+    `;
+    showModal(`
+      <h3>${isEdit ? 'Termin bearbeiten' : 'Termin hinzufügen'}</h3>
+      <label for="cal-ev-title">Titel</label>
+      <input type="text" id="cal-ev-title" placeholder="z. B. Kegeln" value="${isEdit?escapeHtml(occurrence.title):''}">
+      <label for="cal-ev-location">Ort (optional)</label>
+      <input type="text" id="cal-ev-location" placeholder="z. B. Zur Dorfschmiede" value="${isEdit?escapeHtml(occurrence.location||''):''}">
+      <label for="cal-ev-date">Datum</label>
+      <input type="date" id="cal-ev-date" value="${isEdit?occurrence.date:state.calendarSelectedDate}">
+      <label for="cal-ev-start">Startzeit (optional)</label>
+      <input type="time" id="cal-ev-start" value="${isEdit?(occurrence.startTime||''):''}">
+      <label for="cal-ev-end">Endzeit (optional)</label>
+      <input type="time" id="cal-ev-end" value="${isEdit?(occurrence.endTime||''):''}">
+      ${recurrenceOptionsHtml}
+      ${isSeriesOccurrence ? `<p class="hint">Dies ist Teil einer Terminserie. Änderungen betreffen nur diesen einen Termin.</p>` : ''}
+      <p class="form-error" id="cal-ev-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-primary" id="save-cal-ev-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+      ${isEdit ? `<button type="button" class="btn-danger" id="delete-cal-ev-btn" style="width:100%; margin-top:10px;">Termin löschen</button>` : ''}
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    if(isEdit){
+      const delBtn = document.getElementById('delete-cal-ev-btn');
+      if(delBtn) delBtn.addEventListener('click', ()=>showDeleteEventModal(occurrence));
+    }
+    document.getElementById('cal-ev-title').focus();
+    document.getElementById('save-cal-ev-btn').addEventListener('click', async ()=>{
+      const errEl = document.getElementById('cal-ev-error');
+      const title = document.getElementById('cal-ev-title').value.trim();
+      const location = document.getElementById('cal-ev-location').value.trim();
+      const date = document.getElementById('cal-ev-date').value;
+      const startTime = document.getElementById('cal-ev-start').value;
+      const endTime = document.getElementById('cal-ev-end').value;
+      const recurrenceEl = document.getElementById('cal-ev-recurrence');
+      const recurrence = recurrenceEl ? recurrenceEl.value : (isEdit ? occurrence.recurrence : 'none');
+
+      if(!title){ errEl.textContent='Bitte einen Titel angeben.'; return; }
+      if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
+
+      const btn = document.getElementById('save-cal-ev-btn');
+      btn.disabled = true; btn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+
+      if(!isEdit){
+        state.calendarEvents.push({id:uid('cal'), title, location, date, startTime, endTime, recurrence});
+        await setJSON('calendar-events', state.calendarEvents, true);
+      }else if(!isSeriesOccurrence){
+        const base = state.calendarEvents.find(e=>e.id===occurrence.seriesId);
+        if(base){ base.title=title; base.location=location; base.date=date; base.startTime=startTime; base.endTime=endTime; base.recurrence=recurrence; }
+        await setJSON('calendar-events', state.calendarEvents, true);
+      }else{
+        let edit = findOccurrenceEdit(occurrence.seriesId, occurrence.occurrenceDate);
+        if(!edit){ edit = {id:uid('caledit'), seriesId:occurrence.seriesId, occurrenceDate:occurrence.occurrenceDate}; state.calendarOccurrenceEdits.push(edit); }
+        edit.title=title; edit.location=location; edit.date=date; edit.startTime=startTime; edit.endTime=endTime;
+        delete edit.deleted;
+        await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
+      }
+      state.calendarSelectedDate = date;
       closeGenericModal();
       render();
     });
