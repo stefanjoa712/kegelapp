@@ -555,7 +555,11 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.16';
+  const APP_VERSION = '1.17';
+
+  // Public Key für Web Push (VAPID). Das Gegenstück (Private Key) liegt als
+  // Firebase Secret PUSH_VAPID_PRIVATE_KEY bei den Cloud Functions.
+  const PUSH_VAPID_PUBLIC_KEY = 'BC7muftYs0KYn69UicgTFEjB71EaTa9i6Z_Wt0XGZaCyYEuY15wbM_jIMbWmo_NjmLeUUEaiVxoj7MhAuUKdyPs';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -661,6 +665,94 @@
   }
   async function deleteKey(key, shared){
     try{ await withTimeout(deleteDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS); }catch(e){ console.error('deleteKey fehlgeschlagen für', key, e); }
+  }
+
+  // ---------- Web Push ----------
+  // Alle Subscriptions liegen in einem Dokument: { [memberId]: [subscription, ...] }.
+  // So reicht der Cloud Function ein einziger Read, um beim Anlegen eines neuen
+  // Abends alle Empfänger zu ermitteln.
+  function urlBase64ToUint8Array(base64String){
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = atob(base64);
+    return Uint8Array.from([...rawData].map(c=>c.charCodeAt(0)));
+  }
+
+  function pushSupported(){
+    return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  }
+
+  function getCurrentMemberId(){
+    const user = auth.currentUser;
+    if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
+    const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
+    return member ? member.id : null;
+  }
+
+  async function getPushSubscriptionStatus(){
+    if(!pushSupported()) return 'unsupported';
+    if(Notification.permission==='denied') return 'denied';
+    try{
+      const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+      if(!reg) return 'inactive';
+      const sub = await reg.pushManager.getSubscription();
+      return sub ? 'active' : 'inactive';
+    }catch(e){
+      console.error('Push-Status konnte nicht ermittelt werden', e);
+      return 'inactive';
+    }
+  }
+
+  async function enablePushNotifications(){
+    if(!pushSupported()) throw new Error('unsupported');
+    const memberId = getCurrentMemberId();
+    if(!memberId) throw new Error('no-member');
+
+    const permission = await Notification.requestPermission();
+    if(permission!=='granted') throw new Error('denied');
+
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub){
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(PUSH_VAPID_PUBLIC_KEY)
+      });
+    }
+
+    const all = await getJSON('push-subscriptions', true, {});
+    const existing = Array.isArray(all[memberId]) ? all[memberId] : [];
+    const subJson = sub.toJSON();
+    const alreadyStored = existing.some(s=> s.endpoint===subJson.endpoint);
+    if(!alreadyStored){
+      all[memberId] = [...existing, subJson];
+      await setJSON('push-subscriptions', all, true);
+    }
+    return true;
+  }
+
+  async function disablePushNotifications(){
+    const memberId = getCurrentMemberId();
+    try{
+      const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+      if(reg){
+        const sub = await reg.pushManager.getSubscription();
+        if(sub){
+          const endpoint = sub.endpoint;
+          await sub.unsubscribe();
+          if(memberId){
+            const all = await getJSON('push-subscriptions', true, {});
+            const existing = Array.isArray(all[memberId]) ? all[memberId] : [];
+            all[memberId] = existing.filter(s=> s.endpoint!==endpoint);
+            await setJSON('push-subscriptions', all, true);
+          }
+        }
+      }
+    }catch(e){
+      console.error('Push-Abmeldung fehlgeschlagen', e);
+    }
   }
 
   // ---------- Kleine Helfer ----------
@@ -1113,8 +1205,16 @@
     else goToCalendar();
   }
 
+  async function goToNotificationSettings(){
+    state.view = 'notificationSettings';
+    state.pushStatus = 'loading';
+    render();
+    state.pushStatus = await getPushSubscriptionStatus();
+    render();
+  }
+
   function goBackFromHeader(){
-    if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
+    if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement' || state.view==='notificationSettings') goToSettingsMenu();
     else if(state.view==='memberDetail') goToSettings();
     else if(state.view==='recurringDetail') goToFinanceManagement();
     else if(state.view==='eventDetail') goBackFromEventDetail();
@@ -1206,6 +1306,18 @@
               <path d="M9 6l6 6-6 6"/>
             </svg>
           </button>
+          <button type="button" class="settings-menu-item" id="settings-menu-benachrichtigungen-btn">
+            <span class="settings-menu-item-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+                <path d="M13.7 21a2 2 0 0 1-3.4 0"/>
+              </svg>
+            </span>
+            <span class="settings-menu-item-label">Benachrichtigungen</span>
+            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
           <button type="button" class="settings-menu-item" id="settings-menu-logout-btn">
             <span class="settings-menu-item-icon logout-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1217,6 +1329,39 @@
             <span class="settings-menu-item-label">Abmelden</span>
           </button>
         </div>
+      </div>
+    `;
+  }
+
+  function viewNotificationSettings(){
+    const status = state.pushStatus;
+    let bodyHtml;
+
+    if(status==='loading'){
+      bodyHtml = `<p class="muted-text">Status wird geprüft…</p>`;
+    }else if(status==='unsupported'){
+      bodyHtml = `<p class="muted-text">Push-Benachrichtigungen werden von diesem Browser nicht unterstützt. Auf dem iPhone funktioniert das nur, wenn die App über "Zum Home-Bildschirm" installiert wurde.</p>`;
+    }else if(status==='denied'){
+      bodyHtml = `<p class="muted-text">Benachrichtigungen wurden für diese App blockiert. Du kannst das in den Browser- bzw. Geräteeinstellungen wieder erlauben.</p>`;
+    }else if(!getCurrentMemberId()){
+      bodyHtml = `<p class="muted-text">Benachrichtigungen sind nur für Mitglieder mit verknüpftem Konto verfügbar.</p>`;
+    }else if(status==='active'){
+      bodyHtml = `
+        <p class="muted-text">Du erhältst Benachrichtigungen auf diesem Gerät, wenn ein neuer Kegelabend angelegt wird.</p>
+        <button type="button" class="btn-secondary" id="push-toggle-btn">Auf diesem Gerät deaktivieren</button>
+      `;
+    }else{
+      bodyHtml = `
+        <p class="muted-text">Aktiviere Benachrichtigungen, um auf diesem Gerät informiert zu werden, sobald ein neuer Kegelabend angelegt wird.</p>
+        <button type="button" class="btn-primary" id="push-toggle-btn">Benachrichtigungen aktivieren</button>
+      `;
+    }
+
+    return `
+      <div class="card">
+        <h2 class="section-title">Benachrichtigungen</h2>
+        ${bodyHtml}
+        <p id="push-error" class="form-error"></p>
       </div>
     `;
   }
@@ -1835,6 +1980,7 @@
     if(sig==='gamesManagement') return '#spiele';
     if(sig==='financeManagement') return '#finanzen-verwaltung';
     if(sig==='eventManagement') return '#terminverwaltung';
+    if(sig==='notificationSettings') return '#benachrichtigungen';
     if(sig==='finance') return '#finanzen';
     if(sig==='calendar') return '#kalender';
     if(sig==='new') return '#neuer-abend';
@@ -1863,6 +2009,7 @@
     else if(state.view==='finance') body = viewFinance();
     else if(state.view==='calendar') body = viewCalendar();
     else if(state.view==='eventManagement') body = viewEventManagement();
+    else if(state.view==='notificationSettings') body = viewNotificationSettings();
     else if(state.view==='eventDetail') body = viewEventDetail();
     else if(state.view==='arrearsDetail') body = viewArrearsDetail();
     else if(state.view==='transactionDetail') body = viewTransactionDetail();
@@ -3276,6 +3423,7 @@
     else if(state.view==='finance') title = 'Finanzen';
     else if(state.view==='calendar') title = 'Kalender';
     else if(state.view==='eventManagement') title = 'Terminverwaltung';
+    else if(state.view==='notificationSettings') title = 'Benachrichtigungen';
     else if(state.view==='eventDetail'){
       if(!state.calendarEditingOccurrence) title = 'Termin hinzufügen';
       else{
@@ -3526,6 +3674,7 @@
     else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='calendar') attachCalendarListeners();
     else if(state.view==='eventManagement') attachEventManagementListeners();
+    else if(state.view==='notificationSettings') attachNotificationSettingsListeners();
     else if(state.view==='eventDetail') attachEventDetailListeners();
     else if(state.view==='arrearsDetail') attachArrearsDetailListeners();
     else if(state.view==='transactionDetail') attachTransactionDetailListeners();
@@ -3545,8 +3694,39 @@
     if(finanzenBtn) finanzenBtn.addEventListener('click', goToFinanceManagement);
     const termineBtn = document.getElementById('settings-menu-termine-btn');
     if(termineBtn) termineBtn.addEventListener('click', goToEventManagement);
+    const benachrichtigungenBtn = document.getElementById('settings-menu-benachrichtigungen-btn');
+    if(benachrichtigungenBtn) benachrichtigungenBtn.addEventListener('click', goToNotificationSettings);
     const logoutBtn = document.getElementById('settings-menu-logout-btn');
     if(logoutBtn) logoutBtn.addEventListener('click', logout);
+  }
+
+  function attachNotificationSettingsListeners(){
+    const toggleBtn = document.getElementById('push-toggle-btn');
+    if(!toggleBtn) return;
+    toggleBtn.addEventListener('click', async ()=>{
+      const errEl = document.getElementById('push-error');
+      if(errEl) errEl.textContent = '';
+      const originalText = toggleBtn.textContent;
+      toggleBtn.disabled = true;
+      toggleBtn.textContent = 'Wird verarbeitet…';
+      try{
+        if(state.pushStatus==='active'){
+          await disablePushNotifications();
+        }else{
+          await enablePushNotifications();
+        }
+        state.pushStatus = await getPushSubscriptionStatus();
+        render();
+      }catch(e){
+        toggleBtn.disabled = false;
+        toggleBtn.textContent = originalText;
+        if(errEl){
+          if(e.message==='denied') errEl.textContent = 'Berechtigung wurde nicht erteilt.';
+          else if(e.message==='no-member') errEl.textContent = 'Kein verknüpftes Mitgliedskonto gefunden.';
+          else errEl.textContent = 'Das hat leider nicht geklappt. Bitte versuche es erneut.';
+        }
+      }
+    });
   }
 
   // Eigenständige Fehleransicht mit "Erneut versuchen"-Button - für Fälle, in denen eine

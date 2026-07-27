@@ -10,7 +10,7 @@
  * oder im Client sichtbar. Einrichtung siehe DEPLOY.md im gleichen Ordner.
  */
 
-const { onDocumentUpdated } = require('firebase-functions/v2/firestore');
+const { onDocumentUpdated, onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError, onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
@@ -18,12 +18,15 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { Resend } = require('resend');
+const webpush = require('web-push');
 const logger = require('firebase-functions/logger');
 
 initializeApp();
 const db = getFirestore();
 
 const resendApiKey = defineSecret('RESEND_API_KEY');
+const pushVapidPrivateKey = defineSecret('PUSH_VAPID_PRIVATE_KEY');
+const PUSH_VAPID_PUBLIC_KEY = 'BC7muftYs0KYn69UicgTFEjB71EaTa9i6Z_Wt0XGZaCyYEuY15wbM_jIMbWmo_NjmLeUUEaiVxoj7MhAuUKdyPs';
 
 // -------- Absenderadresse --------
 // Solange keine eigene Domain in Resend verifiziert ist, funktioniert nur
@@ -368,6 +371,84 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
       await handleEveningReopened(before, docId);
     }
     // Sonst: keine für E-Mails relevante Änderung (z.B. nur eine Strafe angepasst) - nichts tun.
+  }
+);
+
+// -------- Push-Benachrichtigung bei neuem Kegelabend --------
+// Feuert, sobald ein neues evening-*-Dokument angelegt wird (nicht bei Updates,
+// dafür ist bereits sendFineEmailsOnClose zuständig). Sendet per Web Push an
+// alle in push-subscriptions hinterlegten Geräte.
+exports.sendPushOnNewEvening = onDocumentCreated(
+  { document: 'kegelbuch/{docId}', secrets: [pushVapidPrivateKey] },
+  async (event) => {
+    const docId = event.params.docId;
+    if (!docId.startsWith('evening-')) return;
+
+    const raw = event.data.data();
+    if (!raw || !raw.value) return;
+
+    let detail = null;
+    try { detail = JSON.parse(raw.value); } catch (e) {
+      logger.error('Konnte neues Abend-Dokument nicht parsen', e);
+      return;
+    }
+
+    const subsSnap = await db.collection('kegelbuch').doc('push-subscriptions').get();
+    if (!subsSnap.exists) {
+      logger.info('Keine Push-Subscriptions vorhanden, überspringe Versand.');
+      return;
+    }
+
+    let allSubs = {};
+    try { allSubs = JSON.parse(subsSnap.data().value || '{}'); } catch (e) {
+      logger.error('Konnte push-subscriptions nicht parsen', e);
+      return;
+    }
+
+    const flatSubs = Object.values(allSubs).flat().filter(Boolean);
+    if (flatSubs.length === 0) return;
+
+    webpush.setVapidDetails(
+      'mailto:admin@die-pudolfs.de',
+      PUSH_VAPID_PUBLIC_KEY,
+      pushVapidPrivateKey.value()
+    );
+
+    const dateLabel = new Date(detail.date).toLocaleDateString('de-DE', {
+      weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'
+    });
+    const payload = JSON.stringify({
+      title: 'Neuer Kegelabend',
+      body: `Ein neuer Kegelabend am ${dateLabel} wurde angelegt.`,
+      url: '/',
+      tag: 'new-evening-' + docId
+    });
+
+    const staleEndpoints = [];
+    await Promise.all(flatSubs.map(async (sub) => {
+      try {
+        await webpush.sendNotification(sub, payload);
+      } catch (err) {
+        // 404/410 = Subscription ist nicht mehr gültig (Browser-Daten gelöscht,
+        // Gerät abgemeldet o.ä.) - solche Einträge merken wir uns zum Aufräumen.
+        if (err.statusCode === 404 || err.statusCode === 410) {
+          staleEndpoints.push(sub.endpoint);
+        } else {
+          logger.error('Push-Versand fehlgeschlagen für einen Endpoint', err);
+        }
+      }
+    }));
+
+    if (staleEndpoints.length > 0) {
+      const cleaned = {};
+      for (const [memberId, subs] of Object.entries(allSubs)) {
+        cleaned[memberId] = (Array.isArray(subs) ? subs : []).filter(
+          s => !staleEndpoints.includes(s.endpoint)
+        );
+      }
+      await db.collection('kegelbuch').doc('push-subscriptions').set({ value: JSON.stringify(cleaned) });
+      logger.info(`${staleEndpoints.length} veraltete Push-Subscription(s) entfernt.`);
+    }
   }
 );
 
