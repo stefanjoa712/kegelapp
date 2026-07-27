@@ -488,7 +488,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.95';
+  const APP_VERSION = '0.96';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -3917,12 +3917,39 @@
         return;
       }
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
-      const id = state.currentEveningDetail.id;
+      const detail = state.currentEveningDetail;
+      const id = detail.id;
       const newIndex = state.eveningsIndex.filter(e=>e.id!==id);
-      await Promise.all([
+      const saves = [
         deleteKey('evening-'+id, true),
         setJSON('evenings-index', newIndex, true)
-      ]);
+      ];
+
+      // Wurde der Abend abgeschlossen, wurden dabei Rückstände erhöht - beim Löschen müssen
+      // genau diese Beträge wieder abgezogen werden.
+      if(detail.closed){
+        let arrears = state.financeArrears;
+        try{ arrears = await getJSON('finance-arrears', true, state.financeArrears); }catch(e){}
+        function subtractFromArrears(name, amount){
+          if(!amount) return;
+          let entry = arrears.find(a=>a.name===name);
+          if(!entry){ entry = {name, amount:0, history:[]}; arrears.push(entry); }
+          if(!entry.history) entry.history = [];
+          entry.amount = Math.round((entry.amount - amount)*100)/100;
+          entry.history.push({
+            id: uid('hist'), date: todayISO(), type:'correction', delta: -amount,
+            note: `Kegelabend vom ${formatDateDE(detail.date)} gelöscht`, balanceAfter: entry.amount
+          });
+        }
+        detail.seating.filter(s=>s.name).forEach(s=>{
+          subtractFromArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
+        });
+        (detail.absentMembersFines||[]).forEach(a=>{ subtractFromArrears(a.name, a.amount); });
+        state.financeArrears = arrears;
+        saves.push(setJSON('finance-arrears', arrears, true));
+      }
+
+      await Promise.all(saves);
       state.eveningsIndex = newIndex;
       state.confirmDeleteEveningId = null;
       goToMain();
