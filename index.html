@@ -509,7 +509,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '0.99';
+  const APP_VERSION = '1.0';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1459,6 +1459,7 @@
     if(sig==='gamesManagement') return '#spiele';
     if(sig==='financeManagement') return '#finanzen-verwaltung';
     if(sig==='finance') return '#finanzen';
+    if(sig==='calendar') return '#kalender';
     if(sig==='new') return '#neuer-abend';
     if(sig.startsWith('personFine:')) return '#strafe-person';
     if(sig.startsWith('arrearsDetail:')) return '#rueckstand-person';
