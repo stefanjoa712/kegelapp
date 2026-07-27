@@ -223,10 +223,17 @@
   .empty-state-small{color:var(--muted); font-size:13px; font-style:italic; margin:4px 0;}
   .version-footer{color:var(--muted); font-size:11px; font-family:var(--font-mono); text-align:center; padding:4px 12px 22px;}
 
-  .evening-row{display:flex; justify-content:space-between; align-items:center; padding:12px 2px; border-bottom:1px solid var(--line); cursor:pointer;}
+  .evening-row{display:flex; flex-direction:column; gap:6px; padding:12px 2px; border-bottom:1px solid var(--line); cursor:pointer;}
   .evening-row:last-child{border-bottom:none;}
-  .evening-row:hover .meta{color:var(--felt);}
+  .evening-row-top{display:flex; justify-content:space-between; align-items:center;}
   .evening-row .date{font-family:var(--font-display); font-size:16px; font-weight:600;}
+  .evening-row-stats{display:flex; align-items:center; gap:14px;}
+  .evening-stat{display:inline-flex; align-items:center; gap:4px; font-family:var(--font-mono); font-size:12px; color:var(--ink-soft);}
+  .evening-stat svg{width:14px; height:14px; flex-shrink:0;}
+  .evening-row-income{font-family:var(--font-mono); font-size:12px; color:var(--muted);}
+  .evening-row-income strong{font-weight:700;}
+  .closed-icon{display:inline-flex; align-items:center; margin-left:6px; color:var(--muted); vertical-align:middle;}
+  .closed-icon svg{width:13px; height:13px; display:block;}
   .finance-total-card{background:var(--felt); text-align:center; padding:28px 20px; cursor:pointer;}
   .own-arrears-card{text-align:center; padding:18px 20px;}
   .own-arrears-card.amount-due{background:var(--wine); cursor:pointer;}
@@ -317,8 +324,6 @@
   .transaction-amount{font-family:var(--font-mono); font-weight:700; white-space:nowrap; flex-shrink:0;}
   .transaction-amount.positive{color:#1a7a3c;}
   .transaction-amount.negative{color:var(--wine);}
-  .closed-badge{font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); background:var(--bg); border:1px solid var(--line); padding:2px 7px; border-radius:5px; margin-left:6px; font-weight:700; vertical-align:middle;}
-  .evening-row .meta{font-family:var(--font-mono); font-size:12px; color:var(--muted);}
 
   .year-group{border-bottom:1px solid var(--line);}
   .year-group:last-child{border-bottom:none;}
@@ -550,7 +555,13 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.13';
+  const APP_VERSION = '1.14';
+
+  // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
+  const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
+  const ICON_MEMBER_ABSENT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
+  const ICON_GUEST = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.9 2.9-7 6.5-7s6.5 3.1 6.5 7"/><path d="M18 7.5v5M15.5 10h5"/></svg>`;
+  const ICON_CLOSED = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>`;
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -887,6 +898,7 @@
       state.mainError = '';
       state.view = 'main';
       render();
+      backfillEveningSummaries();
     }catch(e){
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToMain);
     }
@@ -1970,7 +1982,26 @@
       const years = Object.keys(byYear).sort((a,b)=> b.localeCompare(a));
       listHtml = years.map(year=>{
         const expanded = state.expandedYears.has(year);
-        const rows = byYear[year].map(e=>`<div class="evening-row" data-id="${e.id}"><span class="date">${formatDateDE(e.date)}${e.closed?' <span class="closed-badge">Abgeschlossen</span>':''}</span><span class="meta">ansehen →</span></div>`).join('');
+        const rows = byYear[year].map(e=>{
+          const hasStats = e.income!==undefined;
+          const statsHtml = hasStats ? `
+            <div class="evening-row-stats">
+              <span class="evening-stat" title="Anwesende Mitglieder">${ICON_MEMBER_PRESENT}${e.presentCount||0}</span>
+              <span class="evening-stat" title="Abwesende Mitglieder">${ICON_MEMBER_ABSENT}${e.absentCount||0}</span>
+              <span class="evening-stat" title="Gäste">${ICON_GUEST}${e.guestCount||0}</span>
+            </div>
+            <div class="evening-row-income">Einnahme: <strong>${fmtEuro(e.income||0)}</strong></div>
+          ` : '';
+          return `
+            <div class="evening-row" data-id="${e.id}">
+              <div class="evening-row-top">
+                <span class="date">${formatDateDE(e.date)}${e.closed?` <span class="closed-icon" title="Abgeschlossen">${ICON_CLOSED}</span>`:''}</span>
+                <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+              </div>
+              ${statsHtml}
+            </div>
+          `;
+        }).join('');
         return `
           <div class="year-group${expanded?' expanded':''}" data-year="${year}">
             <div class="year-header">
@@ -1990,7 +2021,7 @@
       </div>
       ${state.mainError ? `<p class="form-error">${escapeHtml(state.mainError)}</p>` : ''}
       <div class="card">
-        <h2 class="section-title">Bisherige Abende</h2>
+        <h2 class="section-title">Kegelabende</h2>
         ${listHtml}
       </div>
       <p class="version-footer">Version ${APP_VERSION}</p>
@@ -2275,6 +2306,53 @@
     return roundUpToFullEuro(totals.reduce((a,b)=>a+b,0)/totals.length);
   }
 
+  // Für die Übersichtsliste: kompakte Kennzahlen eines Abends (anwesende/abwesende Mitglieder,
+  // Gäste, Einnahme), werden im Index-Dokument gecacht, damit die Übersicht nicht für jeden
+  // Abend das volle Detail-Dokument laden muss.
+  function computeEveningSummaryFields(detail){
+    const occupied = detail.seating.filter(s=>s.name);
+    const presentCount = occupied.filter(s=>!s.isGuest).length;
+    const guestCount = occupied.filter(s=>s.isGuest).length;
+    const absentList = detail.closed ? (detail.absentMembersFines || []) : [];
+    const absentCount = detail.closed ? absentList.length : Math.max(0, state.members.length - presentCount);
+    let income = 0;
+    occupied.forEach(s=>{ income += roundedFineTotalForSeat(detail, s.seatId); });
+    absentList.forEach(a=>{ income += a.amount; });
+    return { presentCount, guestCount, absentCount, income };
+  }
+  // Aktualisiert den Index-Eintrag eines Abends mit den aktuellen Kennzahlen (mutiert state.eveningsIndex).
+  function updateEveningIndexSummary(detail){
+    const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
+    if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)};
+  }
+  // Speichert ein Abend-Detail-Dokument und hält gleichzeitig die Kennzahlen im Index aktuell.
+  async function saveEveningDetail(detail){
+    updateEveningIndexSummary(detail);
+    await Promise.all([
+      setJSON('evening-'+detail.id, detail, true),
+      setJSON('evenings-index', state.eveningsIndex, true)
+    ]);
+  }
+  // Holt für Abende, deren Index-Eintrag noch keine Kennzahlen enthält (ältere Einträge vor
+  // Einführung dieses Felds), einmalig das Detail-Dokument nach und cacht die Kennzahlen im Index.
+  async function backfillEveningSummaries(){
+    const missing = state.eveningsIndex.filter(e=> e.income===undefined);
+    if(missing.length===0) return;
+    try{
+      const details = await Promise.all(missing.map(e=> getJSON('evening-'+e.id, true, null)));
+      let changed = false;
+      details.forEach((detail, i)=>{
+        if(!detail) return;
+        const idx = state.eveningsIndex.findIndex(x=>x.id===missing[i].id);
+        if(idx>=0){ state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)}; changed = true; }
+      });
+      if(changed){
+        await setJSON('evenings-index', state.eveningsIndex, true);
+        if(state.view==='main') render();
+      }
+    }catch(e){ console.error('Backfill der Abend-Kennzahlen fehlgeschlagen', e); }
+  }
+
   // Ermittelt die Sitzplätze mit den meisten "Pudel"-Strafen (bei Gleichstand: alle).
   function computePudelCrownSeatIds(detail){
     const occupied = detail.seating.filter(s=>s.name);
@@ -2474,7 +2552,7 @@
     const current = detail.finesBySeat[seatId][fineId] || 0;
     detail.finesBySeat[seatId][fineId] = Math.max(0, current + delta);
     render();
-    await setJSON('evening-'+detail.id, detail, true);
+    await saveEveningDetail(detail);
   }
 
   async function showAddGeldstrafeModal(existingAdHoc){
@@ -2535,7 +2613,7 @@
       }else{
         detail.adHocFinesBySeat[seatId].push({id:uid('adhoc'), name, amount:rounded});
       }
-      await setJSON('evening-'+detail.id, detail, true);
+      await saveEveningDetail(detail);
       closeGenericModal();
       render();
     });
@@ -2555,7 +2633,7 @@
       const detail = state.currentEveningDetail;
       const seatId = state.currentFineSeatId;
       detail.adHocFinesBySeat[seatId] = (detail.adHocFinesBySeat[seatId]||[]).filter(x=>x.id!==adHocFine.id);
-      await setJSON('evening-'+detail.id, detail, true);
+      await saveEveningDetail(detail);
       closeGenericModal();
       render();
     });
@@ -2594,7 +2672,7 @@
       detail.absentMembersFines = absentMembers.map(m=>({ name: displayName(m), amount: avgRounded }));
       detail.closed = true;
       const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
-      if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:true};
+      if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:true, ...computeEveningSummaryFields(detail)};
 
       // Strafen aller Anwesenden (Mitglieder + Gäste) und Abwesenden zu den offenen Rückständen addieren.
       let arrears = state.financeArrears;
@@ -2677,7 +2755,7 @@
       detail.closed = false;
       detail.skipNotificationEmail = !sendEmails;
       const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
-      if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:false};
+      if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:false, ...computeEveningSummaryFields(detail)};
       await Promise.all([
         setJSON('evening-'+detail.id, detail, true),
         setJSON('evenings-index', state.eveningsIndex, true)
@@ -2708,7 +2786,7 @@
         seat.invalid = true;
         delete seat.invalidAmount; // wird erst beim Abschließen fest eingetragen
       }
-      await setJSON('evening-'+detail.id, detail, true);
+      await saveEveningDetail(detail);
       closeGenericModal();
       render();
     });
@@ -2734,7 +2812,7 @@
         seat.invalid = false;
         delete seat.invalidAmount;
       }
-      await setJSON('evening-'+detail.id, detail, true);
+      await saveEveningDetail(detail);
       closeGenericModal();
       render();
     });
@@ -2857,7 +2935,7 @@
       btn.disabled = true; btn.textContent = 'Wird hinzugefügt…';
       const seat = detail.seating.find(s=>s.seatId===seatId);
       if(seat){ seat.name = name; seat.isGuest = isGuest; seat.addedLater = true; }
-      await setJSON('evening-'+detail.id, detail, true);
+      await saveEveningDetail(detail);
       closeGenericModal();
       render();
     });
@@ -2979,7 +3057,7 @@
       }
       const confirmBtn = document.getElementById('bulk-add-confirm-btn');
       confirmBtn.disabled = true; confirmBtn.textContent = 'Wird gespeichert…';
-      await setJSON('evening-'+detail.id, detail, true);
+      await saveEveningDetail(detail);
       closeGenericModal();
       render();
     });
@@ -4890,7 +4968,7 @@
 
     const id = uid('e');
     const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation };
-    const newIndex = [...state.eveningsIndex, {id, date}];
+    const newIndex = [...state.eveningsIndex, {id, date, ...computeEveningSummaryFields(detail)}];
     await Promise.all([
       setJSON('evening-'+id, detail, true),
       setJSON('evenings-index', newIndex, true)
@@ -5396,6 +5474,7 @@
       state.calendarOccurrenceEdits = calendarOccurrenceEdits;
       state.view = 'main';
       render();
+      backfillEveningSummaries();
       // iOS-Standalone-PWA-Trick: ein winziger echter Scroll zwingt WebKit dazu, die tatsächliche
       // Viewport-/Safe-Area-Größe beim Kaltstart korrekt neu zu berechnen. Body ist jetzt immer
       // minimal höher als der Bildschirm, damit hier wirklich etwas zum Scrollen vorhanden ist.
