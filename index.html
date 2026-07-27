@@ -555,7 +555,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.17';
+  const APP_VERSION = '1.18';
 
   // Public Key für Web Push (VAPID). Das Gegenstück (Private Key) liegt als
   // Firebase Secret PUSH_VAPID_PRIVATE_KEY bei den Cloud Functions.
@@ -704,6 +704,13 @@
   }
 
   async function enablePushNotifications(){
+    // TEMPORÄR DEAKTIVIERT (27.07.2026): Sobald der Service Worker registriert wird,
+    // bricht auf iOS die fixed-position Bottom-Nav beim Scrollen (springt nach oben).
+    // Vermutlich verändert ein aktiver SW, wie iOS die installierte PWA behandelt,
+    // was mit dem body{min-height:calc(100% + 1px)}-Scroll-Nudge-Trick kollidiert.
+    // Reaktivieren: diesen throw entfernen, sobald der Nudge-Trick SW-robust ist.
+    throw new Error('temporarily-disabled');
+
     if(!pushSupported()) throw new Error('unsupported');
     const memberId = getCurrentMemberId();
     if(!memberId) throw new Error('no-member');
@@ -3723,6 +3730,7 @@
         if(errEl){
           if(e.message==='denied') errEl.textContent = 'Berechtigung wurde nicht erteilt.';
           else if(e.message==='no-member') errEl.textContent = 'Kein verknüpftes Mitgliedskonto gefunden.';
+          else if(e.message==='temporarily-disabled') errEl.textContent = 'Benachrichtigungen sind aktuell wegen eines Layout-Problems vorübergehend deaktiviert.';
           else errEl.textContent = 'Das hat leider nicht geklappt. Bitte versuche es erneut.';
         }
       }
