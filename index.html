@@ -276,7 +276,18 @@
   .rsvp-group:last-child{border-bottom:none;}
   .rsvp-group-label{font-weight:700; margin-bottom:4px;}
   .rsvp-names{color:var(--muted); font-size:14px; margin:0;}
-  .cal-event-rsvp-summary{font-size:12px; color:var(--muted); margin-top:4px;}
+  .cal-event-rsvp-summary{font-size:12px; color:var(--muted); margin-top:6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .rsvp-summary-item{display:inline-flex; align-items:center; gap:3px; font-weight:700; color:var(--ink-soft);}
+  .rsvp-icon{width:16px; height:16px; display:block; flex-shrink:0;}
+  .rsvp-icon.accepted circle{fill:#1a7a3c;}
+  .rsvp-icon.tentative circle{fill:#b8860b;}
+  .rsvp-icon.declined circle{fill:var(--wine);}
+  .rsvp-icon.pending circle{fill:#2f6fb0;}
+  .cal-event-row-top{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .cal-event-own-status{display:inline-flex; flex-shrink:0; margin-top:2px;}
+  .cal-event-own-status .rsvp-icon{width:20px; height:20px;}
+  .rsvp-name-row{padding:6px 0; border-bottom:1px dashed var(--line); margin:0; color:var(--ink);}
+  .rsvp-name-row:last-child{border-bottom:none;}
   .finance-total-amount{font-family:var(--font-display); font-size:36px; font-weight:700; color:#fff;}
   .finance-total-label{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:4px;}
   .transaction-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px; cursor:pointer;}
@@ -519,7 +530,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1';
+  const APP_VERSION = '1.2';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1350,14 +1361,27 @@
     const eventsHtml = selectedEvents.length===0
       ? `<p class="empty-state">Keine Termine an diesem Tag.</p>`
       : selectedEvents.map(ev=>{
-        const totalMembers = state.members.length;
-        const responded = state.members.filter(m=> getRsvpStatusFor(ev.seriesId, ev.occurrenceDate, displayName(m))!==null).length;
+        const groups = categorizeRsvps(ev.seriesId, ev.occurrenceDate);
+        const currentName = getCurrentMemberName();
+        const ownStatus = currentName ? getRsvpStatusFor(ev.seriesId, ev.occurrenceDate, currentName) : null;
+        const summaryHtml = state.members.length>0 ? `
+          <div class="cal-event-rsvp-summary">
+            <span>Rückmeldungen:</span>
+            <span class="rsvp-summary-item">${rsvpStatusIcon('accepted')} ${groups.accepted.length}</span>
+            <span class="rsvp-summary-item">${rsvpStatusIcon('tentative')} ${groups.tentative.length}</span>
+            <span class="rsvp-summary-item">${rsvpStatusIcon('declined')} ${groups.declined.length}</span>
+            <span class="rsvp-summary-item">${rsvpStatusIcon(null)} ${groups.pending.length}</span>
+          </div>
+        ` : '';
         return `
         <div class="cal-event-row" data-series-id="${ev.seriesId}" data-occurrence-date="${ev.occurrenceDate}">
-          <div class="cal-event-title">${escapeHtml(ev.title)}</div>
+          <div class="cal-event-row-top">
+            <div class="cal-event-title">${escapeHtml(ev.title)}</div>
+            ${currentName ? `<span class="cal-event-own-status" title="Deine Rückmeldung">${rsvpStatusIcon(ownStatus)}</span>` : ''}
+          </div>
           ${ev.location ? `<div class="cal-event-meta">${escapeHtml(ev.location)}</div>` : ''}
           <div class="cal-event-meta">${formatDateDE(ev.date)}${ev.startTime?` · ${ev.startTime}${ev.endTime?'–'+ev.endTime:''}`:''}</div>
-          ${totalMembers>0 ? `<div class="cal-event-rsvp-summary">${responded} von ${totalMembers} haben geantwortet</div>` : ''}
+          ${summaryHtml}
         </div>
       `;
       }).join('');
@@ -3687,6 +3711,19 @@
     return !!currentName && currentName===baseEvent.createdBy;
   }
 
+  function rsvpStatusIcon(status){
+    if(status==='accepted'){
+      return `<svg viewBox="0 0 24 24" class="rsvp-icon accepted"><circle cx="12" cy="12" r="11"/><path d="M7 12.5l3.2 3.2L17 9" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+    if(status==='tentative'){
+      return `<svg viewBox="0 0 24 24" class="rsvp-icon tentative"><circle cx="12" cy="12" r="11"/><text x="12" y="16.5" text-anchor="middle" font-size="13" font-weight="800" fill="#fff" font-family="sans-serif">?</text></svg>`;
+    }
+    if(status==='declined'){
+      return `<svg viewBox="0 0 24 24" class="rsvp-icon declined"><circle cx="12" cy="12" r="11"/><path d="M8 8l8 8M16 8l-8 8" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>`;
+    }
+    return `<svg viewBox="0 0 24 24" class="rsvp-icon pending"><circle cx="12" cy="12" r="11"/><text x="12" y="16.5" text-anchor="middle" font-size="13" font-weight="800" fill="#fff" font-family="sans-serif">?</text></svg>`;
+  }
+
   function buildRsvpSectionHtml(occurrence){
     const currentName = getCurrentMemberName();
     const currentStatus = currentName ? getRsvpStatusFor(occurrence.seriesId, occurrence.occurrenceDate, currentName) : null;
@@ -3704,7 +3741,7 @@
     const groupSectionHtml = (label, names)=> `
       <div class="rsvp-group">
         <div class="rsvp-group-label">${label} <span class="member-count">(${names.length})</span></div>
-        ${names.length===0 ? '<p class="empty-state">Niemand.</p>' : `<p class="rsvp-names">${names.map(n=>escapeHtml(n)).join(', ')}</p>`}
+        ${names.length===0 ? '<p class="empty-state">Niemand.</p>' : names.map(n=>`<p class="rsvp-name-row">${escapeHtml(n)}</p>`).join('')}
       </div>
     `;
     return `
