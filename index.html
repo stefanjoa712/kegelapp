@@ -543,7 +543,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.9';
+  const APP_VERSION = '2.0';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -680,7 +680,7 @@
 
   // Liefert die Beginn-Daten aller Serien-Vorkommen, die in einem bestimmten Monat beginnen.
   function getRecurrenceStartsInMonth(event, year, month){
-    const occurrences = [];
+    let occurrences = [];
     const daysInMonth = new Date(year, month, 0).getDate();
     const baseDateStr = dateOnly(event.start);
     const [by, bm, bd] = baseDateStr.split('-').map(Number);
@@ -688,9 +688,7 @@
 
     if(event.recurrence==='none' || !event.recurrence){
       if(by===year && bm===month) occurrences.push(baseDateStr);
-      return occurrences;
-    }
-    if(event.recurrence==='weekly' || event.recurrence==='biweekly' || event.recurrence==='every4weeks'){
+    }else if(event.recurrence==='weekly' || event.recurrence==='biweekly' || event.recurrence==='every4weeks'){
       const intervalDays = event.recurrence==='weekly' ? 7 : event.recurrence==='biweekly' ? 14 : 28;
       for(let d=1; d<=daysInMonth; d++){
         const currentUTC = Date.UTC(year, month-1, d);
@@ -698,21 +696,21 @@
         const diffDays = Math.round((currentUTC - baseUTC) / 86400000);
         if(diffDays % intervalDays === 0) occurrences.push(isoDate(year,month,d));
       }
-      return occurrences;
-    }
-    if(event.recurrence==='monthly'){
+    }else if(event.recurrence==='monthly'){
       if(year>by || (year===by && month>=bm)){
         const targetDay = Math.min(bd, daysInMonth);
         occurrences.push(isoDate(year,month,targetDay));
       }
-      return occurrences;
-    }
-    if(event.recurrence==='yearly'){
+    }else if(event.recurrence==='yearly'){
       if(month===bm && year>=by){
         const targetDay = Math.min(bd, daysInMonth);
         occurrences.push(isoDate(year,month,targetDay));
       }
-      return occurrences;
+    }
+
+    // Wiederholung endet am gepflegten Enddatum (falls gesetzt) - spätere Vorkommen ausschließen.
+    if(event.recurrenceEndDate){
+      occurrences = occurrences.filter(d=> d<=event.recurrenceEndDate);
     }
     return occurrences;
   }
@@ -1469,13 +1467,14 @@
   }
 
   function viewEventManagement(){
-    const sorted = state.calendarEvents.slice().sort((a,b)=> a.start.localeCompare(b.start));
+    const series = state.calendarEvents.filter(ev=> ev.recurrence && ev.recurrence!=='none');
+    const sorted = series.slice().sort((a,b)=> a.start.localeCompare(b.start));
     const listHtml = sorted.length===0
       ? `<p class="empty-state">Noch keine Terminserien angelegt.</p>`
       : sorted.map(eventManagementRowHtml).join('');
     return `
       <div class="card">
-        <h2 class="section-title">Terminserien <span class="member-count">(${state.calendarEvents.length})</span></h2>
+        <h2 class="section-title">Terminserien <span class="member-count">(${series.length})</span></h2>
         ${listHtml}
       </div>
     `;
@@ -2939,7 +2938,8 @@
       if(!state.calendarEditingOccurrence) title = 'Termin hinzufügen';
       else{
         const baseEv = state.calendarEvents.find(e=>e.id===state.calendarEditingOccurrence.seriesId);
-        title = isEventCreator(baseEv) ? 'Termin bearbeiten' : 'Termindetails';
+        if(!isEventCreator(baseEv)) title = 'Termindetails';
+        else title = state.calendarEditingOccurrence.isSeriesEdit ? 'Terminserie bearbeiten' : 'Termin bearbeiten';
       }
     }
     else if(state.view==='arrearsDetail') title = state.currentArrearsName || '';
@@ -4063,6 +4063,8 @@
         <option value="monthly"${(isEdit && occurrence.recurrence==='monthly')?' selected':''}>Monatlich</option>
         <option value="yearly"${(isEdit && occurrence.recurrence==='yearly')?' selected':''}>Jährlich</option>
       </select>
+      <label for="cal-ev-recurrence-end">Enddatum der Wiederholung (optional)</label>
+      <input type="date" id="cal-ev-recurrence-end" value="${(isEdit && baseEvent && baseEvent.recurrenceEndDate)?baseEvent.recurrenceEndDate:''}">
     `;
     const defaultStart = isEdit ? occurrence.start : combineDatetime(state.calendarSelectedDate, '19:00');
     const defaultEnd = isEdit ? occurrence.end : combineDatetime(state.calendarSelectedDate, '21:00');
@@ -4081,7 +4083,7 @@
         <p class="form-error" id="cal-ev-error"></p>
         <button type="button" class="btn-primary" id="save-cal-ev-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
       </div>
-      ${isEdit ? buildRsvpSectionHtml(occurrence) : ''}
+      ${(isEdit && !occurrence.isSeriesEdit) ? buildRsvpSectionHtml(occurrence) : ''}
     `;
   }
 
@@ -4153,36 +4155,66 @@
       const end = document.getElementById('cal-ev-end').value;
       const recurrenceEl = document.getElementById('cal-ev-recurrence');
       const recurrence = recurrenceEl ? recurrenceEl.value : (isEdit ? occurrence.recurrence : 'none');
+      const recurrenceEndEl = document.getElementById('cal-ev-recurrence-end');
+      const recurrenceEndDate = recurrenceEndEl ? recurrenceEndEl.value : '';
 
       if(!title){ errEl.textContent='Bitte einen Titel angeben.'; return; }
       if(!start){ errEl.textContent='Bitte einen Beginn angeben.'; return; }
       if(!end){ errEl.textContent='Bitte ein Ende angeben.'; return; }
       if(end<start){ errEl.textContent='Das Ende darf nicht vor dem Beginn liegen.'; return; }
+      if(recurrenceEndDate && recurrenceEndDate<dateOnly(start)){ errEl.textContent='Das Enddatum der Wiederholung darf nicht vor dem Beginn liegen.'; return; }
 
-      saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
-
-      const startDateOnly = dateOnly(start);
-      if(!isEdit){
-        const newId = uid('cal');
-        const creatorName = getCurrentMemberName();
-        state.calendarEvents.push({id:newId, title, location, start, end, recurrence, createdBy: creatorName});
-        await setJSON('calendar-events', state.calendarEvents, true);
-        if(creatorName){
-          await setRsvpStatus(newId, startDateOnly, creatorName, 'accepted');
+      const performSave = async ()=>{
+        saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+        const startDateOnly = dateOnly(start);
+        if(!isEdit){
+          const newId = uid('cal');
+          const creatorName = getCurrentMemberName();
+          state.calendarEvents.push({id:newId, title, location, start, end, recurrence, recurrenceEndDate: recurrenceEndDate||undefined, createdBy: creatorName});
+          await setJSON('calendar-events', state.calendarEvents, true);
+          if(creatorName){
+            await setRsvpStatus(newId, startDateOnly, creatorName, 'accepted');
+          }
+        }else if(!isSeriesOccurrence){
+          const base = state.calendarEvents.find(e=>e.id===occurrence.seriesId);
+          if(base){
+            base.title=title; base.location=location; base.start=start; base.end=end; base.recurrence=recurrence;
+            if(recurrenceEndDate) base.recurrenceEndDate = recurrenceEndDate; else delete base.recurrenceEndDate;
+          }
+          await setJSON('calendar-events', state.calendarEvents, true);
+          if(occurrence.isSeriesEdit){
+            // Serie wurde bearbeitet - alle Rückmeldungen zu dieser Serie zurücksetzen.
+            state.calendarRsvps = state.calendarRsvps.filter(r=>r.seriesId!==occurrence.seriesId);
+            await setJSON('calendar-rsvps', state.calendarRsvps, true);
+          }
+        }else{
+          let edit = findOccurrenceEdit(occurrence.seriesId, occurrence.occurrenceDate);
+          if(!edit){ edit = {id:uid('caledit'), seriesId:occurrence.seriesId, occurrenceDate:occurrence.occurrenceDate}; state.calendarOccurrenceEdits.push(edit); }
+          edit.title=title; edit.location=location; edit.start=start; edit.end=end;
+          delete edit.deleted;
+          await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
         }
-      }else if(!isSeriesOccurrence){
-        const base = state.calendarEvents.find(e=>e.id===occurrence.seriesId);
-        if(base){ base.title=title; base.location=location; base.start=start; base.end=end; base.recurrence=recurrence; }
-        await setJSON('calendar-events', state.calendarEvents, true);
+        state.calendarSelectedDate = startDateOnly;
+        goBackFromEventDetail();
+      };
+
+      if(occurrence && occurrence.isSeriesEdit){
+        showModal(`
+          <h3>Terminserie speichern</h3>
+          <p>Diese Änderung betrifft <strong>alle Termine dieser Serie</strong>. Außerdem werden dabei <strong>alle bisherigen Rückmeldungen</strong> zu dieser Serie zurückgesetzt. Fortfahren?</p>
+          <div class="confirm-row-buttons">
+            <button type="button" class="btn-primary" id="confirm-series-save-yes">Ja, speichern</button>
+            <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+          </div>
+        `);
+        document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+        document.getElementById('confirm-series-save-yes').addEventListener('click', async ()=>{
+          closeGenericModal();
+          await performSave();
+        });
       }else{
-        let edit = findOccurrenceEdit(occurrence.seriesId, occurrence.occurrenceDate);
-        if(!edit){ edit = {id:uid('caledit'), seriesId:occurrence.seriesId, occurrenceDate:occurrence.occurrenceDate}; state.calendarOccurrenceEdits.push(edit); }
-        edit.title=title; edit.location=location; edit.start=start; edit.end=end;
-        delete edit.deleted;
-        await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
+        await performSave();
       }
-      state.calendarSelectedDate = startDateOnly;
-      goBackFromEventDetail();
     });
   }
 
