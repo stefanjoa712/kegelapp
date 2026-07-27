@@ -348,6 +348,8 @@
 
   .member-row{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px dashed var(--line);}
   .member-row-full{padding:9px 0; border-bottom:1px dashed var(--line);}
+  .member-row-clickable{cursor:pointer;}
+  .member-row-clickable:active{background:var(--bg);}
   .member-row-full:last-child{border-bottom:none;}
   .member-row-full .member-row{border-bottom:none; padding:0 0 4px;}
   .member-account-row{display:flex; align-items:center; flex-wrap:wrap; gap:8px; row-gap:4px;}
@@ -548,7 +550,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.11';
+  const APP_VERSION = '1.12';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -587,6 +589,8 @@
     calendarViewMonth: new Date().getMonth()+1,
     calendarSelectedDate: todayISO(),
     calendarEditingOccurrence: null,
+    currentMemberId: null,
+    currentMemberStats: {},
     eventDetailOrigin: 'calendar',
     currentEveningDetail:null,
     confirmDeleteEveningId:null,
@@ -920,6 +924,40 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToSettings);
     }
   }
+
+  // Ermittelt für ein Mitglied, an wie vielen Kegelabenden pro Jahr es teilgenommen hat
+  // (im Verhältnis zu allen Abenden in diesem Jahr).
+  async function computeMemberAttendanceStats(memberName){
+    const stats = {};
+    const details = await Promise.all(
+      state.eveningsIndex.map(e => getJSONOrThrow('evening-'+e.id, null).catch(()=>null))
+    );
+    details.forEach(detail=>{
+      if(!detail || !detail.date) return;
+      const year = detail.date.slice(0,4);
+      if(!stats[year]) stats[year] = {attended:0, total:0};
+      stats[year].total++;
+      if(detail.seating && detail.seating.some(s=>s.name===memberName)) stats[year].attended++;
+    });
+    return stats;
+  }
+
+  async function goToMemberDetail(member){
+    state.currentMemberId = member ? member.id : null;
+    state.currentMemberStats = {};
+    state.view = 'memberDetail';
+    if(!member){ render(); return; }
+    renderLoading('Statistik wird geladen…');
+    try{
+      state.eveningsIndex = await getJSONOrThrow('evenings-index', state.eveningsIndex);
+      state.currentMemberStats = await computeMemberAttendanceStats(displayName(member));
+    }catch(e){
+      state.currentMemberStats = {};
+    }
+    state.view = 'memberDetail';
+    render();
+  }
+
   function goToSettingsMenu(){
     state.view = 'settingsMenu';
     render();
@@ -1037,6 +1075,7 @@
 
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
+    else if(state.view==='memberDetail') goToSettings();
     else if(state.view==='eventDetail') goBackFromEventDetail();
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
@@ -1683,6 +1722,7 @@
     if(state.view==='detail' && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
     if(state.view==='arrearsDetail') return 'arrearsDetail:'+encodeURIComponent(state.currentArrearsName);
     if(state.view==='transactionDetail') return 'transactionDetail:'+(state.currentTransactionId||'new');
+    if(state.view==='memberDetail') return 'memberDetail:'+(state.currentMemberId||'new');
     if(state.view==='eventDetail') return 'eventDetail:'+(state.calendarEditingOccurrence ? state.calendarEditingOccurrence.seriesId+':'+state.calendarEditingOccurrence.occurrenceDate : 'new');
     return state.view;
   }
@@ -1699,6 +1739,7 @@
     if(sig.startsWith('personFine:')) return '#strafe-person';
     if(sig.startsWith('arrearsDetail:')) return '#rueckstand-person';
     if(sig.startsWith('transactionDetail:')) return '#umsatz';
+    if(sig.startsWith('memberDetail:')) return '#mitglied';
     if(sig.startsWith('eventDetail:')) return '#termin';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
@@ -1711,6 +1752,7 @@
     if(state.view==='main') body = viewMain();
     else if(state.view==='settingsMenu') body = viewSettingsMenu();
     else if(state.view==='settings') body = viewSettings();
+    else if(state.view==='memberDetail') body = viewMemberDetail();
     else if(state.view==='finesManagement') body = viewFinesManagement();
     else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='financeManagement') body = viewFinanceManagement();
@@ -1736,7 +1778,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -1833,6 +1875,29 @@
         state.currentTransactionId = txId==='new' ? null : txId;
         state.view = 'transactionDetail';
         render();
+      }else if(sig.startsWith('memberDetail:')){
+        const memberId = sig.slice('memberDetail:'.length);
+        if(state.members.length===0){
+          try{ state.members = await getJSONOrThrow('members', []); }catch(e){}
+        }
+        if(memberId==='new'){
+          state.currentMemberId = null;
+          state.currentMemberStats = {};
+          state.view = 'memberDetail';
+          render();
+        }else{
+          state.currentMemberId = memberId;
+          const m = state.members.find(x=>x.id===memberId);
+          state.view = 'memberDetail';
+          render();
+          if(m){
+            try{
+              state.eveningsIndex = await getJSONOrThrow('evenings-index', state.eveningsIndex);
+              state.currentMemberStats = await computeMemberAttendanceStats(displayName(m));
+              render();
+            }catch(e){}
+          }
+        }
       }else if(sig.startsWith('eventDetail:')){
         const rest = sig.slice('eventDetail:'.length);
         if(state.calendarEvents.length===0 && state.calendarOccurrenceEdits.length===0){
@@ -1991,28 +2056,96 @@
   }
   function memberRowHtml(m){
     const nicknameHtml = m.nickname ? ` <span class="nickname-tag">– ${escapeHtml(m.nickname)}</span>` : '';
-    let statusHtml;
+    let statusText;
     if(!m.email){
-      statusHtml = `<span class="member-account-status muted">Keine E-Mail hinterlegt</span>`;
+      statusText = 'Keine E-Mail hinterlegt';
     }else if(m.hasAccount){
-      const lastLoginText = m.lastLogin ? `zuletzt eingeloggt ${formatDateTimeDE(m.lastLogin)}` : 'noch nie eingeloggt';
-      statusHtml = `
-        <span class="member-account-status linked">Account verknüpft · ${lastLoginText}</span>
-        <button type="button" class="unlink-account-btn" data-id="${m.id}">Verknüpfung aufheben</button>
-      `;
+      statusText = m.lastLogin ? `Account verknüpft · zuletzt eingeloggt ${formatDateTimeDE(m.lastLogin)}` : 'Account verknüpft · noch nie eingeloggt';
     }else{
-      statusHtml = `<button type="button" class="invite-member-btn" data-id="${m.id}">Einladen</button>`;
+      statusText = 'Kein Account verknüpft';
     }
-    return `<div class="member-row-full" data-id="${m.id}">
+    return `<div class="member-row-full member-row-clickable" data-id="${m.id}">
       <div class="member-row">
         <span>${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)}${nicknameHtml}</span>
-        <span class="row-actions">
-          <button type="button" class="icon-btn edit-member-btn" data-id="${m.id}" aria-label="Bearbeiten">✎</button>
-          <button type="button" class="icon-btn delete-member-btn" data-id="${m.id}" aria-label="Löschen">✕</button>
-        </span>
+        <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </div>
-      <div class="member-account-row">${statusHtml}</div>
+      <div class="member-account-row"><span class="member-account-status muted">${statusText}</span></div>
     </div>`;
+  }
+
+  function viewMemberDetail(){
+    const member = state.members.find(m=>m.id===state.currentMemberId);
+    const isEdit = !!member;
+
+    let accountSectionHtml = '';
+    if(isEdit){
+      if(!member.email){
+        accountSectionHtml = `
+          <div class="card">
+            <h2 class="section-title">Account</h2>
+            <p class="empty-state">Keine E-Mail hinterlegt – für einen Account-Zugang zuerst eine E-Mail-Adresse eintragen und speichern.</p>
+          </div>
+        `;
+      }else if(member.hasAccount){
+        const lastLoginText = member.lastLogin ? `zuletzt eingeloggt ${formatDateTimeDE(member.lastLogin)}` : 'noch nie eingeloggt';
+        accountSectionHtml = `
+          <div class="card">
+            <h2 class="section-title">Account</h2>
+            <p class="cal-event-meta">Account verknüpft · ${lastLoginText}</p>
+            <button type="button" class="btn-secondary" id="member-detail-unlink-btn" style="width:100%; margin-top:10px;">Verknüpfung aufheben</button>
+          </div>
+        `;
+      }else{
+        accountSectionHtml = `
+          <div class="card">
+            <h2 class="section-title">Account</h2>
+            <p class="cal-event-meta">Noch kein Account verknüpft.</p>
+            <button type="button" class="btn-primary" id="member-detail-invite-btn" style="width:100%; margin-top:10px;">Einladen</button>
+          </div>
+        `;
+      }
+    }
+
+    let statsSectionHtml = '';
+    if(isEdit){
+      const years = Object.keys(state.currentMemberStats).sort((a,b)=>b.localeCompare(a));
+      const rowsHtml = years.length===0
+        ? `<p class="empty-state">Noch keine Kegelabende erfasst.</p>`
+        : years.map(y=>{
+            const s = state.currentMemberStats[y];
+            return `
+              <div class="rsvp-group">
+                <div class="rsvp-group-label">${y}</div>
+                <p class="cal-event-meta">${s.attended} von ${s.total} Abenden</p>
+              </div>
+            `;
+          }).join('');
+      statsSectionHtml = `
+        <div class="card">
+          <h2 class="section-title">Anwesenheit pro Jahr</h2>
+          ${rowsHtml}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="card">
+        <label for="member-first-name">Vorname</label>
+        <input type="text" id="member-first-name" placeholder="Vorname" value="${isEdit?escapeHtml(member.firstName):''}">
+        <label for="member-last-name">Nachname</label>
+        <input type="text" id="member-last-name" placeholder="Nachname" value="${isEdit?escapeHtml(member.lastName):''}">
+        <label for="member-nickname">Spitzname (optional)</label>
+        <input type="text" id="member-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt" value="${isEdit?escapeHtml(member.nickname||''):''}">
+        <label for="member-email">E-Mail (optional)</label>
+        <input type="email" id="member-email" placeholder="name@beispiel.de" value="${isEdit?escapeHtml(member.email||''):''}">
+        <label for="member-birthday">Geburtstag (optional)</label>
+        <input type="date" id="member-birthday" value="${isEdit?(member.birthday||''):''}">
+        <p class="form-error" id="member-detail-error"></p>
+        <button type="button" class="btn-primary" id="save-member-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+      </div>
+      ${accountSectionHtml}
+      ${statsSectionHtml}
+    `;
   }
 
   function viewSettings(){
@@ -2947,6 +3080,7 @@
     let title = '';
     if(state.view==='settingsMenu') title = 'Einstellungen';
     else if(state.view==='settings') title = 'Mitgliederverwaltung';
+    else if(state.view==='memberDetail') title = state.currentMemberId ? 'Mitglied bearbeiten' : 'Neues Mitglied';
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
@@ -3100,6 +3234,17 @@
       </div>
     ` : '';
 
+    const memberOverflowHtml = (state.view==='memberDetail' && state.currentMemberId) ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-member-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-member-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-member-btn">Mitglied löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const tabsHtml = state.view==='detail' ? `
       <div class="tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
@@ -3116,7 +3261,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -3173,6 +3318,7 @@
     if(state.view==='main') attachMainListeners();
     else if(state.view==='settingsMenu') attachSettingsMenuListeners();
     else if(state.view==='settings') attachSettingsListeners();
+    else if(state.view==='memberDetail') attachMemberDetailListeners();
     else if(state.view==='finesManagement') attachFinesManagementListeners();
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
@@ -3273,31 +3419,61 @@
   }
 
   function attachSettingsListeners(){
-    document.querySelectorAll('.edit-member-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const m = state.members.find(x=>x.id===b.dataset.id);
-        if(m) showMemberFormModal(m);
-      });
-    });
-    document.querySelectorAll('.delete-member-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const m = state.members.find(x=>x.id===b.dataset.id);
-        if(m) showDeleteMemberModal(m);
+    document.querySelectorAll('.member-row-clickable').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const m = state.members.find(x=>x.id===row.dataset.id);
+        goToMemberDetail(m || null);
       });
     });
     const openAddMemberBtn = document.getElementById('header-add-member-btn');
-    if(openAddMemberBtn) openAddMemberBtn.addEventListener('click', ()=>showMemberFormModal());
-    document.querySelectorAll('.invite-member-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const m = state.members.find(x=>x.id===b.dataset.id);
-        if(m) showInviteMemberModal(m);
+    if(openAddMemberBtn) openAddMemberBtn.addEventListener('click', ()=>goToMemberDetail(null));
+  }
+
+  function attachMemberDetailListeners(){
+    const member = state.members.find(m=>m.id===state.currentMemberId);
+
+    const overflowBtn = document.getElementById('header-member-overflow-btn');
+    const overflowMenu = document.getElementById('header-member-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
       });
+    }
+    const deleteBtn = document.getElementById('header-delete-member-btn');
+    if(deleteBtn) deleteBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      if(member) showDeleteMemberModal(member);
     });
-    document.querySelectorAll('.unlink-account-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const m = state.members.find(x=>x.id===b.dataset.id);
-        if(m) showUnlinkAccountModal(m);
-      });
+
+    const inviteBtn = document.getElementById('member-detail-invite-btn');
+    if(inviteBtn) inviteBtn.addEventListener('click', ()=>{ if(member) showInviteMemberModal(member); });
+    const unlinkBtn = document.getElementById('member-detail-unlink-btn');
+    if(unlinkBtn) unlinkBtn.addEventListener('click', ()=>{ if(member) showUnlinkAccountModal(member); });
+
+    // Kein automatischer Fokus auf das Vorname-Feld - öffnet sonst sofort die Bildschirmtastatur.
+    const saveBtn = document.getElementById('save-member-detail-btn');
+    if(!saveBtn) return;
+    saveBtn.addEventListener('click', async ()=>{
+      const fn = document.getElementById('member-first-name').value.trim();
+      const ln = document.getElementById('member-last-name').value.trim();
+      const nick = document.getElementById('member-nickname').value.trim();
+      const email = document.getElementById('member-email').value.trim();
+      const birthday = document.getElementById('member-birthday').value;
+      const errEl = document.getElementById('member-detail-error');
+      if(!fn || !ln){ errEl.textContent='Bitte Vor- und Nachnamen angeben.'; return; }
+      if(email && !/^\S+@\S+\.\S+$/.test(email)){ errEl.textContent='Bitte eine gültige E-Mail-Adresse angeben.'; return; }
+      saveBtn.disabled = true; saveBtn.textContent = member ? 'Speichert…' : 'Wird hinzugefügt…';
+      if(member){
+        member.firstName=fn; member.lastName=ln; member.nickname=nick; member.email=email;
+        if(birthday) member.birthday=birthday; else delete member.birthday;
+      }else{
+        const newMember = {id:uid('m'), firstName:fn, lastName:ln, nickname:nick, email};
+        if(birthday) newMember.birthday = birthday;
+        state.members.push(newMember);
+      }
+      await setJSON('members', state.members, true);
+      goToSettings();
     });
   }
 
@@ -3570,7 +3746,7 @@
       state.members = state.members.filter(m=>m.id!==member.id);
       await setJSON('members', state.members, true);
       closeGenericModal();
-      render();
+      goToSettings();
     });
   }
 
@@ -3631,48 +3807,6 @@
         btn.disabled = false; btn.textContent = 'Einladung senden';
         if(errEl) errEl.textContent = 'Einladung konnte nicht gesendet werden. Bitte später erneut versuchen.';
       }
-    });
-  }
-
-  function showMemberFormModal(existingMember){
-    const isEdit = !!existingMember;
-    showModal(`
-      <h3>${isEdit ? 'Mitglied bearbeiten' : 'Neues Mitglied'}</h3>
-      <label for="new-first-name">Vorname</label>
-      <input type="text" id="new-first-name" placeholder="Vorname" value="${isEdit?escapeHtml(existingMember.firstName):''}">
-      <label for="new-last-name">Nachname</label>
-      <input type="text" id="new-last-name" placeholder="Nachname" value="${isEdit?escapeHtml(existingMember.lastName):''}">
-      <label for="new-nickname">Spitzname (optional)</label>
-      <input type="text" id="new-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt" value="${isEdit?escapeHtml(existingMember.nickname||''):''}">
-      <label for="new-email">E-Mail (optional)</label>
-      <input type="email" id="new-email" placeholder="name@beispiel.de" value="${isEdit?escapeHtml(existingMember.email||''):''}">
-      <p class="form-error" id="member-form-error"></p>
-      <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="add-member-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
-        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
-      </div>
-    `);
-    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    document.getElementById('new-first-name').focus();
-    document.getElementById('add-member-btn').addEventListener('click', async ()=>{
-      const fn = document.getElementById('new-first-name').value.trim();
-      const ln = document.getElementById('new-last-name').value.trim();
-      const nick = document.getElementById('new-nickname').value.trim();
-      const email = document.getElementById('new-email').value.trim();
-      const errEl = document.getElementById('member-form-error');
-      if(!fn || !ln){ if(errEl) errEl.textContent='Bitte Vor- und Nachnamen angeben.'; return; }
-      if(email && !/^\S+@\S+\.\S+$/.test(email)){ if(errEl) errEl.textContent='Bitte eine gültige E-Mail-Adresse angeben.'; return; }
-      const submitBtn = document.getElementById('add-member-btn');
-      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
-      if(isEdit){
-        const m = state.members.find(x=>x.id===existingMember.id);
-        if(m){ m.firstName=fn; m.lastName=ln; m.nickname=nick; m.email=email; }
-      }else{
-        state.members.push({id:uid('m'), firstName:fn, lastName:ln, nickname:nick, email});
-      }
-      await setJSON('members', state.members, true);
-      closeGenericModal();
-      render();
     });
   }
 
