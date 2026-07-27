@@ -43,7 +43,7 @@
     margin:0; height:100%; background:var(--bg); color:var(--ink); font-family:var(--font-body);
     line-height:1.5; touch-action:manipulation; overflow:hidden;
   }
-  #app{height:100svh; display:flex; flex-direction:column;}
+  #app{height:100vh; height:100svh; min-height:-webkit-fill-available; display:flex; flex-direction:column;}
   button{font:inherit;}
   a{color:inherit;}
   *:focus-visible{outline:2px solid var(--felt); outline-offset:2px;}
@@ -564,7 +564,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.20';
+  const APP_VERSION = '1.21';
 
   // Public Key für Web Push (VAPID). Das Gegenstück (Private Key) liegt als
   // Firebase Secret PUSH_VAPID_PRIVATE_KEY bei den Cloud Functions.
