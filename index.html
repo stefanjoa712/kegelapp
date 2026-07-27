@@ -543,7 +543,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.8';
+  const APP_VERSION = '1.9';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -1008,9 +1008,33 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToCalendar);
     }
   }
+  async function goToEventManagement(){
+    state.view = 'eventManagement';
+    renderLoading('Terminverwaltung wird geladen…');
+    try{
+      const [events, edits, members] = await Promise.all([
+        getJSONOrThrow('calendar-events', []),
+        getJSONOrThrow('calendar-occurrence-edits', []),
+        getJSONOrThrow('members', state.members)
+      ]);
+      state.calendarEvents = events;
+      state.calendarOccurrenceEdits = edits;
+      state.members = members;
+      state.view = 'eventManagement';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToEventManagement);
+    }
+  }
+  function goBackFromEventDetail(){
+    if(state.eventDetailOrigin==='main') goToMain();
+    else if(state.eventDetailOrigin==='eventManagement') goToEventManagement();
+    else goToCalendar();
+  }
+
   function goBackFromHeader(){
-    if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement') goToSettingsMenu();
-    else if(state.view==='eventDetail'){ state.eventDetailOrigin==='main' ? goToMain() : goToCalendar(); }
+    if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
+    else if(state.view==='eventDetail') goBackFromEventDetail();
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
   }
@@ -1081,6 +1105,20 @@
               </svg>
             </span>
             <span class="settings-menu-item-label">Finanzverwaltung</span>
+            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
+          <button type="button" class="settings-menu-item" id="settings-menu-termine-btn">
+            <span class="settings-menu-item-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="17" rx="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="7" y1="2" x2="7" y2="6"/>
+                <line x1="17" y1="2" x2="17" y2="6"/>
+              </svg>
+            </span>
+            <span class="settings-menu-item-label">Terminverwaltung</span>
             <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 6l6 6-6 6"/>
             </svg>
@@ -1404,6 +1442,54 @@
   const MONTH_NAMES_DE_CAL = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
   const WEEKDAY_LABELS_DE = ['MO','DI','MI','DO','FR','SA','SO'];
 
+  const RECURRENCE_LABELS_DE = { none:'Einmalig', weekly:'Wöchentlich', biweekly:'Zweiwöchentlich', every4weeks:'Vierwöchentlich', monthly:'Monatlich', yearly:'Jährlich' };
+
+  // Baut ein Vorkommen-Objekt direkt aus den Rohdaten der Serie (ohne Ausnahmen-Anwendung) -
+  // für die Terminverwaltung, wo immer die Basis-Serie selbst bearbeitet werden soll.
+  function buildSeriesEditOccurrence(ev){
+    return {
+      seriesId: ev.id, occurrenceDate: dateOnly(ev.start), isException: false,
+      title: ev.title, location: ev.location, start: ev.start, end: ev.end,
+      recurrence: ev.recurrence, isSeriesEdit: true
+    };
+  }
+
+  function eventManagementRowHtml(ev){
+    return `<div class="member-row-full" data-id="${ev.id}">
+      <div class="member-row">
+        <span class="fine-row-info">
+          <span class="fine-row-name">${escapeHtml(ev.title)}</span>
+          <span class="transaction-meta">${RECURRENCE_LABELS_DE[ev.recurrence]||'Einmalig'} · ab ${formatDateDE(dateOnly(ev.start))}</span>
+        </span>
+        <span class="row-actions">
+          <button type="button" class="icon-btn edit-series-btn" data-id="${ev.id}" aria-label="Bearbeiten">✎</button>
+        </span>
+      </div>
+    </div>`;
+  }
+
+  function viewEventManagement(){
+    const sorted = state.calendarEvents.slice().sort((a,b)=> a.start.localeCompare(b.start));
+    const listHtml = sorted.length===0
+      ? `<p class="empty-state">Noch keine Terminserien angelegt.</p>`
+      : sorted.map(eventManagementRowHtml).join('');
+    return `
+      <div class="card">
+        <h2 class="section-title">Terminserien <span class="member-count">(${state.calendarEvents.length})</span></h2>
+        ${listHtml}
+      </div>
+    `;
+  }
+
+  function attachEventManagementListeners(){
+    document.querySelectorAll('.edit-series-btn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const ev = state.calendarEvents.find(x=>x.id===b.dataset.id);
+        if(ev) goToEventDetail(buildSeriesEditOccurrence(ev), 'eventManagement');
+      });
+    });
+  }
+
   function viewCalendar(){
     const year = state.calendarViewYear;
     const month = state.calendarViewMonth;
@@ -1602,6 +1688,7 @@
     if(sig==='finesManagement') return '#strafen';
     if(sig==='gamesManagement') return '#spiele';
     if(sig==='financeManagement') return '#finanzen-verwaltung';
+    if(sig==='eventManagement') return '#terminverwaltung';
     if(sig==='finance') return '#finanzen';
     if(sig==='calendar') return '#kalender';
     if(sig==='new') return '#neuer-abend';
@@ -1625,6 +1712,7 @@
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='finance') body = viewFinance();
     else if(state.view==='calendar') body = viewCalendar();
+    else if(state.view==='eventManagement') body = viewEventManagement();
     else if(state.view==='eventDetail') body = viewEventDetail();
     else if(state.view==='arrearsDetail') body = viewArrearsDetail();
     else if(state.view==='transactionDetail') body = viewTransactionDetail();
@@ -1667,6 +1755,8 @@
         await goToGamesManagement();
       }else if(sig==='financeManagement'){
         await goToFinanceManagement();
+      }else if(sig==='eventManagement'){
+        await goToEventManagement();
       }else if(sig==='finance'){
         await goToFinance();
       }else if(sig==='new'){
@@ -2844,6 +2934,7 @@
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='finance') title = 'Finanzen';
     else if(state.view==='calendar') title = 'Kalender';
+    else if(state.view==='eventManagement') title = 'Terminverwaltung';
     else if(state.view==='eventDetail'){
       if(!state.calendarEditingOccurrence) title = 'Termin hinzufügen';
       else{
@@ -2898,19 +2989,22 @@
     ` : '';
 
     const calTodayBtnHtml = state.view==='calendar' ? `
-      <button type="button" class="header-today-btn" id="header-cal-today-btn" aria-label="Heute">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9"/>
-          <circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>
-        </svg>
-      </button>
-      <button type="button" class="header-today-btn" id="header-cal-next-event-btn" aria-label="Zum nächsten Termin">
+      <button type="button" class="header-today-btn" id="header-cal-today-btn" aria-label="Heute" title="Heute">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="4.5" width="18" height="16" rx="2"/>
           <line x1="3" y1="9.5" x2="21" y2="9.5"/>
           <line x1="7.5" y1="2.5" x2="7.5" y2="6.5"/>
           <line x1="16.5" y1="2.5" x2="16.5" y2="6.5"/>
           <path d="M9.5 14l2.2 2.2L15.5 12" stroke-width="2.2"/>
+        </svg>
+      </button>
+      <button type="button" class="header-today-btn" id="header-cal-next-event-btn" aria-label="Zum nächsten Termin" title="Zum nächsten Termin">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4.5" width="18" height="16" rx="2"/>
+          <line x1="3" y1="9.5" x2="21" y2="9.5"/>
+          <line x1="7.5" y1="2.5" x2="7.5" y2="6.5"/>
+          <line x1="16.5" y1="2.5" x2="16.5" y2="6.5"/>
+          <path d="M8.5 14h6.5M12.5 11l3 3-3 3" stroke-width="2.2"/>
         </svg>
       </button>
     ` : '';
@@ -3065,6 +3159,7 @@
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
     else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='calendar') attachCalendarListeners();
+    else if(state.view==='eventManagement') attachEventManagementListeners();
     else if(state.view==='eventDetail') attachEventDetailListeners();
     else if(state.view==='arrearsDetail') attachArrearsDetailListeners();
     else if(state.view==='transactionDetail') attachTransactionDetailListeners();
@@ -3082,6 +3177,8 @@
     if(spieleBtn) spieleBtn.addEventListener('click', goToGamesManagement);
     const finanzenBtn = document.getElementById('settings-menu-finanzen-btn');
     if(finanzenBtn) finanzenBtn.addEventListener('click', goToFinanceManagement);
+    const termineBtn = document.getElementById('settings-menu-termine-btn');
+    if(termineBtn) termineBtn.addEventListener('click', goToEventManagement);
     const logoutBtn = document.getElementById('settings-menu-logout-btn');
     if(logoutBtn) logoutBtn.addEventListener('click', logout);
   }
@@ -3941,7 +4038,7 @@
     const isEdit = !!occurrence;
     const baseEvent = isEdit ? state.calendarEvents.find(e=>e.id===occurrence.seriesId) : null;
     const canEdit = !isEdit || isEventCreator(baseEvent);
-    const isSeriesOccurrence = isEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
+    const isSeriesOccurrence = isEdit && !occurrence.isSeriesEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
 
     if(isEdit && !canEdit){
       // Nur-Lese-Ansicht für Nicht-Ersteller: keine Bearbeitung, aber Rückmeldung möglich.
@@ -4012,14 +4109,14 @@
         await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
       }
       closeGenericModal();
-      state.eventDetailOrigin==='main' ? goToMain() : goToCalendar();
+      goBackFromEventDetail();
     });
   }
 
   function attachEventDetailListeners(){
     const occurrence = state.calendarEditingOccurrence;
     const isEdit = !!occurrence;
-    const isSeriesOccurrence = isEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
+    const isSeriesOccurrence = isEdit && !occurrence.isSeriesEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
 
     document.querySelectorAll('.rsvp-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
@@ -4085,7 +4182,7 @@
         await setJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits, true);
       }
       state.calendarSelectedDate = startDateOnly;
-      state.eventDetailOrigin==='main' ? goToMain() : goToCalendar();
+      goBackFromEventDetail();
     });
   }
 
