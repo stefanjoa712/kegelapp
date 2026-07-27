@@ -239,6 +239,8 @@
   .next-event-title{font-family:var(--font-display); font-size:26px; font-weight:700; color:#fff; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;}
   .next-event-date{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:3px;}
   .history-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px;}
+  .history-row-clickable{cursor:pointer;}
+  .history-row-clickable:active{background:var(--bg);}
   .history-row:last-child{border-bottom:none;}
   .history-info{display:flex; flex-direction:column; min-width:0;}
   .history-note{font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
@@ -287,7 +289,9 @@
   .rsvp-btn.active.declined{background:var(--wine); border-color:var(--wine); color:#fff;}
   .rsvp-group{padding:10px 0; border-bottom:1px dashed var(--line);}
   .rsvp-group:last-child{border-bottom:none;}
-  .rsvp-group-label{font-weight:700; margin-bottom:4px;}
+  .rsvp-group-label{font-weight:700; margin-bottom:4px; display:flex; align-items:center; gap:7px;}
+  .rsvp-group-icon{display:inline-flex; flex-shrink:0;}
+  .rsvp-group-icon .rsvp-icon{width:18px; height:18px; display:block;}
   .rsvp-names{color:var(--muted); font-size:14px; margin:0;}
   .cal-event-rsvp-summary{font-size:12px; color:var(--muted); margin-top:6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
   .rsvp-summary-item{display:inline-flex; align-items:center; gap:3px; font-weight:700; color:var(--ink-soft);}
@@ -299,7 +303,8 @@
   .rsvp-icon.grey circle{fill:var(--muted);}
   .cal-event-own-status{display:inline-flex; flex-shrink:0; align-self:flex-start; margin-top:2px;}
   .cal-event-own-status .rsvp-icon{width:22px; height:22px;}
-  .rsvp-name-row{padding:6px 0; border-bottom:1px dashed var(--line); margin:0; color:var(--ink);}
+  .rsvp-name-row{padding:6px 0 6px 25px; border-bottom:1px dashed var(--line); margin:0; color:var(--ink);}
+  .rsvp-names-indent{padding-left:25px;}
   .rsvp-name-row:last-child{border-bottom:none;}
   .finance-total-amount{font-family:var(--font-display); font-size:36px; font-weight:700; color:#fff;}
   .finance-total-label{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:4px;}
@@ -543,7 +548,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.10';
+  const APP_VERSION = '1.11';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -2191,6 +2196,19 @@
     render();
   }
 
+  async function openFineDetailFromHistory(eveningId, seatId){
+    renderLoading('Kegelabend wird geladen…');
+    try{
+      const detail = await getJSONOrThrow('evening-'+eveningId, null);
+      if(!detail){ goToArrearsDetail(state.currentArrearsName); return; }
+      state.currentEveningDetail = detail;
+      const seat = detail.seating.find(s=>s.seatId===seatId);
+      goToPersonFineDetail(seatId, seat ? seat.name : state.currentArrearsName);
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', ()=>goToArrearsDetail(state.currentArrearsName));
+    }
+  }
+
   function viewPersonFineDetail(){
     const detail = state.currentEveningDetail;
     const seatId = state.currentFineSeatId;
@@ -2445,7 +2463,7 @@
       });
       detail.priorArrearsSnapshot = priorArrearsSnapshot;
 
-      function addToArrears(name, amount){
+      function addToArrears(name, amount, seatId){
         if(!amount) return;
         let entry = arrears.find(a=>a.name===name);
         if(!entry){ entry = {name, amount:0, history:[]}; arrears.push(entry); }
@@ -2453,11 +2471,12 @@
         entry.amount = Math.round((entry.amount + amount)*100)/100;
         entry.history.push({
           id: uid('hist'), date: detail.date, type:'increase', delta: amount,
-          note: `Strafen vom Kegelabend am ${formatDateDE(detail.date)}`, balanceAfter: entry.amount, createdAt: Date.now()
+          note: `Strafen vom Kegelabend am ${formatDateDE(detail.date)}`, balanceAfter: entry.amount, createdAt: Date.now(),
+          eveningId: detail.id, seatId: seatId||undefined
         });
       }
       detail.seating.filter(s=>s.name).forEach(s=>{
-        addToArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
+        addToArrears(s.name, roundedFineTotalForSeat(detail, s.seatId), s.seatId);
       });
       detail.absentMembersFines.forEach(a=>{ addToArrears(a.name, a.amount); });
       state.financeArrears = arrears;
@@ -4004,20 +4023,20 @@
         </div>
       </div>
     ` : '';
-    const groupSectionHtml = (label, names)=> `
+    const groupSectionHtml = (label, names, status)=> `
       <div class="rsvp-group">
-        <div class="rsvp-group-label">${label} <span class="member-count">(${names.length})</span></div>
-        ${names.length===0 ? '<p class="empty-state">Niemand.</p>' : names.map(n=>`<p class="rsvp-name-row">${escapeHtml(n)}</p>`).join('')}
+        <div class="rsvp-group-label"><span class="rsvp-group-icon">${rsvpStatusIcon(status)}</span>${label} <span class="member-count">(${names.length})</span></div>
+        ${names.length===0 ? '<p class="empty-state rsvp-names-indent">Niemand.</p>' : names.map(n=>`<p class="rsvp-name-row">${escapeHtml(n)}</p>`).join('')}
       </div>
     `;
     return `
       ${rsvpButtonsHtml}
       <div class="card">
         <h2 class="section-title">Rückmeldungen</h2>
-        ${groupSectionHtml('Zugesagt', groups.accepted)}
-        ${groupSectionHtml('Vorläufig', groups.tentative)}
-        ${groupSectionHtml('Abgesagt', groups.declined)}
-        ${groupSectionHtml('Rückmeldung ausstehend', groups.pending)}
+        ${groupSectionHtml('Zugesagt', groups.accepted, 'accepted')}
+        ${groupSectionHtml('Vorläufig', groups.tentative, 'tentative')}
+        ${groupSectionHtml('Abgesagt', groups.declined, 'declined')}
+        ${groupSectionHtml('Rückmeldung ausstehend', groups.pending, null)}
       </div>
     `;
   }
@@ -4338,15 +4357,18 @@
 
     const historyHtml = history.length===0
       ? `<p class="empty-state">Noch keine Einträge im Verlauf.</p>`
-      : history.map(h=>`
-        <div class="history-row">
+      : history.map(h=>{
+        const isClickable = h.type==='increase' && h.eveningId && h.seatId;
+        return `
+        <div class="history-row${isClickable?' history-row-clickable':''}"${isClickable?` data-evening-id="${h.eveningId}" data-seat-id="${h.seatId}"`:''}>
           <span class="history-info">
             <span class="history-note">${escapeHtml(h.note)}</span>
             <span class="history-meta">${formatDateDE(h.date)} · ${historyEntryLabel(h)}</span>
           </span>
           <span class="history-delta ${h.delta>=0?'positive':'negative'}">${h.delta>=0?'+':''}${fmtEuro(h.delta)}</span>
         </div>
-      `).join('');
+      `;
+      }).join('');
 
     return `
       <div class="card own-arrears-card ${amount>0?'amount-due':'amount-clear'}">
@@ -4410,6 +4432,11 @@
   }
 
   function attachArrearsDetailListeners(){
+    document.querySelectorAll('.history-row-clickable').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        openFineDetailFromHistory(row.dataset.eveningId, row.dataset.seatId);
+      });
+    });
     const overflowBtn = document.getElementById('header-arrears-overflow-btn');
     const overflowMenu = document.getElementById('header-arrears-overflow-menu');
     if(overflowBtn && overflowMenu){
