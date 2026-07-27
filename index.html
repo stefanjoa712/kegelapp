@@ -267,6 +267,16 @@
   .cal-event-row:last-child{border-bottom:none;}
   .cal-event-title{font-weight:700; font-size:16px;}
   .cal-event-meta{font-size:13px; color:var(--muted); margin-top:2px;}
+  .rsvp-btn-row{display:flex; gap:8px;}
+  .rsvp-btn{flex:1; padding:11px 6px; border-radius:8px; border:2px solid var(--line); background:#fff; color:var(--ink); font-weight:700; font-size:13px; cursor:pointer;}
+  .rsvp-btn.active.accepted{background:#1a7a3c; border-color:#1a7a3c; color:#fff;}
+  .rsvp-btn.active.tentative{background:#b8860b; border-color:#b8860b; color:#fff;}
+  .rsvp-btn.active.declined{background:var(--wine); border-color:var(--wine); color:#fff;}
+  .rsvp-group{padding:10px 0; border-bottom:1px dashed var(--line);}
+  .rsvp-group:last-child{border-bottom:none;}
+  .rsvp-group-label{font-weight:700; margin-bottom:4px;}
+  .rsvp-names{color:var(--muted); font-size:14px; margin:0;}
+  .cal-event-rsvp-summary{font-size:12px; color:var(--muted); margin-top:4px;}
   .finance-total-amount{font-family:var(--font-display); font-size:36px; font-weight:700; color:#fff;}
   .finance-total-label{font-family:var(--font-mono); font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:4px;}
   .transaction-row{display:flex; justify-content:space-between; align-items:center; padding:11px 2px; border-bottom:1px dashed var(--line); gap:10px; cursor:pointer;}
@@ -509,7 +519,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0';
+  const APP_VERSION = '1.1';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -543,6 +553,7 @@
     financeSavingsPots:[],
     calendarEvents:[],
     calendarOccurrenceEdits:[],
+    calendarRsvps:[],
     calendarViewYear: new Date().getFullYear(),
     calendarViewMonth: new Date().getMonth()+1,
     calendarSelectedDate: todayISO(),
@@ -692,6 +703,34 @@
     if(!ev) return null;
     return buildOccurrenceObject(ev, occurrenceDate);
   }
+
+  function getRsvpsForOccurrence(seriesId, occurrenceDate){
+    return state.calendarRsvps.filter(r=> r.seriesId===seriesId && r.occurrenceDate===occurrenceDate);
+  }
+  function getRsvpStatusFor(seriesId, occurrenceDate, memberName){
+    const entry = state.calendarRsvps.find(r=> r.seriesId===seriesId && r.occurrenceDate===occurrenceDate && r.memberName===memberName);
+    return entry ? entry.status : null;
+  }
+  async function setRsvpStatus(seriesId, occurrenceDate, memberName, status){
+    let entry = state.calendarRsvps.find(r=> r.seriesId===seriesId && r.occurrenceDate===occurrenceDate && r.memberName===memberName);
+    if(!entry){ entry = {id:uid('rsvp'), seriesId, occurrenceDate, memberName}; state.calendarRsvps.push(entry); }
+    entry.status = status;
+    await setJSON('calendar-rsvps', state.calendarRsvps, true);
+  }
+  // Gruppiert alle Mitglieder nach ihrem Rückmeldungsstatus für einen bestimmten Termin.
+  function categorizeRsvps(seriesId, occurrenceDate){
+    const groups = { accepted:[], tentative:[], declined:[], pending:[] };
+    state.members.forEach(m=>{
+      const name = displayName(m);
+      const status = getRsvpStatusFor(seriesId, occurrenceDate, name);
+      if(status==='accepted') groups.accepted.push(name);
+      else if(status==='tentative') groups.tentative.push(name);
+      else if(status==='declined') groups.declined.push(name);
+      else groups.pending.push(name);
+    });
+    return groups;
+  }
+
   function getEventsOnDate(dateStr){
     const [y, m] = dateStr.split('-').map(Number);
     const results = [];
@@ -870,12 +909,16 @@
     state.view = 'calendar';
     renderLoading('Kalender wird geladen…');
     try{
-      const [events, edits] = await Promise.all([
+      const [events, edits, rsvps, members] = await Promise.all([
         getJSONOrThrow('calendar-events', []),
-        getJSONOrThrow('calendar-occurrence-edits', [])
+        getJSONOrThrow('calendar-occurrence-edits', []),
+        getJSONOrThrow('calendar-rsvps', []),
+        getJSONOrThrow('members', state.members)
       ]);
       state.calendarEvents = events;
       state.calendarOccurrenceEdits = edits;
+      state.calendarRsvps = rsvps;
+      state.members = members;
       state.view = 'calendar';
       render();
     }catch(e){
@@ -1306,13 +1349,18 @@
     const selectedEvents = getEventsOnDate(state.calendarSelectedDate);
     const eventsHtml = selectedEvents.length===0
       ? `<p class="empty-state">Keine Termine an diesem Tag.</p>`
-      : selectedEvents.map(ev=>`
+      : selectedEvents.map(ev=>{
+        const totalMembers = state.members.length;
+        const responded = state.members.filter(m=> getRsvpStatusFor(ev.seriesId, ev.occurrenceDate, displayName(m))!==null).length;
+        return `
         <div class="cal-event-row" data-series-id="${ev.seriesId}" data-occurrence-date="${ev.occurrenceDate}">
           <div class="cal-event-title">${escapeHtml(ev.title)}</div>
           ${ev.location ? `<div class="cal-event-meta">${escapeHtml(ev.location)}</div>` : ''}
           <div class="cal-event-meta">${formatDateDE(ev.date)}${ev.startTime?` · ${ev.startTime}${ev.endTime?'–'+ev.endTime:''}`:''}</div>
+          ${totalMembers>0 ? `<div class="cal-event-rsvp-summary">${responded} von ${totalMembers} haben geantwortet</div>` : ''}
         </div>
-      `).join('');
+      `;
+      }).join('');
 
     return `
       <div class="card cal-card">
@@ -1599,12 +1647,16 @@
         const rest = sig.slice('eventDetail:'.length);
         if(state.calendarEvents.length===0 && state.calendarOccurrenceEdits.length===0){
           try{
-            const [events, edits] = await Promise.all([
+            const [events, edits, rsvps, members] = await Promise.all([
               getJSONOrThrow('calendar-events', []),
-              getJSONOrThrow('calendar-occurrence-edits', [])
+              getJSONOrThrow('calendar-occurrence-edits', []),
+              getJSONOrThrow('calendar-rsvps', []),
+              getJSONOrThrow('members', state.members)
             ]);
             state.calendarEvents = events;
             state.calendarOccurrenceEdits = edits;
+            state.calendarRsvps = rsvps;
+            state.members = members;
           }catch(e){}
         }
         if(rest==='new'){
@@ -1675,6 +1727,13 @@
   function buildPaypalLink(amount){
     // PayPal.me erwartet einen Punkt als Dezimaltrennzeichen, kein Komma.
     return `https://paypal.com/paypalme/${PAYPAL_ME_USERNAME}/${amount.toFixed(2)}`;
+  }
+
+  function getCurrentMemberName(){
+    const user = auth.currentUser;
+    if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
+    const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
+    return member ? displayName(member) : null;
   }
 
   function buildOwnArrearsCardHtml(){
@@ -2755,7 +2814,7 @@
       </div>
     ` : '';
 
-    const eventOverflowHtml = (state.view==='eventDetail' && state.calendarEditingOccurrence) ? `
+    const eventOverflowHtml = (state.view==='eventDetail' && state.calendarEditingOccurrence && isEventCreator(state.calendarEvents.find(e=>e.id===state.calendarEditingOccurrence.seriesId))) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-event-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -3622,10 +3681,64 @@
     render();
   }
 
+  function isEventCreator(baseEvent){
+    const currentName = getCurrentMemberName();
+    if(!baseEvent || !baseEvent.createdBy) return true; // Alte Termine ohne Ersteller: jeder darf bearbeiten
+    return !!currentName && currentName===baseEvent.createdBy;
+  }
+
+  function buildRsvpSectionHtml(occurrence){
+    const currentName = getCurrentMemberName();
+    const currentStatus = currentName ? getRsvpStatusFor(occurrence.seriesId, occurrence.occurrenceDate, currentName) : null;
+    const groups = categorizeRsvps(occurrence.seriesId, occurrence.occurrenceDate);
+    const rsvpButtonsHtml = currentName ? `
+      <div class="card">
+        <h2 class="section-title">Deine Rückmeldung</h2>
+        <div class="rsvp-btn-row">
+          <button type="button" class="rsvp-btn${currentStatus==='accepted'?' active accepted':''}" data-status="accepted">Zusagen</button>
+          <button type="button" class="rsvp-btn${currentStatus==='tentative'?' active tentative':''}" data-status="tentative">Vorläufig</button>
+          <button type="button" class="rsvp-btn${currentStatus==='declined'?' active declined':''}" data-status="declined">Absagen</button>
+        </div>
+      </div>
+    ` : '';
+    const groupSectionHtml = (label, names)=> `
+      <div class="rsvp-group">
+        <div class="rsvp-group-label">${label} <span class="member-count">(${names.length})</span></div>
+        ${names.length===0 ? '<p class="empty-state">Niemand.</p>' : `<p class="rsvp-names">${names.map(n=>escapeHtml(n)).join(', ')}</p>`}
+      </div>
+    `;
+    return `
+      ${rsvpButtonsHtml}
+      <div class="card">
+        <h2 class="section-title">Rückmeldungen</h2>
+        ${groupSectionHtml('Zugesagt', groups.accepted)}
+        ${groupSectionHtml('Vorläufig', groups.tentative)}
+        ${groupSectionHtml('Abgesagt', groups.declined)}
+        ${groupSectionHtml('Rückmeldung ausstehend', groups.pending)}
+      </div>
+    `;
+  }
+
   function viewEventDetail(){
     const occurrence = state.calendarEditingOccurrence;
     const isEdit = !!occurrence;
+    const baseEvent = isEdit ? state.calendarEvents.find(e=>e.id===occurrence.seriesId) : null;
+    const canEdit = !isEdit || isEventCreator(baseEvent);
     const isSeriesOccurrence = isEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
+
+    if(isEdit && !canEdit){
+      // Nur-Lese-Ansicht für Nicht-Ersteller: keine Bearbeitung, aber Rückmeldung möglich.
+      return `
+        <div class="card">
+          <h2 class="section-title">${escapeHtml(occurrence.title)}</h2>
+          ${occurrence.location ? `<p class="cal-event-meta">${escapeHtml(occurrence.location)}</p>` : ''}
+          <p class="cal-event-meta">${formatDateDE(occurrence.date)}${occurrence.startTime?` · ${occurrence.startTime}${occurrence.endTime?'–'+occurrence.endTime:''}`:''}</p>
+          ${baseEvent && baseEvent.createdBy ? `<p class="hint" style="margin-top:10px;">Erstellt von ${escapeHtml(baseEvent.createdBy)}. Nur der Ersteller kann diesen Termin bearbeiten.</p>` : ''}
+        </div>
+        ${buildRsvpSectionHtml(occurrence)}
+      `;
+    }
+
     const recurrenceOptionsHtml = isSeriesOccurrence ? '' : `
       <label for="cal-ev-recurrence">Wiederholen</label>
       <select id="cal-ev-recurrence">
@@ -3654,6 +3767,7 @@
         <p class="form-error" id="cal-ev-error"></p>
         <button type="button" class="btn-primary" id="save-cal-ev-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
       </div>
+      ${isEdit ? buildRsvpSectionHtml(occurrence) : ''}
     `;
   }
 
@@ -3690,6 +3804,16 @@
     const isEdit = !!occurrence;
     const isSeriesOccurrence = isEdit && !!(occurrence.recurrence && occurrence.recurrence!=='none');
 
+    document.querySelectorAll('.rsvp-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const currentName = getCurrentMemberName();
+        if(!currentName || !occurrence) return;
+        btn.disabled = true;
+        await setRsvpStatus(occurrence.seriesId, occurrence.occurrenceDate, currentName, btn.dataset.status);
+        render();
+      });
+    });
+
     const overflowBtn = document.getElementById('header-event-overflow-btn');
     const overflowMenu = document.getElementById('header-event-overflow-menu');
     if(overflowBtn && overflowMenu){
@@ -3724,8 +3848,13 @@
       saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
 
       if(!isEdit){
-        state.calendarEvents.push({id:uid('cal'), title, location, date, startTime, endTime, recurrence});
+        const newId = uid('cal');
+        const creatorName = getCurrentMemberName();
+        state.calendarEvents.push({id:newId, title, location, date, startTime, endTime, recurrence, createdBy: creatorName});
         await setJSON('calendar-events', state.calendarEvents, true);
+        if(creatorName){
+          await setRsvpStatus(newId, date, creatorName, 'accepted');
+        }
       }else if(!isSeriesOccurrence){
         const base = state.calendarEvents.find(e=>e.id===occurrence.seriesId);
         if(base){ base.title=title; base.location=location; base.date=date; base.startTime=startTime; base.endTime=endTime; base.recurrence=recurrence; }
