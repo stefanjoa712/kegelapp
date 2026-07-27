@@ -73,10 +73,11 @@
   }
   .header-circle-btn svg{width:20px; height:20px; display:block;}
   .header-today-btn{
-    background:rgba(255,255,255,0.12); border:1.5px solid rgba(255,255,255,0.4); border-radius:20px;
-    color:#fff; font-family:var(--font-mono); font-size:12px; font-weight:700; text-transform:uppercase;
-    letter-spacing:0.03em; padding:8px 13px; cursor:pointer; flex-shrink:0;
+    background:rgba(255,255,255,0.12); border:1.5px solid rgba(255,255,255,0.4); border-radius:50%;
+    color:#fff; width:38px; height:38px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; flex-shrink:0;
   }
+  .header-today-btn svg{width:20px; height:20px; display:block;}
   .header-overflow-wrap{position:relative; margin:0 -6px 0 0;}
   .header-overflow-menu{
     position:absolute; top:44px; right:0; background:var(--surface); border:2px solid var(--ink);
@@ -542,7 +543,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.7';
+  const APP_VERSION = '1.8';
 
   const SEATS = [
     {id:'saal-1', section:'Saal', label:'Saal 1'},
@@ -2897,7 +2898,21 @@
     ` : '';
 
     const calTodayBtnHtml = state.view==='calendar' ? `
-      <button type="button" class="header-today-btn" id="header-cal-today-btn">Heute</button>
+      <button type="button" class="header-today-btn" id="header-cal-today-btn" aria-label="Heute">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+      <button type="button" class="header-today-btn" id="header-cal-next-event-btn" aria-label="Zum nächsten Termin">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4.5" width="18" height="16" rx="2"/>
+          <line x1="3" y1="9.5" x2="21" y2="9.5"/>
+          <line x1="7.5" y1="2.5" x2="7.5" y2="6.5"/>
+          <line x1="16.5" y1="2.5" x2="16.5" y2="6.5"/>
+          <path d="M9.5 14l2.2 2.2L15.5 12" stroke-width="2.2"/>
+        </svg>
+      </button>
     ` : '';
 
     const currentPersonSeat = (state.view==='personFineDetail' && state.currentEveningDetail)
@@ -3301,6 +3316,17 @@
       state.calendarViewYear = y;
       state.calendarViewMonth = m;
       state.calendarSelectedDate = today;
+      render();
+    });
+    const nextEventBtn = document.getElementById('header-cal-next-event-btn');
+    if(nextEventBtn) nextEventBtn.addEventListener('click', ()=>{
+      const occ = getNextUpcomingEvent();
+      if(!occ) return;
+      const targetDate = dateOnly(occ.start);
+      const [y, m] = targetDate.split('-').map(Number);
+      state.calendarViewYear = y;
+      state.calendarViewMonth = m;
+      state.calendarSelectedDate = targetDate;
       render();
     });
   }
