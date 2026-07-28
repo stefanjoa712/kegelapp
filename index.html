@@ -561,7 +561,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.23';
+  const APP_VERSION = '1.24';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1740,7 +1740,7 @@
       return `
         <button type="button" class="cal-cell${isSelected?' selected':''}${isToday && !isSelected?' today':''}" data-date="${dateStr}">
           <span class="cal-cell-num">${day}</span>
-          ${hasBirthday ? '<span class="cal-cell-dot cal-cell-dot-birthday">🎂</span>' : (hasEvent ? '<span class="cal-cell-dot"></span>' : '')}
+          ${hasBirthday ? '<span class="cal-cell-dot cal-cell-dot-birthday"></span>' : (hasEvent ? '<span class="cal-cell-dot"></span>' : '')}
         </button>
       `;
     }).join('');
