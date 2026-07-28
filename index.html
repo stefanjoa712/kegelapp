@@ -559,7 +559,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.20';
+  const APP_VERSION = '1.21';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1656,13 +1656,13 @@
 
   function eventManagementRowHtml(ev){
     return `<div class="member-row-full member-row-clickable" data-id="${ev.id}">
-      <div class="member-row">
-        <span class="fine-row-info">
-          <span class="fine-row-name">${escapeHtml(ev.title)}</span>
-          <span class="transaction-meta">${RECURRENCE_LABELS_DE[ev.recurrence]||'Einmalig'} · ab ${formatDateDE(dateOnly(ev.start))}</span>
-        </span>
-        <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <div class="member-row-full-main">
+        <div class="member-row">
+          <span>${escapeHtml(ev.title)}</span>
+        </div>
+        <div class="member-account-row"><span class="member-account-status muted">${RECURRENCE_LABELS_DE[ev.recurrence]||'Einmalig'} · ab ${formatDateDE(dateOnly(ev.start))}</span></div>
       </div>
+      <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
     </div>`;
   }
 
@@ -1813,7 +1813,7 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement';
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement';
     const isFinanceActive = state.view==='finance';
     const isCalendarActive = state.view==='calendar' || state.view==='eventDetail';
     const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isCalendarActive ? 'calendar' : (isTodayActive ? 'today' : 'overview')));
