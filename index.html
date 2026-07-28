@@ -284,8 +284,8 @@
   .cal-cell.selected{background:var(--wood); color:#fff;}
   .cal-cell-dot{width:5px; height:5px; border-radius:50%; background:var(--wood); position:absolute; bottom:5px;}
   .cal-cell.selected .cal-cell-dot{background:#fff;}
-  .cal-cell-dot-birthday{width:auto; height:auto; border-radius:0; background:none; font-size:9px; line-height:1; bottom:4px;}
-  .cal-birthday-row{background:rgba(255,200,0,0.08);}
+  .cal-cell-dot-birthday{background:var(--muted);}
+  .cal-birthday-icon{font-size:14px; opacity:0.65; filter:grayscale(0.4);}
   .cal-event-row{padding:12px 0; border-bottom:1px dashed var(--line); cursor:pointer; display:flex; align-items:center; gap:10px;}
   .cal-event-main{flex:1; min-width:0;}
   .cal-event-chevron{width:18px; height:18px; color:var(--muted); flex-shrink:0;}
@@ -561,7 +561,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.22';
+  const APP_VERSION = '1.23';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1747,8 +1747,8 @@
 
     const selectedBirthdays = getBirthdaysOnDate(state.calendarSelectedDate);
     const birthdaysHtml = selectedBirthdays.map(b=>`
-      <div class="cal-event-row cal-birthday-row">
-        <span class="cal-event-own-status" title="Geburtstag">🎂</span>
+      <div class="cal-event-row">
+        <span class="cal-event-own-status cal-birthday-icon" title="Geburtstag">🎂</span>
         <div class="cal-event-main">
           <div class="cal-event-title">${escapeHtml(b.name)}</div>
           <div class="cal-event-meta">wird ${b.age} Jahre alt</div>
