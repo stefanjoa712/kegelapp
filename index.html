@@ -561,7 +561,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.27';
+  const APP_VERSION = '1.28';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4484,6 +4484,17 @@
     });
   }
 
+  // Öffnet nach dem Laden direkt die Termindetails, falls die URL entsprechende
+  // Parameter enthält (z.B. Link aus dem Kalender-Feed: ?event=<seriesId>&date=<occurrenceDate>).
+  function applyEventDeepLinkFromUrl(){
+    const params = new URLSearchParams(location.search);
+    const seriesId = params.get('event');
+    const occurrenceDate = params.get('date');
+    if(!seriesId || !occurrenceDate) return;
+    const occurrence = findOccurrenceByIds(seriesId, occurrenceDate);
+    if(occurrence) goToEventDetail(occurrence, 'main');
+  }
+
   function goToEventDetail(occurrence, origin){
     state.calendarEditingOccurrence = occurrence || null;
     state.eventDetailOrigin = origin || 'calendar';
@@ -5741,6 +5752,7 @@
       state.calendarOccurrenceEdits = calendarOccurrenceEdits;
       state.view = 'main';
       render();
+      applyEventDeepLinkFromUrl();
       backfillEveningSummaries();
       // iOS-Standalone-PWA-Trick: ein winziger echter Scroll zwingt WebKit dazu, die tatsächliche
       // Viewport-/Safe-Area-Größe beim Kaltstart korrekt neu zu berechnen. Body ist jetzt immer

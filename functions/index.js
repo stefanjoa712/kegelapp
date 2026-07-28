@@ -765,6 +765,22 @@ function icsLocalDateTime(datetimeStr) {
   return datetimeStr.replace(/[-:]/g, '') + '00';
 }
 
+// Faltet eine iCal-Zeile nach RFC 5545 (max. 75 Byte pro Zeile,
+// Fortsetzungszeilen beginnen mit einem Leerzeichen).
+function icsFoldLine(line) {
+  const maxLen = 75;
+  if (line.length <= maxLen) return line;
+  const parts = [];
+  let rest = line;
+  parts.push(rest.slice(0, maxLen));
+  rest = rest.slice(maxLen);
+  while (rest.length > 0) {
+    parts.push(' ' + rest.slice(0, maxLen - 1));
+    rest = rest.slice(maxLen - 1);
+  }
+  return parts.join('\r\n');
+}
+
 function buildIcsFeed(occurrences) {
   const now = new Date();
   const dtstamp = now.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
@@ -781,13 +797,16 @@ function buildIcsFeed(occurrences) {
 
   occurrences.forEach(occ => {
     const uid = `${occ.seriesId}-${occ.occurrenceDate}@die-pudolfs.de`;
+    const detailUrl = `https://app.die-pudolfs.de/?event=${encodeURIComponent(occ.seriesId)}&date=${encodeURIComponent(occ.occurrenceDate)}`;
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:${uid}`);
     lines.push(`DTSTAMP:${dtstamp}`);
-    lines.push(`DTSTART;TZID=Europe/Berlin:${icsLocalDateTime(occ.start)}`);
-    lines.push(`DTEND;TZID=Europe/Berlin:${icsLocalDateTime(occ.end)}`);
-    lines.push(`SUMMARY:${icsEscape(occ.title)}`);
-    if (occ.location) lines.push(`LOCATION:${icsEscape(occ.location)}`);
+    lines.push(icsFoldLine(`DTSTART;TZID=Europe/Berlin:${icsLocalDateTime(occ.start)}`));
+    lines.push(icsFoldLine(`DTEND;TZID=Europe/Berlin:${icsLocalDateTime(occ.end)}`));
+    lines.push(icsFoldLine(`SUMMARY:${icsEscape(occ.title)}`));
+    if (occ.location) lines.push(icsFoldLine(`LOCATION:${icsEscape(occ.location)}`));
+    lines.push(icsFoldLine(`DESCRIPTION:${icsEscape(detailUrl)}`));
+    lines.push(icsFoldLine(`URL:${detailUrl}`));
     lines.push('END:VEVENT');
   });
 
