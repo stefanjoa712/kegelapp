@@ -561,7 +561,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.26';
+  const APP_VERSION = '1.27';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4033,7 +4033,7 @@
     const webcalUrl = feedUrl.replace(/^https:\/\//, 'webcal://');
     showModal(`
       <h3>Kalender abonnieren</h3>
-      <p>Enthält alle Termine (ohne Geburtstage) der nächsten 12 Monate. Auf dem iPhone antippen, um automatisch als Kalender-Abo hinzuzufügen.</p>
+      <p>Enthält alle Termine (ohne Geburtstage) der nächsten 12 Monate.</p>
       <p style="word-break:break-all; font-family:var(--font-mono); font-size:13px;"><a href="${webcalUrl}">${escapeHtml(feedUrl)}</a></p>
       <div class="confirm-row-buttons">
         <button type="button" class="btn-secondary" id="cal-subscribe-copy-btn" style="flex:1;">Link kopieren</button>
