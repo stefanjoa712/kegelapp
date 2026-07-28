@@ -148,6 +148,14 @@
   .bottom-nav-item.active{color:var(--felt);}
 
   .loading{padding:60px 20px; text-align:center; font-family:var(--font-mono); color:var(--ink-soft);}
+  .loading-spinner{
+    width:36px; height:36px; margin:0 auto 16px;
+    border:3px solid var(--line);
+    border-top-color:var(--felt);
+    border-radius:50%;
+    animation:loading-spin 0.7s linear infinite;
+  }
+  @keyframes loading-spin{ to{ transform:rotate(360deg); } }
 
   .card{
     background:var(--surface);
@@ -561,7 +569,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.29';
+  const APP_VERSION = '1.30';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2151,7 +2159,7 @@
   // Zeigt sofort eine Ladeanzeige, bevor auf eine Firestore-Antwort gewartet wird –
   // so wirkt ein Klick nie so, als wäre nichts passiert.
   function renderLoading(message){
-    document.getElementById('app').innerHTML = headerHtml() + `<main class="container"><div class="loading">${escapeHtml(message)}</div></main>` + bottomNavHtml();
+    document.getElementById('app').innerHTML = headerHtml() + `<main class="container"><div class="loading"><div class="loading-spinner"></div>${escapeHtml(message)}</div></main>` + bottomNavHtml();
   }
 
   function viewMain(){
@@ -5683,7 +5691,7 @@
   }
 
   async function renderSetPasswordScreen(oobCode){
-    document.getElementById('app').innerHTML = `<div class="loading">Link wird geprüft…</div>`;
+    document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div>Link wird geprüft…</div>`;
     let email;
     try{
       email = await verifyPasswordResetCode(auth, oobCode);
@@ -5736,7 +5744,7 @@
 
   // ---------- Start ----------
   async function init(){
-    document.getElementById('app').innerHTML = `<div class="loading">Die Pudolfs – wird geladen…</div>`;
+    document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div>Die Pudolfs – wird geladen…</div>`;
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
     try{
