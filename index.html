@@ -284,6 +284,8 @@
   .cal-cell.selected{background:var(--wood); color:#fff;}
   .cal-cell-dot{width:5px; height:5px; border-radius:50%; background:var(--wood); position:absolute; bottom:5px;}
   .cal-cell.selected .cal-cell-dot{background:#fff;}
+  .cal-cell-dot-birthday{width:auto; height:auto; border-radius:0; background:none; font-size:9px; line-height:1; bottom:4px;}
+  .cal-birthday-row{background:rgba(255,200,0,0.08);}
   .cal-event-row{padding:12px 0; border-bottom:1px dashed var(--line); cursor:pointer; display:flex; align-items:center; gap:10px;}
   .cal-event-main{flex:1; min-width:0;}
   .cal-event-chevron{width:18px; height:18px; color:var(--muted); flex-shrink:0;}
@@ -559,7 +561,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.21';
+  const APP_VERSION = '1.22';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -904,6 +906,33 @@
           cur = addDaysISO(cur, 1);
         }
       });
+    });
+    return dateSet;
+  }
+
+  // Liefert alle Mitglieder, die an einem bestimmten Tag (Monat+Tag) Geburtstag haben,
+  // jeweils mit Name und erreichtem Alter an diesem Datum.
+  function getBirthdaysOnDate(dateStr){
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const results = [];
+    state.members.forEach(mem=>{
+      if(!mem.birthday) return;
+      const [by, bm, bd] = mem.birthday.split('-').map(Number);
+      if(bm===m && bd===d){
+        results.push({ name: displayName(mem), age: y - by });
+      }
+    });
+    return results;
+  }
+
+  // Liefert alle Tage (als Set von YYYY-MM-DD) in einem Monat, an denen mindestens ein Mitglied
+  // Geburtstag hat.
+  function getBirthdayDatesInMonth(year, month){
+    const dateSet = new Set();
+    state.members.forEach(mem=>{
+      if(!mem.birthday) return;
+      const [, bm, bd] = mem.birthday.split('-').map(Number);
+      if(bm===month) dateSet.add(isoDate(year, month, bd));
     });
     return dateSet;
   }
@@ -1693,6 +1722,7 @@
     const year = state.calendarViewYear;
     const month = state.calendarViewMonth;
     const eventDates = getEventDatesInMonth(year, month);
+    const birthdayDates = getBirthdayDatesInMonth(year, month);
     const daysInMonth = new Date(year, month, 0).getDate();
     const firstWeekday = (new Date(year, month-1, 1).getDay()+6)%7; // 0=Montag
 
@@ -1706,18 +1736,30 @@
       const isSelected = dateStr===state.calendarSelectedDate;
       const isToday = dateStr===todayISO();
       const hasEvent = eventDates.has(dateStr);
+      const hasBirthday = birthdayDates.has(dateStr);
       return `
         <button type="button" class="cal-cell${isSelected?' selected':''}${isToday && !isSelected?' today':''}" data-date="${dateStr}">
           <span class="cal-cell-num">${day}</span>
-          ${hasEvent ? '<span class="cal-cell-dot"></span>' : ''}
+          ${hasBirthday ? '<span class="cal-cell-dot cal-cell-dot-birthday">🎂</span>' : (hasEvent ? '<span class="cal-cell-dot"></span>' : '')}
         </button>
       `;
     }).join('');
 
+    const selectedBirthdays = getBirthdaysOnDate(state.calendarSelectedDate);
+    const birthdaysHtml = selectedBirthdays.map(b=>`
+      <div class="cal-event-row cal-birthday-row">
+        <span class="cal-event-own-status" title="Geburtstag">🎂</span>
+        <div class="cal-event-main">
+          <div class="cal-event-title">${escapeHtml(b.name)}</div>
+          <div class="cal-event-meta">wird ${b.age} Jahre alt</div>
+        </div>
+      </div>
+    `).join('');
+
     const selectedEvents = getEventsOnDate(state.calendarSelectedDate);
-    const eventsHtml = selectedEvents.length===0
+    const eventsHtml = (selectedEvents.length===0 && selectedBirthdays.length===0)
       ? `<p class="empty-state">Keine Termine an diesem Tag.</p>`
-      : selectedEvents.map(ev=>{
+      : birthdaysHtml + selectedEvents.map(ev=>{
         const groups = categorizeRsvps(ev.seriesId, ev.occurrenceDate);
         const currentName = getCurrentMemberName();
         const ownStatus = currentName ? getRsvpStatusFor(ev.seriesId, ev.occurrenceDate, currentName) : null;
