@@ -36,4 +36,4 @@ jobs:
       - name: Deploy Cloud Functions
         env:
           GOOGLE_APPLICATION_CREDENTIALS: '${{ steps.auth.outputs.credentials_file_path }}'
-        run: npx firebase-tools deploy --only functions --project die-pudolfs --non-interactive
+        run: npx firebase-tools deploy --only functions --project die-pudolfs --non-interactive --force
