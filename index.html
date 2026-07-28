@@ -381,6 +381,7 @@
   .member-row:last-child{border-bottom:none;}
   .row-actions{display:flex; gap:4px;}
   .nickname-tag{color:var(--brass); font-style:italic; font-weight:400;}
+  .role-tag{display:inline-block; font-size:0.72em; font-weight:600; letter-spacing:.02em; text-transform:uppercase; color:var(--brass); border:1px solid var(--brass); border-radius:20px; padding:1px 8px; margin-left:6px; vertical-align:middle;}
   .icon-btn{background:none; border:none; font-size:15px; cursor:pointer; color:var(--muted); padding:3px 6px; border-radius:3px;}
   .icon-btn:disabled{opacity:0.4; cursor:not-allowed;}
   .edit-member-btn:hover{color:var(--felt); background:var(--line);}
@@ -555,7 +556,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.18';
+  const APP_VERSION = '1.19';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2248,6 +2249,8 @@
   }
   function memberRowHtml(m){
     const nicknameHtml = m.nickname ? ` <span class="nickname-tag">– ${escapeHtml(m.nickname)}</span>` : '';
+    const role = m.role || 'Mitglied';
+    const roleHtml = role !== 'Mitglied' ? ` <span class="role-tag">${escapeHtml(role)}</span>` : '';
     let statusText;
     if(!m.email){
       statusText = 'Keine E-Mail hinterlegt';
@@ -2258,7 +2261,7 @@
     }
     return `<div class="member-row-full member-row-clickable" data-id="${m.id}">
       <div class="member-row">
-        <span>${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)}${nicknameHtml}</span>
+        <span>${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)}${nicknameHtml}${roleHtml}</span>
         <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </div>
       <div class="member-account-row"><span class="member-account-status muted">${statusText}</span></div>
@@ -2332,6 +2335,10 @@
         <input type="email" id="member-email" placeholder="name@beispiel.de" value="${isEdit?escapeHtml(member.email||''):''}">
         <label for="member-birthday">Geburtstag (optional)</label>
         <input type="date" id="member-birthday" value="${isEdit?(member.birthday||''):''}">
+        <label for="member-role">Rolle</label>
+        <select id="member-role">
+          ${['Präsident','Kassenwart','Mitglied'].map(r=>`<option value="${r}" ${((isEdit?(member.role||'Mitglied'):'Mitglied')===r)?'selected':''}>${r}</option>`).join('')}
+        </select>
         <p class="form-error" id="member-detail-error"></p>
         <button type="button" class="btn-primary" id="save-member-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
       </div>
@@ -3714,15 +3721,16 @@
       const nick = document.getElementById('member-nickname').value.trim();
       const email = document.getElementById('member-email').value.trim();
       const birthday = document.getElementById('member-birthday').value;
+      const role = document.getElementById('member-role').value;
       const errEl = document.getElementById('member-detail-error');
       if(!fn || !ln){ errEl.textContent='Bitte Vor- und Nachnamen angeben.'; return; }
       if(email && !/^\S+@\S+\.\S+$/.test(email)){ errEl.textContent='Bitte eine gültige E-Mail-Adresse angeben.'; return; }
       saveBtn.disabled = true; saveBtn.textContent = member ? 'Speichert…' : 'Wird hinzugefügt…';
       if(member){
-        member.firstName=fn; member.lastName=ln; member.nickname=nick; member.email=email;
+        member.firstName=fn; member.lastName=ln; member.nickname=nick; member.email=email; member.role=role;
         if(birthday) member.birthday=birthday; else delete member.birthday;
       }else{
-        const newMember = {id:uid('m'), firstName:fn, lastName:ln, nickname:nick, email};
+        const newMember = {id:uid('m'), firstName:fn, lastName:ln, nickname:nick, email, role};
         if(birthday) newMember.birthday = birthday;
         state.members.push(newMember);
       }
