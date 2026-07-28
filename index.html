@@ -561,7 +561,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.25';
+  const APP_VERSION = '1.26';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1803,9 +1803,6 @@
         <h2 class="section-title">${formatDateDE(state.calendarSelectedDate)}</h2>
         ${eventsHtml}
       </div>
-      <div class="card">
-        <button type="button" class="btn-secondary" id="cal-subscribe-btn" style="width:100%;">Kalender abonnieren</button>
-      </div>
     `;
   }
 
@@ -1982,7 +1979,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -3533,6 +3530,17 @@
       </div>
     ` : '';
 
+    const calOverflowHtml = state.view==='calendar' ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-cal-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-cal-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item neutral" id="header-cal-subscribe-btn">Kalender abonnieren</button>
+        </div>
+      </div>
+    ` : '';
+
     const memberOverflowHtml = (state.view==='memberDetail' && state.currentMemberId) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-member-overflow-btn" aria-label="Weitere Optionen">
@@ -3571,7 +3579,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${recurringOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${recurringOverflowHtml}${calOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -3979,8 +3987,19 @@
       state.calendarSelectedDate = targetDate;
       render();
     });
-    const subscribeBtn = document.getElementById('cal-subscribe-btn');
-    if(subscribeBtn) subscribeBtn.addEventListener('click', ()=>showCalendarSubscribeModal());
+    const calOverflowBtn = document.getElementById('header-cal-overflow-btn');
+    const calOverflowMenu = document.getElementById('header-cal-overflow-menu');
+    if(calOverflowBtn && calOverflowMenu){
+      calOverflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        calOverflowMenu.hidden = !calOverflowMenu.hidden;
+      });
+    }
+    const subscribeBtn = document.getElementById('header-cal-subscribe-btn');
+    if(subscribeBtn) subscribeBtn.addEventListener('click', ()=>{
+      if(calOverflowMenu) calOverflowMenu.hidden = true;
+      showCalendarSubscribeModal();
+    });
   }
 
   // Liefert den bestehenden Feed-Token oder erzeugt einmalig einen neuen (lazy).
