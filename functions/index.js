@@ -622,3 +622,223 @@ exports.processRecurringBookings = onSchedule(
     ]);
   }
 );
+
+// -------- Kalender-Abo (iCalendar-Feed) --------
+//
+// Liefert eine .ics-Datei mit allen Terminen zum Abonnieren (z.B. auf dem
+// iPhone via "webcal://"). Enthält KEINE Geburtstage.
+//
+// - Einzeltermine (ohne Wiederholung) werden IMMER aufgenommen, egal wie
+//   weit sie in der Zukunft liegen.
+// - Serien-Termine werden nur für die nächsten 12 Monate ab heute expandiert
+//   (das Fenster wandert bei jedem Abruf automatisch mit "heute" mit).
+// - Der Zugriff ist über einen zufälligen Token geschützt (?t=...), der
+//   einmalig beim ersten Klick auf "Kalender abonnieren" in der App erzeugt
+//   und in Firestore unter kegelbuch/calendar-feed-token abgelegt wird.
+// - Da bei jedem Abruf frisch aus Firestore gelesen wird, sind neue/geänderte
+//   Termine sofort im Feed enthalten, unabhängig davon wie oft iOS abruft.
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function isoDateFeed(y, m, d) { return `${y}-${pad2(m)}-${pad2(d)}`; }
+
+function addDaysISOFeed(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return isoDateFeed(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+}
+
+function dateOnlyFeed(datetimeStr) { return datetimeStr.slice(0, 10); }
+function timeOnlyFeed(datetimeStr) { return datetimeStr.slice(11, 16); }
+function combineDatetimeFeed(dateStr, timeStr) { return `${dateStr}T${timeStr}`; }
+
+// Spiegelt getEventSpanDays aus der App.
+function getEventSpanDaysFeed(event) {
+  const [sy, sm, sd] = dateOnlyFeed(event.start).split('-').map(Number);
+  const [ey, em, ed] = dateOnlyFeed(event.end).split('-').map(Number);
+  const s = Date.UTC(sy, sm - 1, sd);
+  const e = Date.UTC(ey, em - 1, ed);
+  return Math.max(0, Math.round((e - s) / 86400000));
+}
+
+// Spiegelt getRecurrenceStartsInMonth aus der App.
+function getRecurrenceStartsInMonthFeed(event, year, month) {
+  let occurrences = [];
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const baseDateStr = dateOnlyFeed(event.start);
+  const [by, bm, bd] = baseDateStr.split('-').map(Number);
+  const baseUTC = Date.UTC(by, bm - 1, bd);
+
+  if (event.recurrence === 'none' || !event.recurrence) {
+    if (by === year && bm === month) occurrences.push(baseDateStr);
+  } else if (event.recurrence === 'weekly' || event.recurrence === 'biweekly' || event.recurrence === 'every4weeks') {
+    const intervalDays = event.recurrence === 'weekly' ? 7 : event.recurrence === 'biweekly' ? 14 : 28;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const currentUTC = Date.UTC(year, month - 1, d);
+      if (currentUTC < baseUTC) continue;
+      const diffDays = Math.round((currentUTC - baseUTC) / 86400000);
+      if (diffDays % intervalDays === 0) occurrences.push(isoDateFeed(year, month, d));
+    }
+  } else if (event.recurrence === 'monthly') {
+    if (year > by || (year === by && month >= bm)) {
+      const targetDay = Math.min(bd, daysInMonth);
+      occurrences.push(isoDateFeed(year, month, targetDay));
+    }
+  } else if (event.recurrence === 'yearly') {
+    if (month === bm && year >= by) {
+      const targetDay = Math.min(bd, daysInMonth);
+      occurrences.push(isoDateFeed(year, month, targetDay));
+    }
+  }
+
+  if (event.recurrenceEndDate) {
+    occurrences = occurrences.filter(d => d <= event.recurrenceEndDate);
+  }
+  return occurrences;
+}
+
+// Spiegelt getOccurrenceStartsOverlappingMonth aus der App.
+function getOccurrenceStartsOverlappingMonthFeed(event, year, month) {
+  const span = getEventSpanDaysFeed(event);
+  const monthsBack = Math.min(6, Math.ceil((span + 1) / 28) + 1);
+  const starts = new Set();
+  let y = year, m = month;
+  for (let i = 0; i <= monthsBack; i++) {
+    getRecurrenceStartsInMonthFeed(event, y, m).forEach(d => starts.add(d));
+    m--; if (m < 1) { m = 12; y--; }
+  }
+  const monthStart = isoDateFeed(year, month, 1);
+  const monthEnd = isoDateFeed(year, month, new Date(year, month, 0).getDate());
+  return Array.from(starts).filter(startDate => {
+    const endDate = addDaysISOFeed(startDate, span);
+    return endDate >= monthStart && startDate <= monthEnd;
+  });
+}
+
+// Spiegelt buildOccurrenceObject aus der App (inkl. Ausnahmen/Verschiebungen).
+function buildOccurrenceObjectFeed(ev, occurrenceDate, occurrenceEdits) {
+  const edit = occurrenceEdits.find(e => e.seriesId === ev.id && e.occurrenceDate === occurrenceDate) || null;
+  if (edit && edit.deleted) return null;
+  const span = getEventSpanDaysFeed(ev);
+  const defaultStart = combineDatetimeFeed(occurrenceDate, timeOnlyFeed(ev.start));
+  const defaultEnd = combineDatetimeFeed(addDaysISOFeed(occurrenceDate, span), timeOnlyFeed(ev.end));
+  if (edit) {
+    return {
+      seriesId: ev.id, occurrenceDate,
+      title: edit.title !== undefined ? edit.title : ev.title,
+      location: edit.location !== undefined ? edit.location : ev.location,
+      start: edit.start !== undefined ? edit.start : defaultStart,
+      end: edit.end !== undefined ? edit.end : defaultEnd,
+    };
+  }
+  return {
+    seriesId: ev.id, occurrenceDate,
+    title: ev.title, location: ev.location,
+    start: defaultStart, end: defaultEnd,
+  };
+}
+
+// Baut alle Vorkommen für ein einzelnes Event über ein Monatsfenster [startYear/Month .. monthCount Monate].
+function expandEventOverMonths(ev, occurrenceEdits, startYear, startMonth, monthCount) {
+  const results = [];
+  const seen = new Set();
+  let y = startYear, m = startMonth;
+  for (let i = 0; i < monthCount; i++) {
+    getOccurrenceStartsOverlappingMonthFeed(ev, y, m).forEach(startDate => {
+      if (seen.has(startDate)) return;
+      seen.add(startDate);
+      const occ = buildOccurrenceObjectFeed(ev, startDate, occurrenceEdits);
+      if (occ) results.push(occ);
+    });
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return results;
+}
+
+function icsEscape(str) {
+  return String(str || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+}
+
+// Formatiert "YYYY-MM-DDTHH:mm" als lokale iCal-Zeit mit TZID=Europe/Berlin.
+function icsLocalDateTime(datetimeStr) {
+  return datetimeStr.replace(/[-:]/g, '') + '00';
+}
+
+function buildIcsFeed(occurrences) {
+  const now = new Date();
+  const dtstamp = now.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const lines = [];
+  lines.push('BEGIN:VCALENDAR');
+  lines.push('VERSION:2.0');
+  lines.push('PRODID:-//Die Pudolfs Kegelclub//Kalender-Feed//DE');
+  lines.push('CALSCALE:GREGORIAN');
+  lines.push('METHOD:PUBLISH');
+  lines.push('X-WR-CALNAME:Die Pudolfs Kegelclub');
+  lines.push('X-WR-TIMEZONE:Europe/Berlin');
+  lines.push('REFRESH-INTERVAL;VALUE=DURATION:P1W');
+  lines.push('X-PUBLISHED-TTL:P1W');
+
+  occurrences.forEach(occ => {
+    const uid = `${occ.seriesId}-${occ.occurrenceDate}@die-pudolfs.de`;
+    lines.push('BEGIN:VEVENT');
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${dtstamp}`);
+    lines.push(`DTSTART;TZID=Europe/Berlin:${icsLocalDateTime(occ.start)}`);
+    lines.push(`DTEND;TZID=Europe/Berlin:${icsLocalDateTime(occ.end)}`);
+    lines.push(`SUMMARY:${icsEscape(occ.title)}`);
+    if (occ.location) lines.push(`LOCATION:${icsEscape(occ.location)}`);
+    lines.push('END:VEVENT');
+  });
+
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+exports.calendarFeed = onRequest(async (req, res) => {
+  const token = req.query.t;
+  if (!token || typeof token !== 'string') {
+    res.status(403).send('Ungültiger Link.');
+    return;
+  }
+
+  const tokenDoc = await db.collection('kegelbuch').doc('calendar-feed-token').get();
+  const storedToken = tokenDoc.exists ? JSON.parse(tokenDoc.data().value || 'null') : null;
+  if (!storedToken || storedToken !== token) {
+    res.status(403).send('Ungültiger Link.');
+    return;
+  }
+
+  const [eventsDoc, editsDoc] = await Promise.all([
+    db.collection('kegelbuch').doc('calendar-events').get(),
+    db.collection('kegelbuch').doc('calendar-occurrence-edits').get(),
+  ]);
+  let events = [];
+  let occurrenceEdits = [];
+  try { events = eventsDoc.exists ? JSON.parse(eventsDoc.data().value || '[]') : []; } catch (e) { events = []; }
+  try { occurrenceEdits = editsDoc.exists ? JSON.parse(editsDoc.data().value || '[]') : []; } catch (e) { occurrenceEdits = []; }
+
+  const today = new Date();
+  const startYear = today.getUTCFullYear();
+  const startMonth = today.getUTCMonth() + 1;
+
+  let allOccurrences = [];
+  events.forEach(ev => {
+    const isRecurring = ev.recurrence && ev.recurrence !== 'none';
+    if (isRecurring) {
+      // Serien: nur die nächsten 12 Monate ab heute.
+      allOccurrences = allOccurrences.concat(expandEventOverMonths(ev, occurrenceEdits, startYear, startMonth, 12));
+    } else {
+      // Einzeltermine: immer aufnehmen, unabhängig vom Datum.
+      const occ = buildOccurrenceObjectFeed(ev, dateOnlyFeed(ev.start), occurrenceEdits);
+      if (occ) allOccurrences.push(occ);
+    }
+  });
+
+  allOccurrences.sort((a, b) => a.start.localeCompare(b.start));
+
+  const ics = buildIcsFeed(allOccurrences);
+  res.set('Content-Type', 'text/calendar; charset=utf-8');
+  res.set('Content-Disposition', 'inline; filename="pudolfs-kalender.ics"');
+  res.send(ics);
+});

@@ -561,7 +561,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.24';
+  const APP_VERSION = '1.25';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1802,6 +1802,9 @@
       <div class="card">
         <h2 class="section-title">${formatDateDE(state.calendarSelectedDate)}</h2>
         ${eventsHtml}
+      </div>
+      <div class="card">
+        <button type="button" class="btn-secondary" id="cal-subscribe-btn" style="width:100%;">Kalender abonnieren</button>
       </div>
     `;
   }
@@ -3975,6 +3978,58 @@
       state.calendarViewMonth = m;
       state.calendarSelectedDate = targetDate;
       render();
+    });
+    const subscribeBtn = document.getElementById('cal-subscribe-btn');
+    if(subscribeBtn) subscribeBtn.addEventListener('click', ()=>showCalendarSubscribeModal());
+  }
+
+  // Liefert den bestehenden Feed-Token oder erzeugt einmalig einen neuen (lazy).
+  async function getOrCreateCalendarFeedToken(){
+    let token = await getJSONOrThrow('calendar-feed-token', null);
+    if(!token){
+      token = uid('calfeed');
+      await setJSON('calendar-feed-token', token, true);
+    }
+    return token;
+  }
+
+  async function showCalendarSubscribeModal(){
+    showModal(`<p class="empty-state">Link wird vorbereitet…</p>`);
+    let token;
+    try{
+      token = await getOrCreateCalendarFeedToken();
+    }catch(e){
+      showModal(`
+        <h3>Fehler</h3>
+        <p>Der Abo-Link konnte nicht erstellt werden. Bitte versuche es erneut.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      const closeBtn = document.getElementById('modal-cancel-btn');
+      if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
+      return;
+    }
+    const feedUrl = `https://us-central1-die-pudolfs.cloudfunctions.net/calendarFeed?t=${token}`;
+    const webcalUrl = feedUrl.replace(/^https:\/\//, 'webcal://');
+    showModal(`
+      <h3>Kalender abonnieren</h3>
+      <p>Enthält alle Termine (ohne Geburtstage) der nächsten 12 Monate. Auf dem iPhone antippen, um automatisch als Kalender-Abo hinzuzufügen.</p>
+      <p style="word-break:break-all; font-family:var(--font-mono); font-size:13px;"><a href="${webcalUrl}">${escapeHtml(feedUrl)}</a></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-secondary" id="cal-subscribe-copy-btn" style="flex:1;">Link kopieren</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+      </div>
+    `);
+    const closeBtn = document.getElementById('modal-cancel-btn');
+    if(closeBtn) closeBtn.addEventListener('click', closeGenericModal);
+    const copyBtn = document.getElementById('cal-subscribe-copy-btn');
+    if(copyBtn) copyBtn.addEventListener('click', async ()=>{
+      try{
+        await navigator.clipboard.writeText(feedUrl);
+        copyBtn.textContent = 'Kopiert!';
+        setTimeout(()=>{ copyBtn.textContent = 'Link kopieren'; }, 1500);
+      }catch(e){ /* Zwischenablage nicht verfügbar - Link steht bereits sichtbar da */ }
     });
   }
 
