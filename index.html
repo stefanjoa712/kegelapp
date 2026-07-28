@@ -223,8 +223,9 @@
   .empty-state-small{color:var(--muted); font-size:13px; font-style:italic; margin:4px 0;}
   .version-footer{color:var(--muted); font-size:11px; font-family:var(--font-mono); text-align:center; padding:4px 12px 22px;}
 
-  .evening-row{display:flex; flex-direction:column; gap:6px; padding:12px 2px; border-bottom:1px solid var(--line); cursor:pointer;}
+  .evening-row{display:flex; align-items:center; gap:10px; padding:12px 2px; border-bottom:1px solid var(--line); cursor:pointer;}
   .evening-row:last-child{border-bottom:none;}
+  .evening-row-main{flex:1; min-width:0; display:flex; flex-direction:column; gap:6px;}
   .evening-row-top{display:flex; justify-content:space-between; align-items:center;}
   .evening-row .date{font-family:var(--font-display); font-size:16px; font-weight:600;}
   .evening-row-stats{display:flex; align-items:center; gap:14px;}
@@ -352,11 +353,13 @@
   .form-error{color:var(--wine); font-size:13px; min-height:18px; margin:6px 0;}
 
   .member-row{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px dashed var(--line);}
-  .member-row-full{padding:9px 0; border-bottom:1px dashed var(--line);}
+  .member-row-full{padding:9px 0; border-bottom:1px dashed var(--line); display:flex; align-items:center; gap:10px;}
+  .member-row-full-main{flex:1; min-width:0;}
   .member-row-clickable{cursor:pointer;}
   .member-row-clickable:active{background:var(--bg);}
   .member-row-full:last-child{border-bottom:none;}
   .member-row-full .member-row{border-bottom:none; padding:0 0 4px;}
+  .member-row-full .cal-event-chevron{flex-shrink:0;}
   .member-account-row{display:flex; align-items:center; flex-wrap:wrap; gap:8px; row-gap:4px;}
   .member-account-status{font-size:12px; color:var(--muted);}
   .member-account-status.linked{color:var(--brass);}
@@ -556,7 +559,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.19';
+  const APP_VERSION = '1.20';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1652,15 +1655,13 @@
   }
 
   function eventManagementRowHtml(ev){
-    return `<div class="member-row-full" data-id="${ev.id}">
+    return `<div class="member-row-full member-row-clickable" data-id="${ev.id}">
       <div class="member-row">
         <span class="fine-row-info">
           <span class="fine-row-name">${escapeHtml(ev.title)}</span>
           <span class="transaction-meta">${RECURRENCE_LABELS_DE[ev.recurrence]||'Einmalig'} · ab ${formatDateDE(dateOnly(ev.start))}</span>
         </span>
-        <span class="row-actions">
-          <button type="button" class="icon-btn edit-series-btn" data-id="${ev.id}" aria-label="Bearbeiten">✎</button>
-        </span>
+        <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </div>
     </div>`;
   }
@@ -1680,9 +1681,9 @@
   }
 
   function attachEventManagementListeners(){
-    document.querySelectorAll('.edit-series-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const ev = state.calendarEvents.find(x=>x.id===b.dataset.id);
+    document.querySelectorAll('.member-row-clickable[data-id]').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const ev = state.calendarEvents.find(x=>x.id===row.dataset.id);
         if(ev) goToEventDetail(buildSeriesEditOccurrence(ev), 'eventManagement');
       });
     });
@@ -2137,11 +2138,13 @@
           ` : '';
           return `
             <div class="evening-row" data-id="${e.id}">
-              <div class="evening-row-top">
-                <span class="date">${formatDateDE(e.date)}${e.closed?` <span class="closed-icon" title="Abgeschlossen">${ICON_CLOSED}</span>`:''}</span>
-                <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+              <div class="evening-row-main">
+                <div class="evening-row-top">
+                  <span class="date">${formatDateDE(e.date)}${e.closed?` <span class="closed-icon" title="Abgeschlossen">${ICON_CLOSED}</span>`:''}</span>
+                </div>
+                ${statsHtml}
               </div>
-              ${statsHtml}
+              <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
             </div>
           `;
         }).join('');
@@ -2260,11 +2263,13 @@
       statusText = 'Kein Account verknüpft';
     }
     return `<div class="member-row-full member-row-clickable" data-id="${m.id}">
-      <div class="member-row">
-        <span>${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)}${nicknameHtml}${roleHtml}</span>
-        <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <div class="member-row-full-main">
+        <div class="member-row">
+          <span>${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)}${nicknameHtml}${roleHtml}</span>
+        </div>
+        <div class="member-account-row"><span class="member-account-status muted">${statusText}</span></div>
       </div>
-      <div class="member-account-row"><span class="member-account-status muted">${statusText}</span></div>
+      <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
     </div>`;
   }
 
@@ -4933,8 +4938,6 @@
       const t = state.financeTransactions.find(x=>x.id===state.currentTransactionId);
       if(t) showDeleteTransactionModal(t);
     });
-    const descInput = document.getElementById('new-tx-description');
-    if(descInput) descInput.focus();
     const saveBtn = document.getElementById('save-tx-btn');
     if(!saveBtn) return;
     saveBtn.addEventListener('click', async ()=>{
