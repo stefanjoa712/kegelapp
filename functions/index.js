@@ -258,6 +258,32 @@ async function loadMembers() {
   return members;
 }
 
+// Kegelabende liegen seit der Multi-Club-Migration unter 'clubs/<clubId>/evenings/<eveningId>'
+// (Hauptdokument: Datum, Sitzordnung, Strafenkatalog-Snapshot, Notizen, Abschluss-Status) statt im
+// alten 'kegelbuch/evening-<id>'. Die eigentlichen Strafen-Zähler (finesBySeat/adHocFinesBySeat)
+// liegen NICHT mehr im Hauptdokument, sondern in einer Unter-Collection mit einem Dokument PRO
+// SITZPLATZ ('clubs/<clubId>/evenings/<eveningId>/seats/<seatId>') - Grund: mehrere Personen
+// tragen während des Abends gleichzeitig auf unterschiedlichen Geräten Strafen für
+// unterschiedliche Sitzplätze ein, ein kompletter Überschrieb des ganzen Abend-Dokuments hätte
+// hier ein Last-Write-Wins-Risiko gehabt. Der Firestore-Update-Trigger unten reagiert weiterhin
+// nur auf Änderungen am HAUPTDOKUMENT (z.B. den closed-Übergang) - die Sitzplatz-Strafen müssen
+// für den Mailversand separat nachgeladen und ins Objekt gemischt werden, bevor die bestehende
+// Berechnungslogik (fineTotalForSeat, buildCatalogLines, ...) darauf zugreifen kann.
+async function enrichEveningWithSeatFines(detail) {
+  if (!detail) return detail;
+  const seatsRef = db.collection('clubs').doc(CLUB_ID).collection('evenings').doc(detail.id).collection('seats');
+  const snaps = await seatsRef.get();
+  detail.finesBySeat = {};
+  detail.adHocFinesBySeat = {};
+  snaps.forEach(snap => {
+    let seatData;
+    try { seatData = JSON.parse(snap.data().value); } catch (e) { return; }
+    if (seatData.finesBySeat) detail.finesBySeat[snap.id] = seatData.finesBySeat;
+    if (seatData.adHocFinesBySeat) detail.adHocFinesBySeat[snap.id] = seatData.adHocFinesBySeat;
+  });
+  return detail;
+}
+
 function formatEveningDate(detail) {
   return new Date(detail.date + 'T12:00:00').toLocaleDateString('de-DE', {
     day: '2-digit', month: '2-digit', year: 'numeric'
@@ -375,12 +401,11 @@ async function handleEveningReopened(before, docId) {
 
 exports.sendFineEmailsOnClose = onDocumentUpdated(
   {
-    document: 'kegelbuch/{docId}',
+    document: `clubs/${CLUB_ID}/evenings/{docId}`,
     secrets: [resendApiKey],
   },
   async (event) => {
     const docId = event.params.docId;
-    if (!docId.startsWith('evening-')) return;
 
     const beforeRaw = event.data.before.data();
     const afterRaw = event.data.after.data();
@@ -400,11 +425,14 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
     if (skipEmail) {
       logger.info(`Mailversand für Abend ${docId} übersprungen (Checkbox deaktiviert).`);
     } else if (isClosed && !wasClosed) {
+      await enrichEveningWithSeatFines(after);
       await handleEveningClosed(after, docId);
     } else if (!isClosed && wasClosed) {
+      await enrichEveningWithSeatFines(before);
       await handleEveningReopened(before, docId);
     }
-    // Sonst: keine für E-Mails relevante Änderung (z.B. nur eine Strafe angepasst) - nichts tun.
+    // Sonst: keine für E-Mails relevante Änderung (z.B. nur eine Strafe angepasst - löst hier
+    // ohnehin kein Update aus, da Strafen jetzt in eigenen Sitzplatz-Dokumenten liegen) - nichts tun.
   }
 );
 
@@ -559,10 +587,9 @@ exports.shareGuestBill = onRequest(async (req, res) => {
   }
 
   const db = getFirestore();
-  const snapshot = await db.collection('kegelbuch').get();
+  const eveningsSnapshot = await db.collection('clubs').doc(CLUB_ID).collection('evenings').get();
   let foundDetail = null, foundSeat = null;
-  for (const doc of snapshot.docs) {
-    if (!doc.id.startsWith('evening-')) continue;
+  for (const doc of eveningsSnapshot.docs) {
     let detail;
     try { detail = JSON.parse(doc.data().value || '{}'); } catch (e) { continue; }
     const seat = (detail.seating || []).find(s => s.shareToken === token);
@@ -573,6 +600,8 @@ exports.shareGuestBill = onRequest(async (req, res) => {
     res.status(404).set('Content-Type', 'text/html; charset=utf-8').send(buildShareNotFoundHtml());
     return;
   }
+
+  await enrichEveningWithSeatFines(foundDetail);
 
   const dateStr = formatEveningDate(foundDetail);
   const catalogLines = buildCatalogLines(foundDetail, foundSeat.seatId);

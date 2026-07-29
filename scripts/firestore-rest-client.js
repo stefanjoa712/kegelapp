@@ -106,6 +106,26 @@ class FirestoreRestClient {
       fields: jsToFirestoreFields(data)
     });
   }
+
+  // Listet alle Dokumente einer Collection (folgt Pagination automatisch). Gibt eine Liste von
+  // { id, ...felder } zurück. collectionPath ist relativ zur Datenbank-Wurzel, z.B. 'kegelbuch'.
+  async listDocuments(collectionPath) {
+    const results = [];
+    let pageToken;
+    do {
+      const query = pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : '';
+      const result = await request('GET', `${this.base}/${collectionPath}${query}`, this.accessToken);
+      if (!result) break;
+      (result.documents || []).forEach((docData) => {
+        const id = docData.name.split('/').pop();
+        const obj = { id };
+        for (const key of Object.keys(docData.fields || {})) obj[key] = firestoreValueToJs(docData.fields[key]);
+        results.push(obj);
+      });
+      pageToken = result.nextPageToken;
+    } while (pageToken);
+    return results;
+  }
 }
 
 module.exports = { FirestoreRestClient };
