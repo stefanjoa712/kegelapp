@@ -578,7 +578,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.36';
+  const APP_VERSION = '1.37';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1333,7 +1333,7 @@
   // direction = +1 beim Abschließen, -1 beim Wieder-Öffnen oder Löschen eines abgeschlossenen Abends.
   async function updateAttendanceStatsForEvening(detail, direction){
     let stats;
-    try{ stats = await getJSONOrThrow('attendance-stats', {totalsByYear:{}, attendanceByMember:{}}); }
+    try{ stats = await getClubJSONOrThrow('attendance-stats', {totalsByYear:{}, attendanceByMember:{}}); }
     catch(e){ stats = {totalsByYear:{}, attendanceByMember:{}}; }
     if(!stats.totalsByYear) stats.totalsByYear = {};
     if(!stats.attendanceByMember) stats.attendanceByMember = {};
@@ -1348,13 +1348,13 @@
       const newCount = (stats.attendanceByMember[name][year]||0) + direction;
       if(newCount>0) stats.attendanceByMember[name][year] = newCount; else delete stats.attendanceByMember[name][year];
     });
-    await setJSON('attendance-stats', stats, true);
+    await setClubJSON('attendance-stats', stats);
   }
 
   // Liest die vorab aggregierte Statistik (ein einziges Dokument statt aller Abende einzeln).
   async function computeMemberAttendanceStats(memberName){
     let raw;
-    try{ raw = await getJSONOrThrow('attendance-stats', {totalsByYear:{}, attendanceByMember:{}}); }
+    try{ raw = await getClubJSONOrThrow('attendance-stats', {totalsByYear:{}, attendanceByMember:{}}); }
     catch(e){ raw = {totalsByYear:{}, attendanceByMember:{}}; }
     const totalsByYear = raw.totalsByYear || {};
     const attendedByYear = (raw.attendanceByMember && raw.attendanceByMember[memberName]) || {};

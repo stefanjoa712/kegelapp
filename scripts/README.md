@@ -163,6 +163,27 @@ auf `clubs/die-pudolfs/evenings/{docId}` geändert. Nach dem Merge/Deploy
 läuft der GitHub-Actions-Workflow automatisch auch den Functions-Deploy mit,
 kein separater manueller Schritt nötig.
 
+## Migration: Anwesenheits-Statistik
+
+Fünftes Script, `migrate-attendance-stats.js`, verschiebt die vorab
+aggregierte Anwesenheits-Statistik (`kegelbuch/attendance-stats`) nach
+`clubs/die-pudolfs/data/attendance-stats`. Bleibt wie Strafen-/Spiele-
+Katalog ein einzelnes Blob-Dokument - es ist ein einziges Aggregat-Objekt
+(Jahres-Totals + Anwesenheit pro Mitglied), keine Liste, und wird nur beim
+Abschließen/Wiederöffnen eines Abends aktualisiert. Deutlich seltener und
+mit geringerem Kollisionsrisiko als z.B. die Sitzplatz-Strafen der
+Kegelabende, eine Aufteilung in Einzeldokumente lohnt sich hier nicht.
+
+```bash
+cd scripts
+node migrate-attendance-stats.js            # Dry-Run
+node migrate-attendance-stats.js --apply    # echte Ausführung
+```
+
+Auch dieses Script ist idempotent und löscht das alte Dokument unter
+`kegelbuch/` nicht. Ein Firestore-Regeln-Deploy ist hierfür nicht nötig,
+die Cloud Functions nutzen `attendance-stats` nicht.
+
 ## Technischer Hintergrund: warum kein firebase-admin?
 
 Ein erster Versuch, das Firebase-CLI-Zugriffstoken einfach an
