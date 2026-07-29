@@ -6050,7 +6050,19 @@
   setInterval(checkForUpdate, 5 * 60 * 1000);
 
   // ---------- Auth: Login, "eingeloggt bleiben", Einladungslink zum Passwort-Setzen ----------
-  function renderLoginScreen(infoMsg){
+  // Einfacher, von state.view unabhängiger Browser-Zurück-Mechanismus für den Wechsel
+  // Login-Screen <-> "Kegelclub anlegen"-Seite (läuft VOR jedem Login, wo der große
+  // state.view-History-Mechanismus weiter unten noch nicht greift).
+  window.addEventListener('popstate', (event)=>{
+    const screen = event.state && event.state.authScreen;
+    if(screen==='create-club'){ renderCreateClubScreen({ fromPopstate: true }); }
+    else if(screen==='login'){ renderLoginScreen(null, { fromPopstate: true }); }
+  });
+
+  function renderLoginScreen(infoMsg, opts){
+    if(!(opts && opts.fromPopstate)){
+      history.replaceState({authScreen:'login'}, '', location.pathname);
+    }
     document.getElementById('app').innerHTML = `
       <div class="login-screen">
         <img src="${LOGO_DATA_URI}" alt="Die Pudolfs Kegelclub" class="login-logo">
@@ -6112,7 +6124,10 @@
 
   // Seite zum Anlegen eines neuen Kegelclubs - läuft VOR jedem Login (kein Auth vorhanden),
   // ruft dafür die eigenständige createClub-Cloud-Function auf (siehe functions/index.js).
-  function renderCreateClubScreen(){
+  function renderCreateClubScreen(opts){
+    if(!(opts && opts.fromPopstate)){
+      history.pushState({authScreen:'create-club'}, '', location.pathname);
+    }
     document.getElementById('app').innerHTML = `
       <div class="login-screen">
         <img src="${LOGO_DATA_URI}" alt="Die Pudolfs Kegelclub" class="login-logo">
@@ -6146,7 +6161,7 @@
         <p class="muted" id="cc-back-link" style="margin-top:16px; text-align:center; cursor:pointer; text-decoration:underline;">Zurück zur Anmeldung</p>
       </div>
     `;
-    document.getElementById('cc-back-link').addEventListener('click', ()=> renderLoginScreen());
+    document.getElementById('cc-back-link').addEventListener('click', ()=> history.back());
     document.getElementById('cc-name').focus();
 
     const idPreviewEl = document.getElementById('cc-id-preview');
