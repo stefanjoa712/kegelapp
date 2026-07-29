@@ -368,6 +368,7 @@
   .member-row-clickable{cursor:pointer;}
   .member-row-clickable:active{background:var(--bg);}
   .member-row-full:last-child{border-bottom:none;}
+  .club-selection-row:active{background:var(--bg);}
   .member-row-full .member-row{border-bottom:none; padding:0 0 4px;}
   .member-row-full .cal-event-chevron{flex-shrink:0;}
   .member-account-row{display:flex; align-items:center; flex-wrap:wrap; gap:8px; row-gap:4px;}
@@ -619,7 +620,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.44';
+  const APP_VERSION = '1.45';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -6112,10 +6113,17 @@
       const listEl = document.getElementById('club-selection-list');
       listEl.className = '';
       listEl.innerHTML = clubs.map(c=>`
-        <button type="button" class="btn-secondary club-selection-btn" data-club-id="${escapeHtml(c.id)}" style="width:100%; margin-bottom:10px; text-align:left;">${escapeHtml(c.name)}</button>
+        <div class="member-row-full club-selection-row" data-club-id="${escapeHtml(c.id)}" style="cursor:pointer;">
+          <div class="member-row-full-main">
+            <div class="member-row">
+              <span>${escapeHtml(c.name)}</span>
+            </div>
+          </div>
+          <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        </div>
       `).join('');
-      listEl.querySelectorAll('.club-selection-btn').forEach(btn=>{
-        btn.addEventListener('click', ()=> resolve(btn.dataset.clubId));
+      listEl.querySelectorAll('.club-selection-row').forEach(row=>{
+        row.addEventListener('click', ()=> resolve(row.dataset.clubId));
       });
     });
   }
