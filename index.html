@@ -6108,20 +6108,6 @@
     document.getElementById('login-password').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); submit(); } });
   }
 
-  // Leitet aus einem Clubnamen eine lesbare ID ab (kleingeschrieben, Umlaute aufgelöst,
-  // Leerzeichen/Sonderzeichen zu Bindestrichen) - rein zur Vorschau auf der Anlegen-Seite.
-  // Die tatsächliche, endgültige (ggf. mit Zahl versehene) ID wird serverseitig in der
-  // createClub-Cloud-Function vergeben, da nur dort geprüft werden kann, ob sie schon vergeben ist.
-  function slugifyClubNamePreview(name){
-    return String(name)
-      .trim()
-      .toLowerCase()
-      .replace(/[äöüß]/g, c=> ({ä:'ae', ö:'oe', ü:'ue', ß:'ss'}[c]))
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '') || '';
-  }
-
   // Seite zum Anlegen eines neuen Kegelclubs - läuft VOR jedem Login (kein Auth vorhanden),
   // ruft dafür die eigenständige createClub-Cloud-Function auf (siehe functions/index.js).
   function renderCreateClubScreen(opts){
@@ -6135,8 +6121,7 @@
           <h2 class="section-title">Kegelclub anlegen</h2>
 
           <label for="cc-name">Name des Kegelclubs</label>
-          <input type="text" id="cc-name" placeholder="z.B. Die Meisterkegler">
-          <p class="muted" id="cc-id-preview" style="margin-top:4px; margin-bottom:14px;"></p>
+          <input type="text" id="cc-name" placeholder="z.B. Die Meisterkegler" style="margin-bottom:14px;">
 
           <label for="cc-founded">Gründungsdatum</label>
           <input type="date" id="cc-founded" value="${todayISO()}">
@@ -6163,12 +6148,6 @@
     `;
     document.getElementById('cc-back-link').addEventListener('click', ()=> history.back());
     document.getElementById('cc-name').focus();
-
-    const idPreviewEl = document.getElementById('cc-id-preview');
-    document.getElementById('cc-name').addEventListener('input', e=>{
-      const slug = slugifyClubNamePreview(e.target.value);
-      idPreviewEl.textContent = slug ? `ID: ${slug}` : '';
-    });
 
     document.getElementById('cc-submit-btn').addEventListener('click', async ()=>{
       const clubName = document.getElementById('cc-name').value.trim();
