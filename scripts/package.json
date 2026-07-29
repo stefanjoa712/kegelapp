@@ -1,0 +1,8 @@
+{
+  "name": "kegelapp-scripts",
+  "private": true,
+  "description": "Einmalige Wartungs-Scripts für die Pudolfs Kegelapp (kein Teil der App selbst)",
+  "scripts": {
+    "migrate-members": "node migrate-members.js"
+  }
+}
