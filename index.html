@@ -565,6 +565,10 @@
   // unlinkMemberAccount) - CURRENT_CLUB_ID wird erst nach dem Login bekannt (resolveActiveClub())
   // und ist bis dahin null. Kein Zugriff auf Firestore darf VOR diesem Zeitpunkt versucht werden.
   let CURRENT_CLUB_ID = null;
+  // Fallback nur für den Admin-Sonderfall in resolveActiveClub() (siehe dort) - der einzige
+  // aktuell existierende Club, damit der Admin sich nicht selbst aussperrt, solange er noch
+  // keinen Claim hat (z.B. beim allerersten Login nach dieser Umstellung).
+  const DEFAULT_CLUB_ID = 'die-pudolfs';
   function clubRef(){ return doc(db, 'clubs', CURRENT_CLUB_ID); }
   function clubMembersCollection(){ return collection(db, 'clubs', CURRENT_CLUB_ID, 'members'); }
   function clubMemberDocRef(id){ return doc(db, 'clubs', CURRENT_CLUB_ID, 'members', id); }
@@ -574,7 +578,12 @@
   // - Genau ein Club -> direkt übernehmen, kein Klick nötig (der heute übliche Fall).
   // - Mehrere Clubs -> Auswahl-Screen zeigen (Club-Namen aus clubs/<clubId>-Stammdaten geladen),
   //   Nutzer wählt; die Wahl wird NICHT gemerkt, bei jedem Login erneut gefragt.
-  // - Kein Club -> Fehlermeldung, kein Zugriff auf die App.
+  // - Kein Club, aber Admin-Account -> DEFAULT_CLUB_ID verwenden. Sonderfall: der Admin ist kein
+  //   Mitglied und bekommt seinen Claim nicht über inviteMember, sondern nur über den
+  //   "Claims nachtragen"-Button in den Einstellungen (backfillClubClaims) - dieser Button ist
+  //   aber selbst erst NACH einem erfolgreichen Login erreichbar. Ohne diesen Fallback würde sich
+  //   der Admin nach der Umstellung dauerhaft aussperren, ohne je bis zu diesem Button zu kommen.
+  // - Kein Club, kein Admin -> Fehlermeldung, kein Zugriff auf die App.
   // 'forceRefresh=true' erzwingt einen neuen ID-Token vom Server (Firebase cached Tokens bis zu
   // einer Stunde) - wichtig direkt nach einer frischen Einladung, wo der Claim serverseitig
   // gerade erst gesetzt wurde und ein gecachtes Token ihn noch nicht enthält.
@@ -587,6 +596,9 @@
       // Möglich, dass der Claim gerade erst gesetzt wurde und das gecachte Token ihn noch nicht
       // kennt - einmal mit erzwungenem Refresh nachschauen, bevor wir aufgeben.
       return resolveActiveClub(user, true);
+    }
+    if(clubIds.length===0 && user.email===ADMIN_EMAIL){
+      return DEFAULT_CLUB_ID;
     }
     if(clubIds.length===0){
       renderNoClubAccessScreen();
