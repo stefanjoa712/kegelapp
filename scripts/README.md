@@ -91,6 +91,36 @@ Auch dieses Script ist idempotent und löscht die alten Dokumente unter
 wenn ihr die Mitglieder-Migration schon gemacht habt), dann Script laufen
 lassen, dann erst den neuen `index.html`-Stand deployen.
 
+## Migration: Kalender (Termine, Rückmeldungen, Serien-Ausnahmen, Feed-Token)
+
+Drittes Script, `migrate-calendar.js`, migriert alles rund um den Kalender:
+
+- `calendar-events`, `calendar-rsvps` und `calendar-occurrence-edits` ->
+  wie bei den Mitgliedern eigene Dokumente pro Eintrag
+  (`clubs/die-pudolfs/events/<id>`, `.../rsvps/<id>`,
+  `.../occurrence-edits/<id>`) + jeweils ein Index-Dokument. Grund: hier
+  können mehrere Personen gleichzeitig auf unterschiedlichen Geräten etwas
+  ändern - ein Termin wird angelegt während jemand anders zu einem anderen
+  Termin zusagt, oder zwei Personen passen gleichzeitig unterschiedliche
+  Einzeltermine EINER Serie an. Ein kompletter Array-Überschrieb hätte hier
+  das gleiche Last-Write-Wins-Risiko wie ursprünglich bei den Mitgliedern.
+- `calendar-feed-token` -> wie bei Strafen/Spielen ein einzelnes
+  Blob-Dokument unter `clubs/die-pudolfs/data/`. Ein einzelner Wert, der
+  praktisch nie parallel von mehreren Personen geschrieben wird.
+
+```bash
+cd scripts
+node migrate-calendar.js            # Dry-Run
+node migrate-calendar.js --apply    # echte Ausführung
+```
+
+Auch dieses Script ist idempotent und löscht die alten Dokumente unter
+`kegelbuch/` nicht - gleiches Vorgehen wie bei den vorherigen Migrationen:
+Script laufen lassen, Ausgabe kontrollieren, dann erst den neuen
+`index.html`-Stand deployen. Ein Firestore-Regeln-Deploy ist hierfür nicht
+nötig (die bestehende Regel deckt beliebige Pfadtiefen unter `clubs/`
+bereits ab).
+
 ## Technischer Hintergrund: warum kein firebase-admin?
 
 Ein erster Versuch, das Firebase-CLI-Zugriffstoken einfach an
