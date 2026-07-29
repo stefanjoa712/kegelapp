@@ -565,10 +565,6 @@
   // unlinkMemberAccount) - CURRENT_CLUB_ID wird erst nach dem Login bekannt (resolveActiveClub())
   // und ist bis dahin null. Kein Zugriff auf Firestore darf VOR diesem Zeitpunkt versucht werden.
   let CURRENT_CLUB_ID = null;
-  // Fallback nur für den Admin-Sonderfall in resolveActiveClub() (siehe dort) - der einzige
-  // aktuell existierende Club, damit der Admin sich nicht selbst aussperrt, solange er noch
-  // keinen Claim hat (z.B. beim allerersten Login nach dieser Umstellung).
-  const DEFAULT_CLUB_ID = 'die-pudolfs';
   function clubRef(){ return doc(db, 'clubs', CURRENT_CLUB_ID); }
   function clubMembersCollection(){ return collection(db, 'clubs', CURRENT_CLUB_ID, 'members'); }
   function clubMemberDocRef(id){ return doc(db, 'clubs', CURRENT_CLUB_ID, 'members', id); }
@@ -578,11 +574,12 @@
   // - Genau ein Club -> direkt übernehmen, kein Klick nötig (der heute übliche Fall).
   // - Mehrere Clubs -> Auswahl-Screen zeigen (Club-Namen aus clubs/<clubId>-Stammdaten geladen),
   //   Nutzer wählt; die Wahl wird NICHT gemerkt, bei jedem Login erneut gefragt.
-  // - Kein Club, aber Admin-Account -> DEFAULT_CLUB_ID verwenden. Sonderfall: der Admin ist kein
-  //   Mitglied und bekommt seinen Claim nicht über inviteMember, sondern nur über den
-  //   "Claims nachtragen"-Button in den Einstellungen (backfillClubClaims) - dieser Button ist
-  //   aber selbst erst NACH einem erfolgreichen Login erreichbar. Ohne diesen Fallback würde sich
-  //   der Admin nach der Umstellung dauerhaft aussperren, ohne je bis zu diesem Button zu kommen.
+  // - Kein Club, aber Admin-Account -> Auswahl über ALLE existierenden Clubs (nicht nur die aus
+  //   dem - hier leeren - Claim). Sonderfall: der Admin ist kein Mitglied und bekommt seinen
+  //   Claim nicht über inviteMember, sondern nur über den "Claims nachtragen"-Button in den
+  //   Einstellungen (backfillClubClaims) - dieser Button ist aber selbst erst NACH einem
+  //   erfolgreichen Login erreichbar. Ohne diesen Fallback würde sich der Admin nach der
+  //   Umstellung dauerhaft aussperren, ohne je bis zu diesem Button zu kommen.
   // - Kein Club, kein Admin -> Fehlermeldung, kein Zugriff auf die App.
   // 'forceRefresh=true' erzwingt einen neuen ID-Token vom Server (Firebase cached Tokens bis zu
   // einer Stunde) - wichtig direkt nach einer frischen Einladung, wo der Claim serverseitig
@@ -598,7 +595,11 @@
       return resolveActiveClub(user, true);
     }
     if(clubIds.length===0 && user.email===ADMIN_EMAIL){
-      return DEFAULT_CLUB_ID;
+      let allClubIds = [];
+      try{ allClubIds = await getAllClubIds(); }catch(e){ /* fällt unten auf "Kein Zugriff" zurück */ }
+      if(allClubIds.length===0){ renderNoClubAccessScreen(); return null; }
+      if(allClubIds.length===1) return allClubIds[0];
+      return await showClubSelectionScreen(allClubIds);
     }
     if(clubIds.length===0){
       renderNoClubAccessScreen();
@@ -1024,6 +1025,13 @@
   }
   async function saveClub(clubData){
     await withTimeout(setDoc(clubRef(), clubData, { merge: true }), STORAGE_TIMEOUT_MS);
+  }
+  // Listet die IDs ALLER existierenden Clubs auf, unabhängig von einem Claim - wird nur für den
+  // Admin-Sonderfall in resolveActiveClub() gebraucht (Admin hat noch keinen Claim, soll aber aus
+  // allen Clubs wählen können statt fest auf einen verdrahtet zu sein).
+  async function getAllClubIds(){
+    const snaps = await withTimeout(getDocs(collection(db, 'clubs')), STORAGE_TIMEOUT_MS);
+    return snaps.docs.map(d=> d.id);
   }
 
 
