@@ -73,8 +73,8 @@ jederzeit zur alten `index.html`-Version zurück-deployen, falls nötig.
 
 Zweites Script, `migrate-fines-games.js`, verschiebt analog den Strafen-
 Katalog (`kegelbuch/fines-catalog`) und den Spiele-Katalog
-(`kegelbuch/games-catalog`) zu `clubs/die-pudolfs/fines-catalog` bzw.
-`clubs/die-pudolfs/games-catalog`. Anders als bei den Mitgliedern bleibt
+(`kegelbuch/games-catalog`) zu `clubs/die-pudolfs/data/fines-catalog` bzw.
+`clubs/die-pudolfs/data/games-catalog`. Anders als bei den Mitgliedern bleibt
 hier jeweils ein einzelnes Blob-Dokument pro Club - beide Listen sind klein
 und selten parallel bearbeitet, eine Aufteilung in Einzeldokumente lohnt sich
 hier nicht.

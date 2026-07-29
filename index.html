@@ -740,7 +740,11 @@
   // Daten, die nur diesen einen Club betreffen (z.B. Strafen-/Spiele-Katalog), aber wo sich der
   // Aufwand einer Aufteilung in Einzeldokumente (wie bei den Mitgliedern) nicht lohnt, weil es
   // sich um kleine, selten parallel bearbeitete Listen handelt.
-  function clubDocRef(key){ return doc(db, 'clubs', CURRENT_CLUB_ID, key); }
+  // Firestore-Dokumentpfade brauchen eine GERADE Anzahl Segmente (collection/doc/collection/doc/...).
+  // 'clubs/<clubId>/<key>' hätte nur 3 Segmente und wäre kein gültiger Dokumentpfad (das schlug
+  // beim ersten Versuch mit 'HTTP 400: lacks /' fehl) - daher der feste Zwischenschritt 'data' als
+  // Collection-Name, macht daraus 'clubs/<clubId>/data/<key>' mit 4 Segmenten.
+  function clubDocRef(key){ return doc(db, 'clubs', CURRENT_CLUB_ID, 'data', key); }
   async function getClubJSON(key, fallback, onBackgroundUpdate){
     let cacheResult;
     try{

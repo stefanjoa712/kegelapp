@@ -1,14 +1,20 @@
 /**
  * Einmalige Migration: verschiebt den Strafen-Katalog (kegelbuch/fines-catalog) und den
- * Spiele-Katalog (kegelbuch/games-catalog) zu 'clubs/<clubId>/fines-catalog' bzw.
- * 'clubs/<clubId>/games-catalog'.
+ * Spiele-Katalog (kegelbuch/games-catalog) zu 'clubs/<clubId>/data/fines-catalog' bzw.
+ * 'clubs/<clubId>/data/games-catalog'.
  *
- * WARUM: Vorbereitung, damit die App mehrere Kegelclubs verwalten kann (siehe bereits
- * durchgeführte Mitglieder-Migration in migrate-members.js). Anders als bei den Mitgliedern
- * bleiben Strafen- und Spiele-Katalog bewusst als EIN Blob-Dokument pro Club - es sind kleine,
- * selten parallel bearbeitete Listen, bei denen sich eine Aufteilung in Einzeldokumente nicht
- * lohnt. Nur der Speicherort ändert sich (kegelbuch/... -> clubs/<clubId>/...), das Datenformat
- * bleibt exakt gleich (ein JSON-Array als String im Feld 'value').
+ * WARUM der Pfad 'clubs/<clubId>/data/<key>' statt 'clubs/<clubId>/<key>': Firestore-
+ * Dokumentpfade brauchen eine GERADE Anzahl Segmente (collection/doc/collection/doc/...).
+ * 'clubs/<clubId>/<key>' hat nur 3 Segmente und ist kein gültiger Dokumentpfad (das schlug im
+ * ersten Anlauf mit 'HTTP 400: lacks /' fehl) - der feste Zwischenschritt 'data' als
+ * Collection-Name macht daraus 4 Segmente, ein gültiges Dokument.
+ *
+ * WARUM überhaupt verschieben: Vorbereitung, damit die App mehrere Kegelclubs verwalten kann
+ * (siehe bereits durchgeführte Mitglieder-Migration in migrate-members.js). Anders als bei den
+ * Mitgliedern bleiben Strafen- und Spiele-Katalog bewusst als EIN Blob-Dokument pro Club - es
+ * sind kleine, selten parallel bearbeitete Listen, bei denen sich eine Aufteilung in
+ * Einzeldokumente nicht lohnt. Nur der Speicherort ändert sich, das Datenformat bleibt exakt
+ * gleich (ein JSON-Array als String im Feld 'value').
  *
  * WICHTIG: Dieses Script LÖSCHT die alten Dokumente 'kegelbuch/fines-catalog' und
  * 'kegelbuch/games-catalog' NICHT. Sie bleiben als Backup/Fallback in Firestore liegen. Der
@@ -53,7 +59,7 @@ async function main() {
   console.log(apply ? 'Modus: ECHTE AUSFÜHRUNG (--apply)' : 'Modus: DRY-RUN (keine Schreibvorgänge, --apply anhängen für echten Lauf)');
   console.log('');
 
-  const clubPath = `clubs/${CLUB_ID}`;
+  const clubDataPath = `clubs/${CLUB_ID}/data`;
   let anyFound = false;
 
   for (const { key, label } of CATALOGS) {
@@ -85,14 +91,14 @@ async function main() {
     console.log('');
 
     if (!apply) {
-      console.log(`Würde 'clubs/${CLUB_ID}/${key}' mit diesen ${list.length} Einträgen schreiben.`);
+      console.log(`Würde 'clubs/${CLUB_ID}/data/${key}' mit diesen ${list.length} Einträgen schreiben.`);
       console.log(`Der alte 'kegelbuch/${key}' bleibt unverändert erhalten.`);
       console.log('');
       continue;
     }
 
-    await db.setDoc(`${clubPath}/${key}`, { value: JSON.stringify(list) });
-    console.log(`Geschrieben: clubs/${CLUB_ID}/${key} (${list.length} Einträge).`);
+    await db.setDoc(`${clubDataPath}/${key}`, { value: JSON.stringify(list) });
+    console.log(`Geschrieben: clubs/${CLUB_ID}/data/${key} (${list.length} Einträge).`);
     console.log('');
   }
 
