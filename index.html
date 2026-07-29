@@ -571,18 +571,25 @@
 
   // Liest die Club-Zugehörigkeit (Custom Claim 'clubIds') des gerade eingeloggten Nutzers und
   // setzt CURRENT_CLUB_ID entsprechend:
-  // - Genau ein Club -> direkt übernehmen, kein Klick nötig (der heute übliche Fall).
-  // - Mehrere Clubs -> Auswahl-Screen zeigen (Club-Namen aus clubs/<clubId>-Stammdaten geladen),
-  //   Nutzer wählt; die Wahl wird NICHT gemerkt, bei jedem Login erneut gefragt.
-  // - Kein Club, aber Admin-Account -> Auswahl über ALLE existierenden Clubs (nicht nur die aus
-  //   dem - hier leeren - Claim). Sonderfall: der Admin ist kein Mitglied und bekommt daher nie
-  //   einen Claim über inviteMember zugewiesen - ohne diesen Fallback gäbe es keinen Weg, wie der
-  //   Admin sich selbst einen Club zuordnen könnte, und er würde sich dauerhaft aussperren.
+  // - Admin-Account -> IMMER Auswahl über ALLE existierenden Clubs, unabhängig vom eigenen Claim.
+  //   Der Admin ist kein Mitglied eines bestimmten Clubs, sondern verwaltet die App insgesamt -
+  //   sein eigener Claim (falls vorhanden) ist für diese Entscheidung irrelevant.
+  // - Genau ein Club (Mitglied) -> direkt übernehmen, kein Klick nötig (der heute übliche Fall).
+  // - Mehrere Clubs (Mitglied) -> Auswahl-Screen zeigen (Club-Namen aus clubs/<clubId>-Stammdaten
+  //   geladen), Nutzer wählt; die Wahl wird NICHT gemerkt, bei jedem Login erneut gefragt.
   // - Kein Club, kein Admin -> Fehlermeldung, kein Zugriff auf die App.
   // 'forceRefresh=true' erzwingt einen neuen ID-Token vom Server (Firebase cached Tokens bis zu
   // einer Stunde) - wichtig direkt nach einer frischen Einladung, wo der Claim serverseitig
   // gerade erst gesetzt wurde und ein gecachtes Token ihn noch nicht enthält.
   async function resolveActiveClub(user, forceRefresh){
+    if(user.email===ADMIN_EMAIL){
+      let allClubIds = [];
+      try{ allClubIds = await getAllClubIds(); }catch(e){ /* fällt unten auf "Kein Zugriff" zurück */ }
+      if(allClubIds.length===0){ renderNoClubAccessScreen(); return null; }
+      if(allClubIds.length===1) return allClubIds[0];
+      return await showClubSelectionScreen(allClubIds);
+    }
+
     const tokenResult = await user.getIdTokenResult(!!forceRefresh);
     let clubIds = (tokenResult.claims && tokenResult.claims.clubIds) || [];
     if(!Array.isArray(clubIds)) clubIds = [];
@@ -591,13 +598,6 @@
       // Möglich, dass der Claim gerade erst gesetzt wurde und das gecachte Token ihn noch nicht
       // kennt - einmal mit erzwungenem Refresh nachschauen, bevor wir aufgeben.
       return resolveActiveClub(user, true);
-    }
-    if(clubIds.length===0 && user.email===ADMIN_EMAIL){
-      let allClubIds = [];
-      try{ allClubIds = await getAllClubIds(); }catch(e){ /* fällt unten auf "Kein Zugriff" zurück */ }
-      if(allClubIds.length===0){ renderNoClubAccessScreen(); return null; }
-      if(allClubIds.length===1) return allClubIds[0];
-      return await showClubSelectionScreen(allClubIds);
     }
     if(clubIds.length===0){
       renderNoClubAccessScreen();
@@ -619,7 +619,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.43';
+  const APP_VERSION = '1.44';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
