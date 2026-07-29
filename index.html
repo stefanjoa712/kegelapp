@@ -620,7 +620,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.46';
+  const APP_VERSION = '1.47';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2256,7 +2256,7 @@
     return '#uebersicht';
   }
 
-  function render(){
+  function render(opts){
     if(window.__resetPullIndicator) window.__resetPullIndicator();
     const app = document.getElementById('app');
     let body = '';
@@ -2281,8 +2281,9 @@
     attachListeners();
 
     const sig = historySignature();
-    if(!isPopstateNavigation && sig !== lastHistorySignature){
-      const method = lastHistorySignature===null ? 'replaceState' : 'pushState';
+    const forceReplace = opts && opts.replaceCurrent;
+    if(!isPopstateNavigation && (forceReplace || sig !== lastHistorySignature)){
+      const method = (forceReplace || lastHistorySignature===null) ? 'replaceState' : 'pushState';
       history[method]({sig}, '', hashFor(sig));
     }
     lastHistorySignature = sig;
@@ -3269,6 +3270,44 @@
     });
   }
 
+  // Nimmt die beim Abschließen eines Abends gebuchten Rückstands-Erhöhungen wieder zurück.
+  // Wird sowohl beim Wieder-Öffnen als auch beim Löschen eines abgeschlossenen Abends genutzt.
+  // Gibt die zu speichernden Arrears-Entries als Promise-Array zurück (noch nicht awaited),
+  // damit der Aufrufer sie parallel mit anderen Saves ausführen kann.
+  async function reverseArrearsForEvening(detail, noteText){
+    let arrears = state.financeArrears;
+    try{ arrears = await getAllArrears(); }catch(e){}
+    const touchedArrearsEntries = [];
+    function subtractFromArrears(name, amount){
+      if(!amount) return;
+      let entry = arrears.find(a=>a.name===name);
+      if(!entry){ entry = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; arrears.push(entry); }
+      if(!entry.id) entry.id = resolveArrearsDocId(name);
+      if(!entry.history) entry.history = [];
+      // Der ursprüngliche "Strafen"-Eintrag dieses Abends verweist auf die Sitzplatz-Strafen -
+      // die sind jetzt veraltet (Abend wird bearbeitet/gelöscht), daher den Link kappen.
+      entry.history.forEach(h=>{
+        if(h.type==='increase' && h.eveningId===detail.id){ delete h.eveningId; delete h.seatId; }
+      });
+      entry.amount = Math.round((entry.amount - amount)*100)/100;
+      entry.history.push({
+        id: uid('hist'), date: todayISO(), type:'correction', delta: -amount,
+        note: noteText, balanceAfter: entry.amount, createdAt: Date.now()
+      });
+      if(!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
+    }
+    detail.seating.filter(s=>s.name).forEach(s=>{
+      subtractFromArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
+    });
+    (detail.absentMembersFines||[]).forEach(a=>{ subtractFromArrears(a.name, a.amount); });
+    // Gast-Einträge, die durch die Korrektur auf 0 gefallen sind, werden von saveArrearsEntry
+    // in der Datenbank gelöscht - hier den lokalen State entsprechend bereinigen.
+    state.financeArrears = arrears.filter(entry=>
+      !(entry.id && entry.id.startsWith('guest-') && Math.round(entry.amount*100)===0)
+    );
+    return touchedArrearsEntries.map(entry=> saveArrearsEntry(entry));
+  }
+
   function showReopenEveningModal(){
     showModal(`
       <h3>Kegelabend wieder öffnen</h3>
@@ -3303,9 +3342,15 @@
       detail.skipNotificationEmail = !sendEmails;
       const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
       if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:false, ...computeEveningSummaryFields(detail)};
+
+      // Beim Abschließen wurden Rückstände erhöht - beim Wieder-Öffnen müssen genau diese
+      // Beträge wieder abgezogen werden (analog zum Löschen eines abgeschlossenen Abends).
+      const arrearsSaves = await reverseArrearsForEvening(detail, `Kegelabend vom ${formatDateDE(detail.date)} wieder geöffnet`);
+
       await Promise.all([
         saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex)
+        setClubJSON('evenings-index', state.eveningsIndex),
+        ...arrearsSaves
       ]);
       await updateAttendanceStatsForEvening(detail, -1);
       closeGenericModal();
@@ -3758,8 +3803,8 @@
     else if(state.view==='arrearsDetail') title = state.currentArrearsName || '';
     else if(state.view==='transactionDetail') title = state.currentTransactionId ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen';
     else if(state.view==='new') title = 'Neuer Kegelabend';
-    else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
-    else if(state.view==='personFineDetail') title = state.currentFineName || '';
+    else if(state.view==='detail' && state.currentEveningDetail) title = `Kegelabend vom ${formatDateDE(state.currentEveningDetail.date)}`;
+    else if(state.view==='personFineDetail') title = `Strafen von ${state.currentFineName || ''}`;
 
     const isClosed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
     const detailHeaderExtrasHtml = state.view==='detail' ? `
@@ -3837,7 +3882,7 @@
           <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
       </button>`}
-      ${personIsGuest ? `
+      ${(personIsGuest && isClosed) ? `
       <button type="button" class="header-icon-btn" id="header-share-guest-btn" aria-label="Teilen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
@@ -5744,32 +5789,8 @@
       // Wurde der Abend abgeschlossen, wurden dabei Rückstände erhöht - beim Löschen müssen
       // genau diese Beträge wieder abgezogen werden.
       if(detail.closed){
-        let arrears = state.financeArrears;
-        try{ arrears = await getAllArrears(); }catch(e){}
-        const touchedArrearsEntries = [];
-        function subtractFromArrears(name, amount){
-          if(!amount) return;
-          let entry = arrears.find(a=>a.name===name);
-          if(!entry){ entry = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; arrears.push(entry); }
-          if(!entry.id) entry.id = resolveArrearsDocId(name);
-          if(!entry.history) entry.history = [];
-          entry.amount = Math.round((entry.amount - amount)*100)/100;
-          entry.history.push({
-            id: uid('hist'), date: todayISO(), type:'correction', delta: -amount,
-            note: `Kegelabend vom ${formatDateDE(detail.date)} gelöscht`, balanceAfter: entry.amount
-          });
-          if(!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
-        }
-        detail.seating.filter(s=>s.name).forEach(s=>{
-          subtractFromArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
-        });
-        (detail.absentMembersFines||[]).forEach(a=>{ subtractFromArrears(a.name, a.amount); });
-        saves.push(...touchedArrearsEntries.map(entry=> saveArrearsEntry(entry)));
-        // Gast-Einträge, die durch die Korrektur auf 0 gefallen sind, werden von saveArrearsEntry
-        // in der Datenbank gelöscht - hier den lokalen State entsprechend bereinigen.
-        state.financeArrears = arrears.filter(entry=>
-          !(entry.id && entry.id.startsWith('guest-') && Math.round(entry.amount*100)===0)
-        );
+        const arrearsSaves = await reverseArrearsForEvening(detail, `Kegelabend vom ${formatDateDE(detail.date)} gelöscht`);
+        saves.push(...arrearsSaves);
       }
 
       await Promise.all(saves);
@@ -5880,7 +5901,7 @@
         saveEveningMainDoc(detail),
         moveEveningSeatFines(detail.id, oldSeatId, newSeatId)
       ]);
-      render();
+      render({replaceCurrent:true});
     });
     document.querySelectorAll('.edit-adhoc-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
