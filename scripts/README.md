@@ -21,14 +21,9 @@ Dieses Script macht zwei Dinge in einem Zug:
 
 ## Einmalig einrichten
 
-Voraussetzung: Node.js ist installiert.
-
-```bash
-gcloud auth application-default login
-```
-(Google Cloud CLI, falls noch nicht vorhanden: https://cloud.google.com/sdk/docs/install)
-Meldet dich mit deinem Google-Account an, der Zugriff auf das Firebase-Projekt
-`die-pudolfs` hat.
+Voraussetzung: Node.js ist installiert und ihr habt schon mal `firebase login`
+ausgeführt (falls ihr schon `firebase deploy` nutzt, ist das längst passiert -
+kein zusätzliches Google-Cloud-SDK/`gcloud` nötig).
 
 ```bash
 cd scripts

@@ -31,11 +31,9 @@
  *
  * VORAUSSETZUNGEN:
  * 1. Node.js installiert
- * 2. Google-Cloud-Zugangsdaten für das Projekt 'die-pudolfs' vorhanden, z.B. via
- *      gcloud auth application-default login
- *    (Google Cloud CLI: https://cloud.google.com/sdk/docs/install)
- *    ODER: Umgebungsvariable GOOGLE_APPLICATION_CREDENTIALS auf einen Service-
- *    Account-Key (JSON-Datei) zeigen lassen.
+ * 2. Einmal `firebase login` ausgeführt (falls ihr schon `firebase deploy` nutzt, ist das
+ *    bereits passiert). Das Script liest das dabei gespeicherte Firebase-CLI-Login und holt sich
+ *    darüber ein Zugriffs-Token - kein separates Google-Cloud-SDK/gcloud nötig.
  * 3. Im 'scripts'-Ordner einmalig: npm install
  *
  * AUSFÜHRUNG:
@@ -45,8 +43,9 @@
  *   node migrate-members.js --apply     # führt die Migration wirklich aus
  */
 
-const { initializeApp, applicationDefault } = require('firebase-admin/app');
+const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
+const { getFirebaseCliAccessToken } = require('./firebase-cli-credentials');
 
 const PROJECT_ID = 'die-pudolfs';
 const OLD_MEMBERS_KEY = 'members';
@@ -65,8 +64,16 @@ const CLUB_DATA = {
 const apply = process.argv.includes('--apply');
 
 async function main() {
+  const accessToken = await getFirebaseCliAccessToken();
   initializeApp({
-    credential: applicationDefault(),
+    credential: {
+      getAccessToken: async () => ({
+        access_token: accessToken,
+        // Kurzlebiges Token (Firebase-CLI-Zugriffstoken sind i.d.R. ~1h gültig) - für ein
+        // einmaliges kurzes Migrations-Script reicht das, es wird pro Lauf frisch geholt.
+        expires_in: 3000
+      })
+    },
     projectId: PROJECT_ID
   });
   const db = getFirestore();
