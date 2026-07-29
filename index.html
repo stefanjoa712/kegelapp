@@ -578,7 +578,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.37';
+  const APP_VERSION = '1.38';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -930,6 +930,18 @@
   async function getAllOccurrenceEdits(){ return occurrenceEditsStore.getAll(); }
   async function saveOccurrenceEdit(edit){ return occurrenceEditsStore.save(edit); }
 
+  // ---------- Finanz-Rückstände ----------
+  // Jedes Mitglied/jeder Gast mit offenem oder früherem Rückstand bekommt ein eigenes Dokument
+  // (clubs/<clubId>/arrears/<docId>) statt eines gemeinsamen Blobs mit allen Rückständen. Grund:
+  // Rückstände werden an vielen, oft zeitlich nahen Stellen aktualisiert (Abend abschließen/
+  // wiederöffnen/löschen, Zahlung erfassen, Umsatz stornieren) - ein kompletter Array-Überschrieb
+  // hätte hier dasselbe Last-Write-Wins-Risiko wie ursprünglich bei den Mitgliedern, wenn z.B.
+  // fast gleichzeitig ein Abend abgeschlossen und eine Zahlung für ein anderes Mitglied erfasst
+  // wird. dockId ist die Mitglieds-ID, wo auflösbar, sonst der Name (siehe resolveArrearsDocId).
+  const arrearsStore = makeClubEntityStore('arrears');
+  async function getAllArrears(){ return arrearsStore.getAll(); }
+  async function saveArrearsEntry(entry){ return arrearsStore.save(entry); }
+
   // ---------- Kegelabende ----------
   // Ein Kegelabend besteht aus einem Hauptdokument (Datum, Sitzordnung/Namen, Strafenkatalog-
   // Snapshot, Notizen, Abschluss-Status - Felder, die selten und praktisch nie parallel von
@@ -1276,7 +1288,7 @@
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getAllMembers(),
         getClubJSONOrThrow('evenings-index', []),
-        getJSONOrThrow('finance-arrears', state.financeArrears),
+        getAllArrears(),
         getAllCalendarEvents(),
         getAllOccurrenceEdits()
       ]);
@@ -1436,7 +1448,7 @@
       const [accounts, transactions, arrears, members, pots, recurring] = await Promise.all([
         getJSONOrThrow('finance-accounts', []),
         getJSONOrThrow('finance-transactions', []),
-        getJSONOrThrow('finance-arrears', []),
+        getAllArrears(),
         getAllMembers(),
         getJSONOrThrow('finance-savings-pots', []),
         getJSONOrThrow('finance-recurring', [])
@@ -2354,7 +2366,7 @@
             const [accounts, transactions, arrears] = await Promise.all([
               getJSONOrThrow('finance-accounts', []),
               getJSONOrThrow('finance-transactions', []),
-              getJSONOrThrow('finance-arrears', [])
+              getAllArrears()
             ]);
             state.financeAccounts = accounts;
             state.financeTransactions = transactions;
@@ -2714,6 +2726,19 @@
 
   function displayName(m){
     return (m.nickname && m.nickname.trim()) ? m.nickname.trim() : m.firstName;
+  }
+
+  // Rückstände werden pro Mitglied bzw. Gast in einem eigenen Dokument gespeichert (siehe
+  // arrearsStore weiter oben). Als Dokument-ID dient möglichst die Mitglieds-ID, damit eine
+  // spätere Umbenennung (z.B. neuer Spitzname) den Rückstand nicht "verwaist" lässt - nur wenn
+  // kein passendes Mitglied gefunden wird (Gast, oder ehemaliges Mitglied ohne aktuellen
+  // Datensatz), dient der Name selbst als Fallback-ID. Der Name kommt bei Gästen aus einem freien
+  // Texteingabefeld - Schrägstriche würden den Firestore-Dokumentpfad sprengen, deshalb hier
+  // ersetzt (Firestore-Dokument-IDs dürfen kein '/' enthalten).
+  function resolveArrearsDocId(name){
+    const member = state.members.find(m=> displayName(m)===name);
+    if(member) return member.id;
+    return 'guest-' + name.replace(/\//g, '_');
   }
 
   function viewNew(){
@@ -3194,7 +3219,7 @@
 
       // Strafen aller Anwesenden (Mitglieder + Gäste) und Abwesenden zu den offenen Rückständen addieren.
       let arrears = state.financeArrears;
-      try{ arrears = await getJSON('finance-arrears', true, state.financeArrears); }catch(e){}
+      try{ arrears = await getAllArrears(); }catch(e){}
       // Snapshot des Rückstands VOR der heutigen Erhöhung - direkt auf dem Abend gespeichert,
       // damit die Cloud Function beim Mailversand keinen Race-Condition-Zugriff auf ein
       // separates, parallel geschriebenes Dokument braucht.
@@ -3211,10 +3236,12 @@
       });
       detail.priorArrearsSnapshot = priorArrearsSnapshot;
 
+      const touchedArrearsEntries = [];
       function addToArrears(name, amount, seatId){
         if(!amount) return;
         let entry = arrears.find(a=>a.name===name);
-        if(!entry){ entry = {name, amount:0, history:[]}; arrears.push(entry); }
+        if(!entry){ entry = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; arrears.push(entry); }
+        if(!entry.id) entry.id = resolveArrearsDocId(name);
         if(!entry.history) entry.history = [];
         entry.amount = Math.round((entry.amount + amount)*100)/100;
         entry.history.push({
@@ -3222,6 +3249,7 @@
           note: `Strafen vom Kegelabend am ${formatDateDE(detail.date)}`, balanceAfter: entry.amount, createdAt: Date.now(),
           eveningId: detail.id, seatId: seatId||undefined
         });
+        if(!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
       }
       detail.seating.filter(s=>s.name).forEach(s=>{
         addToArrears(s.name, roundedFineTotalForSeat(detail, s.seatId), s.seatId);
@@ -3232,7 +3260,7 @@
       await Promise.all([
         saveEveningMainDoc(detail),
         setClubJSON('evenings-index', state.eveningsIndex),
-        setJSON('finance-arrears', arrears, true)
+        ...touchedArrearsEntries.map(entry=> saveArrearsEntry(entry))
       ]);
       await updateAttendanceStatsForEvening(detail, 1);
       closeGenericModal();
@@ -5155,7 +5183,8 @@
       const saves = [setJSON('finance-transactions', state.financeTransactions, true)];
       if(isFromArrears && arrearsName){
         let entry = state.financeArrears.find(a=>a.name===arrearsName);
-        if(!entry){ entry = {name:arrearsName, amount:0, history:[]}; state.financeArrears.push(entry); }
+        if(!entry){ entry = {id: resolveArrearsDocId(arrearsName), name:arrearsName, amount:0, history:[]}; state.financeArrears.push(entry); }
+        if(!entry.id) entry.id = resolveArrearsDocId(arrearsName);
         if(!entry.history) entry.history = [];
         const addBack = Math.abs(transaction.amount);
         entry.amount = Math.round((entry.amount + addBack)*100)/100;
@@ -5163,7 +5192,7 @@
           id: uid('hist'), date: todayISO(), type:'correction', delta: addBack,
           note: `Umsatz „${transaction.description}" gelöscht`, balanceAfter: entry.amount, createdAt: Date.now()
         });
-        saves.push(setJSON('finance-arrears', state.financeArrears, true));
+        saves.push(saveArrearsEntry(entry));
       }
       await Promise.all(saves);
       closeGenericModal();
@@ -5270,7 +5299,8 @@
 
       const rounded = Math.round(newAmount*100)/100;
       let e = getArrearsEntry(name);
-      if(!e){ e = {name, amount:0, history:[]}; state.financeArrears.push(e); }
+      if(!e){ e = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; state.financeArrears.push(e); }
+      if(!e.id) e.id = resolveArrearsDocId(name);
       if(!e.history) e.history = [];
       const delta = Math.round((rounded - e.amount)*100)/100;
       e.amount = rounded;
@@ -5279,7 +5309,7 @@
         note: note || 'Manuelle Korrektur', balanceAfter: rounded, createdAt: Date.now()
       });
 
-      await setJSON('finance-arrears', state.financeArrears, true);
+      await saveArrearsEntry(e);
       closeGenericModal();
       render();
     });
@@ -5323,7 +5353,8 @@
       state.financeTransactions.push({id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded, fromArrears:true, arrearsName: name, createdAt: Date.now()});
 
       let e = entry;
-      if(!e){ e = {name, amount:0, history:[]}; state.financeArrears.push(e); }
+      if(!e){ e = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; state.financeArrears.push(e); }
+      if(!e.id) e.id = resolveArrearsDocId(name);
       if(!e.history) e.history = [];
       const before = e.amount;
       e.amount = Math.max(0, Math.round((e.amount - rounded)*100)/100);
@@ -5335,7 +5366,7 @@
 
       await Promise.all([
         setJSON('finance-transactions', state.financeTransactions, true),
-        setJSON('finance-arrears', state.financeArrears, true)
+        saveArrearsEntry(e)
       ]);
       render();
     });
@@ -5703,24 +5734,27 @@
       // genau diese Beträge wieder abgezogen werden.
       if(detail.closed){
         let arrears = state.financeArrears;
-        try{ arrears = await getJSON('finance-arrears', true, state.financeArrears); }catch(e){}
+        try{ arrears = await getAllArrears(); }catch(e){}
+        const touchedArrearsEntries = [];
         function subtractFromArrears(name, amount){
           if(!amount) return;
           let entry = arrears.find(a=>a.name===name);
-          if(!entry){ entry = {name, amount:0, history:[]}; arrears.push(entry); }
+          if(!entry){ entry = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; arrears.push(entry); }
+          if(!entry.id) entry.id = resolveArrearsDocId(name);
           if(!entry.history) entry.history = [];
           entry.amount = Math.round((entry.amount - amount)*100)/100;
           entry.history.push({
             id: uid('hist'), date: todayISO(), type:'correction', delta: -amount,
             note: `Kegelabend vom ${formatDateDE(detail.date)} gelöscht`, balanceAfter: entry.amount
           });
+          if(!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
         }
         detail.seating.filter(s=>s.name).forEach(s=>{
           subtractFromArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
         });
         (detail.absentMembersFines||[]).forEach(a=>{ subtractFromArrears(a.name, a.amount); });
         state.financeArrears = arrears;
-        saves.push(setJSON('finance-arrears', arrears, true));
+        saves.push(...touchedArrearsEntries.map(entry=> saveArrearsEntry(entry)));
       }
 
       await Promise.all(saves);
@@ -6085,7 +6119,7 @@
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getAllMembers(),
         getClubJSONOrThrow('evenings-index', []),
-        getJSONOrThrow('finance-arrears', []),
+        getAllArrears(),
         getAllCalendarEvents(),
         getAllOccurrenceEdits()
       ]);
