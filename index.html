@@ -2733,12 +2733,17 @@
   // spätere Umbenennung (z.B. neuer Spitzname) den Rückstand nicht "verwaist" lässt - nur wenn
   // kein passendes Mitglied gefunden wird (Gast, oder ehemaliges Mitglied ohne aktuellen
   // Datensatz), dient der Name selbst als Fallback-ID. Der Name kommt bei Gästen aus einem freien
-  // Texteingabefeld - Schrägstriche würden den Firestore-Dokumentpfad sprengen, deshalb hier
-  // ersetzt (Firestore-Dokument-IDs dürfen kein '/' enthalten).
+  // Texteingabefeld - Schrägstriche würden den Firestore-Dokumentpfad sprengen (nicht erlaubt),
+  // und Leerzeichen/Sonderzeichen sind zwar technisch zulässig, machen die ID aber unnötig
+  // fragil für Werkzeuge, die den Pfad selbst in eine URL einsetzen (z.B. das Migrations-Script) -
+  // deshalb wird alles außer Buchstaben/Ziffern/Bindestrich/Unterstrich durch '_' ersetzt.
   function resolveArrearsDocId(name){
     const member = state.members.find(m=> displayName(m)===name);
     if(member) return member.id;
-    return 'guest-' + name.replace(/\//g, '_');
+    const transliterated = name
+      .replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue').replace(/ß/g,'ss')
+      .replace(/Ä/g,'Ae').replace(/Ö/g,'Oe').replace(/Ü/g,'Ue');
+    return 'guest-' + transliterated.replace(/[^a-zA-Z0-9_-]/g, '_');
   }
 
   function viewNew(){

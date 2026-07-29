@@ -198,8 +198,10 @@ wie ursprünglich bei den Mitgliedern gehabt.
 Die Dokument-ID ist möglichst die Mitglieds-ID (nicht der Name) - ändert
 sich später ein Spitzname, bleibt der Rückstand trotzdem korrekt
 zugeordnet. Nur für Gäste (kein Mitglieds-Datensatz vorhanden) dient der
-Name selbst als Fallback-ID (mit `guest-`-Präfix, Schrägstriche werden
-escaped, da Gast-Namen aus einem freien Texteingabefeld kommen).
+Name selbst als Fallback-ID (mit `guest-`-Präfix; Umlaute werden
+transliteriert, alles außer Buchstaben/Ziffern/Bindestrich/Unterstrich
+wird ersetzt, da Gast-Namen aus einem freien Texteingabefeld kommen und
+z.B. Leerzeichen oder Schrägstriche enthalten können).
 
 **Wichtig:** Dieses Script braucht die bereits migrierte Mitgliederliste
 unter `clubs/die-pudolfs/members/` (für die Name-zu-ID-Auflösung) - die

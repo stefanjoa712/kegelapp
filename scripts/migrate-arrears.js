@@ -14,9 +14,10 @@
  * zugeordnet - mit dem Namen als Schlüssel (wie bisher) wäre er nach einer Umbenennung
  * "verwaist" gewesen. Nur wenn kein passendes Mitglied gefunden wird (Gast, oder ehemaliges
  * Mitglied ohne aktuellen Datensatz), dient der Name selbst als Fallback-ID (mit 'guest-'-Präfix
- * und escapten Schrägstrichen, da Namen aus einem freien Texteingabefeld kommen können und
- * Firestore-Dokument-IDs kein '/' enthalten dürfen - spiegelt exakt resolveArrearsDocId() im
- * Client-Code, index.html).
+ * und escapten Sonderzeichen - Umlaute werden transliteriert, alles andere außer Buchstaben/
+ * Ziffern/Bindestrich/Unterstrich wird ersetzt. Namen kommen bei Gästen aus einem freien
+ * Texteingabefeld und können z.B. Leerzeichen oder Schrägstriche enthalten - spiegelt exakt
+ * resolveArrearsDocId() im Client-Code, index.html).
  *
  * WICHTIG: Dieses Script LÖSCHT den alten 'kegelbuch/finance-arrears'-Blob NICHT. Er bleibt als
  * Backup/Fallback in Firestore liegen. Der App-Code selbst nutzt ihn ab dem zugehörigen Deploy
@@ -57,7 +58,10 @@ function displayName(m) {
 function resolveArrearsDocId(name, members) {
   const member = members.find((m) => displayName(m) === name);
   if (member) return member.id;
-  return 'guest-' + name.replace(/\//g, '_');
+  const transliterated = name
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue');
+  return 'guest-' + transliterated.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
 async function loadMembers(db) {
