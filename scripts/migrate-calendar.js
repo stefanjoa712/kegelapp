@@ -7,18 +7,20 @@
  * 2. calendar-rsvps (kegelbuch/calendar-rsvps, ein JSON-Array als Blob)
  *    -> eigene Dokumente 'clubs/<clubId>/rsvps/<id>' pro Rückmeldung + Index-Dokument
  *       'clubs/<clubId>/rsvps/_index'.
- * 3. calendar-occurrence-edits (kegelbuch/calendar-occurrence-edits)
- *    -> EIN Blob-Dokument 'clubs/<clubId>/data/calendar-occurrence-edits'.
+ * 3. calendar-occurrence-edits (kegelbuch/calendar-occurrence-edits, ein JSON-Array als Blob)
+ *    -> eigene Dokumente 'clubs/<clubId>/occurrence-edits/<id>' pro Ausnahme + Index-Dokument
+ *       'clubs/<clubId>/occurrence-edits/_index'.
  * 4. calendar-feed-token (kegelbuch/calendar-feed-token)
  *    -> EIN Blob-Dokument 'clubs/<clubId>/data/calendar-feed-token'.
  *
- * WARUM Events und RSVPs als Einzeldokumente, aber Occurrence-Edits/Feed-Token als Blob:
- * Bei Terminen und Rückmeldungen können mehrere Personen gleichzeitig auf unterschiedlichen
- * Geräten etwas ändern (jemand legt einen Termin an, während jemand anders zu einem anderen
- * Termin zusagt) - das komplette Array zurückzuschreiben hätte hier ein Last-Write-Wins-Risiko
- * wie beim ursprünglichen Mitglieder-Bug. Occurrence-Edits (Ausnahmen an einzelnen Terminen
- * einer Serie) und der Feed-Token sind dagegen klein und werden praktisch nie parallel von
- * mehreren Personen gleichzeitig bearbeitet - der Aufwand einer Aufteilung lohnt sich dort nicht.
+ * WARUM Events, RSVPs UND Occurrence-Edits als Einzeldokumente, aber der Feed-Token als Blob:
+ * Bei Terminen, Rückmeldungen und Serien-Ausnahmen können mehrere Personen gleichzeitig auf
+ * unterschiedlichen Geräten etwas ändern - z.B. jemand legt einen Termin an, während jemand
+ * anders zu einem anderen Termin zusagt, oder zwei Personen passen gleichzeitig unterschiedliche
+ * Einzeltermine EINER Serie an. Das komplette Array zurückzuschreiben hätte hier ein
+ * Last-Write-Wins-Risiko wie beim ursprünglichen Mitglieder-Bug. Der Feed-Token ist dagegen ein
+ * einzelner Wert, der praktisch nie parallel von mehreren Personen geschrieben wird - der
+ * Aufwand einer Aufteilung lohnt sich dort nicht.
  *
  * WICHTIG: Dieses Script LÖSCHT keine der alten Dokumente unter 'kegelbuch/'. Sie bleiben als
  * Backup/Fallback in Firestore liegen. Der App-Code selbst nutzt sie ab dem zugehörigen Deploy
@@ -71,7 +73,8 @@ async function migrateEntityCollection(db, oldKey, collectionName, label) {
 
   console.log(`${label}: ${list.length} Einträg(e) gefunden.`);
   for (const item of list) {
-    console.log(`  - ${item.id}  ${item.title || item.memberName || ''}`);
+    const desc = item.title || item.memberName || item.occurrenceDate || '';
+    console.log(`  - ${item.id}  ${desc}`);
   }
   console.log('');
 
@@ -150,7 +153,7 @@ async function main() {
 
   await migrateEntityCollection(db, 'calendar-events', 'events', 'Termine');
   await migrateEntityCollection(db, 'calendar-rsvps', 'rsvps', 'Rückmeldungen');
-  await migrateBlob(db, 'calendar-occurrence-edits', 'Serien-Ausnahmen');
+  await migrateEntityCollection(db, 'calendar-occurrence-edits', 'occurrence-edits', 'Serien-Ausnahmen');
   await migrateBlob(db, 'calendar-feed-token', 'Kalender-Feed-Token');
 
   if (!apply) {

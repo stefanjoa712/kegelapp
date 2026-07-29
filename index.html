@@ -578,7 +578,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.34';
+  const APP_VERSION = '1.35';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -906,16 +906,18 @@
     }), STORAGE_TIMEOUT_MS);
   }
 
-  // ---------- Kalender: Termine und Rückmeldungen ----------
-  // Termine (calendar-events) und Rückmeldungen (calendar-rsvps) nutzen dieselbe "Einzeldokument
-  // pro Eintrag"-Struktur wie die Mitglieder: mehrere Personen können gleichzeitig auf
-  // unterschiedlichen Geräten einen Termin anlegen/bearbeiten bzw. zu-/absagen, ohne dass sich
-  // diese Änderungen gegenseitig überschreiben (kein Last-Write-Wins mehr). Serien-Ausnahmen
-  // (calendar-occurrence-edits) und der Kalender-Feed-Token bleiben dagegen als einfacher
-  // Blob pro Club (siehe getClubJSON/setClubJSON oben) - dort ist paralleles Schreiben durch
-  // mehrere Personen praktisch ausgeschlossen, der Aufwand einer Aufteilung lohnt sich nicht.
+  // ---------- Kalender: Termine, Rückmeldungen und Serien-Ausnahmen ----------
+  // Termine (calendar-events), Rückmeldungen (calendar-rsvps) und Serien-Ausnahmen
+  // (calendar-occurrence-edits) nutzen dieselbe "Einzeldokument pro Eintrag"-Struktur wie die
+  // Mitglieder: mehrere Personen können gleichzeitig auf unterschiedlichen Geräten einen Termin
+  // anlegen/bearbeiten, zu-/absagen, oder unterschiedliche Termine EINER Serie individuell
+  // anpassen (z.B. Uhrzeit für einen einzelnen Termin ändern), ohne dass sich diese Änderungen
+  // gegenseitig überschreiben (kein Last-Write-Wins mehr). Der Kalender-Feed-Token bleibt als
+  // einfacher Blob pro Club (siehe getClubJSON/setClubJSON oben) - ein einzelner Wert, der
+  // praktisch nie parallel von mehreren Personen geschrieben wird.
   const eventsStore = makeClubEntityStore('events');
   const rsvpsStore = makeClubEntityStore('rsvps');
+  const occurrenceEditsStore = makeClubEntityStore('occurrence-edits');
 
   async function getAllCalendarEvents(){ return eventsStore.getAll(); }
   async function saveCalendarEvent(event){ return eventsStore.save(event); }
@@ -924,6 +926,9 @@
   async function getAllCalendarRsvps(){ return rsvpsStore.getAll(); }
   async function saveCalendarRsvp(rsvp){ return rsvpsStore.save(rsvp); }
   async function deleteCalendarRsvp(id){ return rsvpsStore.remove(id); }
+
+  async function getAllOccurrenceEdits(){ return occurrenceEditsStore.getAll(); }
+  async function saveOccurrenceEdit(edit){ return occurrenceEditsStore.save(edit); }
 
   // direkt drauf, kein 'value'-JSON-String-Wrapper wie bei den anderen Collections - hier gibt es
   // pro Club nur eines, kein Array-Problem, das den Wrapper nötig gemacht hätte).
@@ -1188,7 +1193,7 @@
         getJSONOrThrow('evenings-index', []),
         getJSONOrThrow('finance-arrears', state.financeArrears),
         getAllCalendarEvents(),
-        getClubJSONOrThrow('calendar-occurrence-edits', [])
+        getAllOccurrenceEdits()
       ]);
       state.members = members;
       state.eveningsIndex = eveningsIndex;
@@ -1374,7 +1379,7 @@
     try{
       const [events, edits, rsvps, members] = await Promise.all([
         getAllCalendarEvents(),
-        getClubJSONOrThrow('calendar-occurrence-edits', []),
+        getAllOccurrenceEdits(),
         getAllCalendarRsvps(),
         getAllMembers()
       ]);
@@ -1394,7 +1399,7 @@
     try{
       const [events, edits, members] = await Promise.all([
         getAllCalendarEvents(),
-        getClubJSONOrThrow('calendar-occurrence-edits', []),
+        getAllOccurrenceEdits(),
         getAllMembers()
       ]);
       state.calendarEvents = events;
@@ -2334,7 +2339,7 @@
           try{
             const [events, edits, rsvps, members] = await Promise.all([
               getAllCalendarEvents(),
-              getClubJSONOrThrow('calendar-occurrence-edits', []),
+              getAllOccurrenceEdits(),
               getAllCalendarRsvps(),
               getAllMembers()
             ]);
@@ -4855,7 +4860,7 @@
         let edit = findOccurrenceEdit(occurrence.seriesId, occurrence.occurrenceDate);
         if(!edit){ edit = {id:uid('caledit'), seriesId:occurrence.seriesId, occurrenceDate:occurrence.occurrenceDate}; state.calendarOccurrenceEdits.push(edit); }
         edit.deleted = true;
-        await setClubJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits);
+        await saveOccurrenceEdit(edit);
       }
       closeGenericModal();
       goBackFromEventDetail();
@@ -4943,7 +4948,7 @@
           if(!edit){ edit = {id:uid('caledit'), seriesId:occurrence.seriesId, occurrenceDate:occurrence.occurrenceDate}; state.calendarOccurrenceEdits.push(edit); }
           edit.title=title; edit.location=location; edit.start=start; edit.end=end;
           delete edit.deleted;
-          await setClubJSON('calendar-occurrence-edits', state.calendarOccurrenceEdits);
+          await saveOccurrenceEdit(edit);
         }
         state.calendarSelectedDate = startDateOnly;
         goBackFromEventDetail();
@@ -5962,7 +5967,7 @@
         getJSONOrThrow('evenings-index', []),
         getJSONOrThrow('finance-arrears', []),
         getAllCalendarEvents(),
-        getClubJSONOrThrow('calendar-occurrence-edits', [])
+        getAllOccurrenceEdits()
       ]);
       state.members = members;
       state.eveningsIndex = eveningsIndex;

@@ -95,17 +95,18 @@ lassen, dann erst den neuen `index.html`-Stand deployen.
 
 Drittes Script, `migrate-calendar.js`, migriert alles rund um den Kalender:
 
-- `calendar-events` und `calendar-rsvps` -> wie bei den Mitgliedern eigene
-  Dokumente pro Eintrag (`clubs/die-pudolfs/events/<id>` bzw.
-  `clubs/die-pudolfs/rsvps/<id>`) + Index-Dokument. Grund: hier können
-  mehrere Personen gleichzeitig auf unterschiedlichen Geräten etwas ändern
-  (jemand legt einen Termin an, während jemand anders zu einem anderen
-  Termin zusagt) - ein kompletter Array-Überschrieb hätte hier das gleiche
-  Last-Write-Wins-Risiko wie ursprünglich bei den Mitgliedern.
-- `calendar-occurrence-edits` und `calendar-feed-token` -> wie bei Strafen/
-  Spielen jeweils ein einzelnes Blob-Dokument unter `clubs/die-pudolfs/data/`.
-  Diese Daten werden praktisch nie parallel von mehreren Personen bearbeitet,
-  eine Aufteilung lohnt sich hier nicht.
+- `calendar-events`, `calendar-rsvps` und `calendar-occurrence-edits` ->
+  wie bei den Mitgliedern eigene Dokumente pro Eintrag
+  (`clubs/die-pudolfs/events/<id>`, `.../rsvps/<id>`,
+  `.../occurrence-edits/<id>`) + jeweils ein Index-Dokument. Grund: hier
+  können mehrere Personen gleichzeitig auf unterschiedlichen Geräten etwas
+  ändern - ein Termin wird angelegt während jemand anders zu einem anderen
+  Termin zusagt, oder zwei Personen passen gleichzeitig unterschiedliche
+  Einzeltermine EINER Serie an. Ein kompletter Array-Überschrieb hätte hier
+  das gleiche Last-Write-Wins-Risiko wie ursprünglich bei den Mitgliedern.
+- `calendar-feed-token` -> wie bei Strafen/Spielen ein einzelnes
+  Blob-Dokument unter `clubs/die-pudolfs/data/`. Ein einzelner Wert, der
+  praktisch nie parallel von mehreren Personen geschrieben wird.
 
 ```bash
 cd scripts
