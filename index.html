@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.49';
+  const APP_VERSION = '1.50';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1808,6 +1808,50 @@
     `;
   }
 
+  // Löscht den kompletten Club unwiderruflich (alle Daten + Auth-Zugänge der Mitglieder, siehe
+  // Cloud Function deleteClub). Erfordert die Eingabe des App-weiten Lösch-Kennworts als zweite
+  // Bestätigung, analog zum Löschen eines Kegelabends (buildDeleteModal/DELETE_PASSWORD oben).
+  function showDeleteClubModal(){
+    const name = clubDisplayName();
+    showModal(`
+      <h3>Club löschen</h3>
+      <p><strong>${escapeHtml(name)}</strong> und alle zugehörigen Daten (Mitglieder, Kegelabende, Finanzen, Termine, ...) werden unwiderruflich gelöscht. Das kann nicht rückgängig gemacht werden.</p>
+      <label for="delete-club-password-input">Kennwort</label>
+      <input type="password" id="delete-club-password-input" placeholder="Kennwort" autocomplete="off">
+      <p class="form-error" id="delete-club-password-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-danger" id="confirm-delete-club-yes">Ja, endgültig löschen</button>
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    const pwInput = document.getElementById('delete-club-password-input');
+    if(pwInput){
+      pwInput.focus();
+      pwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const yb=document.getElementById('confirm-delete-club-yes'); if(yb) yb.click(); } });
+    }
+    document.getElementById('confirm-delete-club-yes').addEventListener('click', async ()=>{
+      const yesBtn = document.getElementById('confirm-delete-club-yes');
+      const pwInputEl = document.getElementById('delete-club-password-input');
+      const pwErrEl = document.getElementById('delete-club-password-error');
+      const entered = pwInputEl ? pwInputEl.value : '';
+      if(entered !== DELETE_PASSWORD){
+        if(pwErrEl) pwErrEl.textContent = 'Falsches Kennwort.';
+        return;
+      }
+      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      try{
+        const deleteClubFn = httpsCallable(functions, 'deleteClub');
+        await deleteClubFn({ clubId: CURRENT_CLUB_ID });
+        closeGenericModal();
+        await logout();
+      }catch(e){
+        if(pwErrEl) pwErrEl.textContent = 'Löschen fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
+        yesBtn.disabled = false; yesBtn.textContent = 'Ja, endgültig löschen';
+      }
+    });
+  }
+
   function viewFinanceManagement(){
     const accountsListHtml = state.financeAccounts.length===0
       ? `<p class="empty-state">Noch keine Konten &amp; Kassen angelegt. Über das „+" oben hinzufügen.</p>`
@@ -2346,7 +2390,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -4028,6 +4072,17 @@
       </div>
     ` : '';
 
+    const clubOverflowHtml = (state.view==='clubManagement') ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-club-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-club-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-club-btn">Club löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const recurringOverflowHtml = (state.view==='recurringDetail' && state.currentRecurringId) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-recurring-overflow-btn" aria-label="Weitere Optionen">
@@ -4055,7 +4110,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${recurringOverflowHtml}${calOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${calOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -4130,6 +4185,20 @@
   }
 
   function attachClubManagementListeners(){
+    const overflowBtn = document.getElementById('header-club-overflow-btn');
+    const overflowMenu = document.getElementById('header-club-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
+    }
+    const deleteClubBtn = document.getElementById('header-delete-club-btn');
+    if(deleteClubBtn) deleteClubBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      showDeleteClubModal();
+    });
+
     const saveBtn = document.getElementById('save-club-btn');
     if(!saveBtn) return;
     saveBtn.addEventListener('click', async ()=>{

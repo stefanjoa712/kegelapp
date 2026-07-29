@@ -658,6 +658,70 @@ exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
 
 // -------- Account-Verknüpfung eines Mitglieds aufheben (v2) --------
 
+// -------- Club vollständig löschen (nur eingeloggte Nutzer, aus der Clubverwaltung) --------
+// Löscht den kompletten Firestore-Dokumentbaum unter clubs/<clubId> (inkl. aller Subcollections
+// wie members, evenings/<id>/seats, transactions, arrears, ...) und bereinigt anschließend bei
+// JEDEM ehemaligen Mitglied mit Auth-Account den 'clubIds'-Claim: Ist der Club danach der einzige
+// verbleibende Eintrag, wird der Account komplett gelöscht (analog zu unlinkMemberAccount), sonst
+// wird nur die clubId aus dem Array entfernt. Muss als Cloud Function laufen, weil der Client
+// selbst keine Auth-Custom-Claims anderer Nutzer ändern kann (nur das Admin SDK darf das).
+exports.deleteClub = onCall({}, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  const { clubId } = request.data || {};
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
+  }
+
+  const clubRef = db.collection('clubs').doc(clubId);
+  const clubSnap = await clubRef.get();
+  if (!clubSnap.exists) {
+    throw new HttpsError('not-found', 'Club wurde nicht gefunden.');
+  }
+
+  // Mitglieder-E-Mails VOR dem Löschen einsammeln, um danach die zugehörigen Auth-Accounts
+  // bereinigen zu können - nach recursiveDelete() sind die Member-Dokumente weg.
+  const membersSnap = await clubRef.collection('members').get();
+  const memberEmails = [];
+  membersSnap.forEach((doc) => {
+    if (doc.id === MEMBERS_INDEX_ID) return;
+    try {
+      const member = JSON.parse(doc.data().value);
+      if (member && member.email) memberEmails.push(member.email);
+    } catch (e) {
+      logger.error(`Mitglied ${doc.id} in Club ${clubId} konnte beim Löschen nicht gelesen werden:`, e);
+    }
+  });
+
+  await db.recursiveDelete(clubRef);
+
+  const adminAuth = getAuth();
+  await Promise.all(memberEmails.map(async (email) => {
+    try {
+      const userRecord = await adminAuth.getUserByEmail(email);
+      const existingClaims = userRecord.customClaims || {};
+      const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
+      const remainingClubIds = existingClubIds.filter((id) => id !== clubId);
+      if (remainingClubIds.length > 0) {
+        await adminAuth.setCustomUserClaims(userRecord.uid, {
+          ...existingClaims,
+          clubIds: remainingClubIds,
+        });
+      } else {
+        await adminAuth.deleteUser(userRecord.uid);
+      }
+    } catch (e) {
+      if (e.code !== 'auth/user-not-found') {
+        logger.error(`Fehler beim Bereinigen des Accounts für ${email} nach Club-Löschung:`, e);
+      }
+      // Account existierte bereits nicht mehr - für uns trotzdem kein Fehlerfall.
+    }
+  }));
+
+  return { success: true };
+});
+
 exports.unlinkMemberAccount = onCall({}, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
