@@ -239,6 +239,26 @@ async function loadClubEntityCollection(clubRef, collectionName) {
   return items;
 }
 
+// Schreibt einen neuen Eintrag in eine "Einzeldokument pro Eintrag + Index"-Collection unter
+// einem Club - spiegelt exakt das Client-seitige Muster aus makeClubEntityStore()/save() in
+// index.html (Transaktion: Dokument setzen + Index aktualisieren, falls die ID neu ist). Wird
+// hier für die automatisch erzeugten Buchungen aus processRecurringBookings gebraucht - schreibt
+// gezielt NUR das eine neue Buchungs-Dokument statt den kompletten transactions-Blob zu
+// überschreiben, damit ein zeitgleicher manueller Schreibvorgang im Client nicht überschrieben wird.
+async function saveClubEntity(clubRef, collectionName, entry) {
+  const collectionRef = clubRef.collection(collectionName);
+  const indexRef = collectionRef.doc('_index');
+  await db.runTransaction(async (tx) => {
+    const indexSnap = await tx.get(indexRef);
+    const index = indexSnap.exists ? JSON.parse(indexSnap.data().value || '[]') : [];
+    tx.set(collectionRef.doc(entry.id), { value: JSON.stringify(entry) });
+    if (!index.includes(entry.id)) {
+      index.push(entry.id);
+      tx.set(indexRef, { value: JSON.stringify(index) });
+    }
+  });
+}
+
 async function loadMembers() {
   const indexSnap = await db.collection('clubs').doc(CLUB_ID).collection('members').doc('_index').get();
   if (!indexSnap.exists) { logger.warn('Kein Mitglieder-Index gefunden.'); return null; }
@@ -643,8 +663,8 @@ function addOneMonthSameDay(dateStr) {
 exports.processRecurringBookings = onSchedule(
   { schedule: '0 0 * * *', timeZone: 'Europe/Berlin' },
   async () => {
-    const db = getFirestore();
-    const recurringDoc = await db.collection('kegelbuch').doc('finance-recurring').get();
+    const clubRef = db.collection('clubs').doc(CLUB_ID);
+    const recurringDoc = await clubRef.collection('data').doc('finance-recurring').get();
     if (!recurringDoc.exists) return;
 
     let recurring;
@@ -657,15 +677,10 @@ exports.processRecurringBookings = onSchedule(
     const dueBookings = recurring.filter(r => r.nextDate === todayStr);
     if (dueBookings.length === 0) return;
 
-    const transactionsDoc = await db.collection('kegelbuch').doc('finance-transactions').get();
-    let transactions = [];
-    if (transactionsDoc.exists) {
-      try { transactions = JSON.parse(transactionsDoc.data().value || '[]'); } catch (e) { /* ignorieren, mit leerer Liste starten */ }
-    }
-
     const [year, month] = todayStr.split('-').map(Number);
     const monthLabel = `${MONTH_NAMES_DE[month - 1]} ${year}`;
 
+    const newTransactions = [];
     dueBookings.forEach(r => {
       const description = `${r.description} (${monthLabel})`;
       const transaction = {
@@ -677,14 +692,18 @@ exports.processRecurringBookings = onSchedule(
         createdAt: Date.now(),
       };
       if (r.potId) transaction.potId = r.potId;
-      transactions.push(transaction);
+      newTransactions.push(transaction);
       r.nextDate = addOneMonthSameDay(r.nextDate);
       logger.info(`Monatliche Buchung verbucht: "${description}", Betrag ${r.amount}, nächste Ausführung ${r.nextDate}`);
     });
 
+    // finance-recurring bleibt ein Blob (kleine, selten parallel bearbeitete Liste), aber jede
+    // neue Buchung wird als EIGENES Dokument geschrieben statt den kompletten transactions-Blob
+    // zu überschreiben - sonst könnte dieser nächtliche Lauf eine zeitgleiche manuelle Änderung
+    // im Client überschreiben (das genau zu vermeiden war der Grund für die Migration).
     await Promise.all([
-      db.collection('kegelbuch').doc('finance-recurring').set({ value: JSON.stringify(recurring) }),
-      db.collection('kegelbuch').doc('finance-transactions').set({ value: JSON.stringify(transactions) }),
+      clubRef.collection('data').doc('finance-recurring').set({ value: JSON.stringify(recurring) }),
+      ...newTransactions.map(tx => saveClubEntity(clubRef, 'transactions', tx)),
     ]);
   }
 );
