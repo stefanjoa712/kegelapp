@@ -3283,10 +3283,15 @@
       if(!entry){ entry = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; arrears.push(entry); }
       if(!entry.id) entry.id = resolveArrearsDocId(name);
       if(!entry.history) entry.history = [];
+      // Der ursprüngliche "Strafen"-Eintrag dieses Abends verweist auf die Sitzplatz-Strafen -
+      // die sind jetzt veraltet (Abend wird bearbeitet/gelöscht), daher den Link kappen.
+      entry.history.forEach(h=>{
+        if(h.type==='increase' && h.eveningId===detail.id){ delete h.eveningId; delete h.seatId; }
+      });
       entry.amount = Math.round((entry.amount - amount)*100)/100;
       entry.history.push({
         id: uid('hist'), date: todayISO(), type:'correction', delta: -amount,
-        note: noteText, balanceAfter: entry.amount
+        note: noteText, balanceAfter: entry.amount, createdAt: Date.now()
       });
       if(!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
     }
