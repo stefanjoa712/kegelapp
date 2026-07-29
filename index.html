@@ -528,7 +528,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, getDoc, getDocFromCache, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, getDoc, getDocFromCache, setDoc, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
     setPersistence, browserLocalPersistence, browserSessionPersistence,
@@ -569,7 +569,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.30';
+  const APP_VERSION = '1.31';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -722,6 +722,57 @@
   }
   async function deleteKey(key, shared){
     try{ await withTimeout(deleteDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS); }catch(e){ console.error('deleteKey fehlgeschlagen für', key, e); }
+  }
+
+  // ---------- Mitglieder: eigene Firestore-Dokumente statt einem gemeinsamen JSON-Blob ----------
+  // Jedes Mitglied liegt als eigenes Dokument unter 'kegelbuch/member-<id>'. Ein Index-Dokument
+  // 'kegelbuch/members-index' enthält nur die Liste aller IDs, damit man alle Mitglieder laden kann,
+  // ohne die komplette Collection scannen zu müssen. Das verhindert das früher mögliche Last-Write-
+  // Wins-Problem: Zwei Änderungen an unterschiedlichen Mitgliedern (z.B. auf zwei Geräten gleichzeitig)
+  // schreiben jetzt auf unterschiedliche Dokumente und können sich nicht mehr gegenseitig überschreiben.
+  // Änderungen am selben Mitglied laufen über eine Transaktion, die bei einem parallelen Schreibvorgang
+  // automatisch wiederholt wird statt stillschweigend Daten zu verlieren.
+  function memberDocRef(id){ return doc(db, 'kegelbuch', 'member-' + id); }
+  const MEMBERS_INDEX_KEY = 'members-index';
+
+  // Lädt alle Mitglieder: erst den Index (Liste der IDs), dann alle zugehörigen Dokumente parallel.
+  async function getAllMembers(){
+    const index = await getJSONOrThrow(MEMBERS_INDEX_KEY, []);
+    if(index.length===0) return [];
+    const snaps = await withTimeout(
+      Promise.all(index.map(id=> getDoc(memberDocRef(id)))),
+      STORAGE_TIMEOUT_MS
+    );
+    return snaps.filter(s=>s.exists()).map(s=> JSON.parse(s.data().value));
+  }
+
+  // Legt ein neues Mitglied an oder aktualisiert ein bestehendes. Läuft in einer Transaktion:
+  // liest den aktuellen Serverstand des Dokuments (und ggf. des Index) und schreibt erst danach -
+  // Firestore wiederholt die Transaktion automatisch, falls zwischenzeitlich jemand anders an
+  // GENAU DIESEM Dokument geschrieben hat. Andere Mitglieder sind davon nie betroffen.
+  async function saveMember(member){
+    await withTimeout(runTransaction(db, async (tx)=>{
+      const indexRef = doc(db, 'kegelbuch', MEMBERS_INDEX_KEY);
+      const indexSnap = await tx.get(indexRef);
+      const index = indexSnap.exists() ? JSON.parse(indexSnap.data().value) : [];
+      tx.set(memberDocRef(member.id), { value: JSON.stringify(member) });
+      if(!index.includes(member.id)){
+        index.push(member.id);
+        tx.set(indexRef, { value: JSON.stringify(index) });
+      }
+    }), STORAGE_TIMEOUT_MS);
+  }
+
+  // Löscht ein Mitglied: Dokument entfernen und ID transaktional aus dem Index streichen.
+  async function deleteMember(memberId){
+    await withTimeout(runTransaction(db, async (tx)=>{
+      const indexRef = doc(db, 'kegelbuch', MEMBERS_INDEX_KEY);
+      const indexSnap = await tx.get(indexRef);
+      const index = indexSnap.exists() ? JSON.parse(indexSnap.data().value) : [];
+      tx.delete(memberDocRef(memberId));
+      const newIndex = index.filter(id=>id!==memberId);
+      tx.set(indexRef, { value: JSON.stringify(newIndex) });
+    }), STORAGE_TIMEOUT_MS);
   }
 
   // ---------- Kleine Helfer ----------
@@ -973,7 +1024,7 @@
     renderLoading('Übersicht wird geladen…');
     try{
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
-        getJSONOrThrow('members', []),
+        getAllMembers(),
         getJSONOrThrow('evenings-index', []),
         getJSONOrThrow('finance-arrears', state.financeArrears),
         getJSONOrThrow('calendar-events', []),
@@ -1018,13 +1069,7 @@
     state.view = 'settings';
     renderLoading('Mitglieder werden geladen…');
     try{
-      state.members = await getJSONOrThrow('members', [], (fresh)=>{
-        // Stiller Hintergrund-Refresh: nur neu rendern, wenn wir noch auf dieser Ansicht sind.
-        if(state.view==='settings'){
-          state.members = fresh;
-          render();
-        }
-      });
+      state.members = await getAllMembers();
       state.view = 'settings';
       render();
     }catch(e){
@@ -1142,7 +1187,7 @@
         getJSONOrThrow('finance-accounts', []),
         getJSONOrThrow('finance-transactions', []),
         getJSONOrThrow('finance-arrears', []),
-        getJSONOrThrow('members', state.members),
+        getAllMembers(),
         getJSONOrThrow('finance-savings-pots', []),
         getJSONOrThrow('finance-recurring', [])
       ]);
@@ -1171,7 +1216,7 @@
         getJSONOrThrow('calendar-events', []),
         getJSONOrThrow('calendar-occurrence-edits', []),
         getJSONOrThrow('calendar-rsvps', []),
-        getJSONOrThrow('members', state.members)
+        getAllMembers()
       ]);
       state.calendarEvents = events;
       state.calendarOccurrenceEdits = edits;
@@ -1190,7 +1235,7 @@
       const [events, edits, members] = await Promise.all([
         getJSONOrThrow('calendar-events', []),
         getJSONOrThrow('calendar-occurrence-edits', []),
-        getJSONOrThrow('members', state.members)
+        getAllMembers()
       ]);
       state.calendarEvents = events;
       state.calendarOccurrenceEdits = edits;
@@ -2087,7 +2132,7 @@
       }else if(sig.startsWith('memberDetail:')){
         const memberId = sig.slice('memberDetail:'.length);
         if(state.members.length===0){
-          try{ state.members = await getJSONOrThrow('members', []); }catch(e){}
+          try{ state.members = await getAllMembers(); }catch(e){}
         }
         if(memberId==='new'){
           state.currentMemberId = null;
@@ -2131,7 +2176,7 @@
               getJSONOrThrow('calendar-events', []),
               getJSONOrThrow('calendar-occurrence-edits', []),
               getJSONOrThrow('calendar-rsvps', []),
-              getJSONOrThrow('members', state.members)
+              getAllMembers()
             ]);
             state.calendarEvents = events;
             state.calendarOccurrenceEdits = edits;
@@ -2864,7 +2909,7 @@
       const detail = state.currentEveningDetail;
       detail.skipNotificationEmail = !sendEmails;
       let allMembers = state.members;
-      try{ allMembers = await getJSON('members', true, state.members); state.members = allMembers; }catch(e){}
+      try{ allMembers = await getAllMembers(); state.members = allMembers; }catch(e){}
       const presentSeats = detail.seating.filter(s=>s.name && !s.isGuest);
       const presentNames = new Set(presentSeats.map(s=>s.name));
       const avgRounded = averageOfTotalsRounded(validPresentMemberTotals(detail));
@@ -3792,15 +3837,17 @@
       if(!fn || !ln){ errEl.textContent='Bitte Vor- und Nachnamen angeben.'; return; }
       if(email && !/^\S+@\S+\.\S+$/.test(email)){ errEl.textContent='Bitte eine gültige E-Mail-Adresse angeben.'; return; }
       saveBtn.disabled = true; saveBtn.textContent = member ? 'Speichert…' : 'Wird hinzugefügt…';
+      let toSave;
       if(member){
         member.firstName=fn; member.lastName=ln; member.nickname=nick; member.email=email; member.role=role;
         if(birthday) member.birthday=birthday; else delete member.birthday;
+        toSave = member;
       }else{
-        const newMember = {id:uid('m'), firstName:fn, lastName:ln, nickname:nick, email, role};
-        if(birthday) newMember.birthday = birthday;
-        state.members.push(newMember);
+        toSave = {id:uid('m'), firstName:fn, lastName:ln, nickname:nick, email, role};
+        if(birthday) toSave.birthday = birthday;
+        state.members.push(toSave);
       }
-      await setJSON('members', state.members, true);
+      await saveMember(toSave);
       goToSettings();
     });
   }
@@ -4180,8 +4227,8 @@
     document.getElementById('confirm-delete-member-modal-yes').addEventListener('click', async ()=>{
       const yesBtn = document.getElementById('confirm-delete-member-modal-yes');
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      await deleteMember(member.id);
       state.members = state.members.filter(m=>m.id!==member.id);
-      await setJSON('members', state.members, true);
       closeGenericModal();
       goToSettings();
     });
@@ -4206,8 +4253,7 @@
         const unlinkFn = httpsCallable(functions, 'unlinkMemberAccount');
         await unlinkFn({ email: member.email });
         const m = state.members.find(x=>x.id===member.id);
-        if(m){ m.hasAccount = false; m.lastLogin = null; }
-        await setJSON('members', state.members, true);
+        if(m){ m.hasAccount = false; m.lastLogin = null; await saveMember(m); }
         closeGenericModal();
         render();
       }catch(e){
@@ -4236,8 +4282,7 @@
         const inviteMemberFn = httpsCallable(functions, 'inviteMember');
         await inviteMemberFn({ email: member.email, name: displayName(member) });
         const m = state.members.find(x=>x.id===member.id);
-        if(m) m.hasAccount = true;
-        await setJSON('members', state.members, true);
+        if(m){ m.hasAccount = true; await saveMember(m); }
         closeGenericModal();
         render();
       }catch(e){
@@ -5561,13 +5606,13 @@
       try{
         if(state.view==='main'){
           const [members, eveningsIndex] = await Promise.all([
-            getJSON('members', true, state.members),
+            getAllMembers(),
             getJSON('evenings-index', true, state.eveningsIndex)
           ]);
           state.members = members;
           state.eveningsIndex = eveningsIndex;
         }else if(state.view==='settings'){
-          state.members = await getJSON('members', true, state.members);
+          state.members = await getAllMembers();
         }else if(state.view==='detail' && state.currentEveningDetail){
           const fresh = await getJSON('evening-'+state.currentEveningDetail.id, true, state.currentEveningDetail);
           if(fresh) state.currentEveningDetail = fresh;
@@ -5749,7 +5794,7 @@
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
     try{
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
-        getJSONOrThrow('members', []),
+        getAllMembers(),
         getJSONOrThrow('evenings-index', []),
         getJSONOrThrow('finance-arrears', []),
         getJSONOrThrow('calendar-events', []),
@@ -5788,7 +5833,7 @@
       if(!member) return;
       member.lastLogin = new Date().toISOString();
       member.hasAccount = true;
-      await setJSON('members', state.members, true);
+      await saveMember(member);
     }catch(e){ /* nicht kritisch, einfach ignorieren */ }
   }
 
