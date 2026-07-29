@@ -578,7 +578,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.40';
+  const APP_VERSION = '1.41';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -640,10 +640,6 @@
   let currentGuests = [];
 
   // ---------- Storage-Helfer (Firestore) ----------
-  // Jeder "key" (z.B. 'members', 'evenings-index', 'evening-abc123') wird ein Dokument
-  // in der Firestore-Collection 'kegelbuch', als String im Feld 'value' gespeichert.
-  // Der Parameter 'shared' bleibt aus Kompatibilitätsgründen im Funktionskopf, wird aber
-  // nicht mehr benötigt: es gibt jetzt ohnehin nur noch die eine gemeinsame Datenbank.
   // Verhindert, dass ein hängender Firestore-Aufruf (z.B. bei schlechter Verbindung) die App
   // für immer im Ladezustand stecken lässt - nach STORAGE_TIMEOUT_MS wird abgebrochen.
   const STORAGE_TIMEOUT_MS = 10000;
@@ -654,92 +650,13 @@
     ]);
   }
 
-  // Cache-First-Strategie: Firestores Standard-getDoc() wartet auf eine Server-Antwort und
-  // fällt erst bei einem KOMPLETTEN Verbindungsabbruch auf den lokalen Cache zurück - bei
-  // "Netz da, aber langsam" (schwaches Mobilfunknetz, überlastetes WLAN) wartet es dagegen
-  // brav bis zum Timeout. Da ein persistenter lokaler Cache aktiv ist (siehe initializeFirestore
-  // oben), lesen wir stattdessen zuerst direkt aus dem Cache (quasi verzögerungsfrei) und lösen
-  // parallel einen Server-Request aus, der die Anzeige im Hintergrund still aktualisiert, falls
-  // sich zwischenzeitlich etwas geändert hat. Das bedeutet: minimal veraltete Daten sind für einen
-  // Moment möglich, aber praktisch kein Timeout-Risiko mehr bei schlechter Verbindung.
-  async function getJSON(key, shared, fallback, onBackgroundUpdate){
-    let cacheResult;
-    try{
-      const cacheSnap = await getDocFromCache(doc(db, 'kegelbuch', key));
-      cacheResult = cacheSnap.exists() ? JSON.parse(cacheSnap.data().value) : fallback;
-    }catch(e){
-      cacheResult = undefined; // noch nichts im Cache (z.B. allererster Start)
-    }
-
-    // Server-Abgleich im Hintergrund anstoßen, unabhängig davon ob Cache etwas hatte.
-    withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS).then(snap=>{
-      const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
-      if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
-        onBackgroundUpdate(serverResult);
-      }
-    }).catch(e=>{
-      // Kein Server erreichbar - Cache-Ergebnis (falls vorhanden) bleibt einfach stehen.
-      console.error('getJSON Server-Abgleich fehlgeschlagen für', key, e);
-    });
-
-    if(cacheResult!==undefined) return cacheResult;
-
-    // Nichts im Cache: auf den Server-Request warten müssen wir hier zwangsläufig.
-    try{
-      const snap = await withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS);
-      return snap.exists() ? JSON.parse(snap.data().value) : fallback;
-    }catch(e){
-      console.error('getJSON fehlgeschlagen für', key, e);
-      return fallback;
-    }
-  }
-  // Wie getJSON, aber wirft bei Fehler weiter statt still den Fallback zu liefern - für Stellen,
-  // an denen dem Nutzer eine Fehlermeldung mit "Erneut versuchen" gezeigt werden soll. Nutzt
-  // dieselbe Cache-First-Strategie; wirft nur, wenn WEDER Cache NOCH Server etwas liefern konnten.
-  async function getJSONOrThrow(key, fallback, onBackgroundUpdate){
-    let cacheResult;
-    try{
-      const cacheSnap = await getDocFromCache(doc(db, 'kegelbuch', key));
-      cacheResult = cacheSnap.exists() ? JSON.parse(cacheSnap.data().value) : fallback;
-    }catch(e){
-      cacheResult = undefined;
-    }
-
-    withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS).then(snap=>{
-      const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
-      if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
-        onBackgroundUpdate(serverResult);
-      }
-    }).catch(e=>{
-      console.error('getJSONOrThrow Server-Abgleich fehlgeschlagen für', key, e);
-    });
-
-    if(cacheResult!==undefined) return cacheResult;
-
-    // Nichts im Cache: hier muss der Server-Request durch, Fehler/Timeout wird weitergeworfen.
-    const snap = await withTimeout(getDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS);
-    return snap.exists() ? JSON.parse(snap.data().value) : fallback;
-  }
-  async function setJSON(key, value, shared){
-    try{
-      await withTimeout(setDoc(doc(db, 'kegelbuch', key), { value: JSON.stringify(value) }), STORAGE_TIMEOUT_MS);
-      return true;
-    }catch(e){
-      console.error('setJSON fehlgeschlagen für', key, e);
-      return false;
-    }
-  }
-  async function deleteKey(key, shared){
-    try{ await withTimeout(deleteDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS); }catch(e){ console.error('deleteKey fehlgeschlagen für', key, e); }
-  }
-
   // ---------- Club-gebundene Varianten von getJSON/getJSONOrThrow/setJSON ----------
-  // Identisches Verhalten (Cache-First, Hintergrund-Abgleich, Timeout-Handling) wie die
-  // Varianten oben, nur dass die Dokumente unter 'clubs/<clubId>/<key>' statt im gemeinsamen
-  // 'kegelbuch/' liegen - Vorbereitung, damit die App mehrere Kegelclubs verwalten kann. Für
-  // Daten, die nur diesen einen Club betreffen (z.B. Strafen-/Spiele-Katalog), aber wo sich der
-  // Aufwand einer Aufteilung in Einzeldokumente (wie bei den Mitgliedern) nicht lohnt, weil es
-  // sich um kleine, selten parallel bearbeitete Listen handelt.
+  // Identisches Verhalten (Cache-First, Hintergrund-Abgleich, Timeout-Handling) wie zuvor die
+  // gemeinsamen kegelbuch/-Varianten (inzwischen entfernt, da nach Abschluss der Multi-Club-
+  // Migration nirgends mehr aufgerufen), nur dass die Dokumente unter 'clubs/<clubId>/<key>'
+  // liegen. Für Daten, die nur diesen einen Club betreffen (z.B. Strafen-/Spiele-Katalog), aber
+  // wo sich der Aufwand einer Aufteilung in Einzeldokumente (wie bei den Mitgliedern) nicht
+  // lohnt, weil es sich um kleine, selten parallel bearbeitete Listen handelt.
   // Firestore-Dokumentpfade brauchen eine GERADE Anzahl Segmente (collection/doc/collection/doc/...).
   // 'clubs/<clubId>/<key>' hätte nur 3 Segmente und wäre kein gültiger Dokumentpfad (das schlug
   // beim ersten Versuch mit 'HTTP 400: lacks /' fehl) - daher der feste Zwischenschritt 'data' als
