@@ -220,6 +220,10 @@ function buildReopenEmailHtml(name, dateStr) {
 // hier sonst fehlen bzw. veraltet sein.
 const CLUB_ID = 'die-pudolfs';
 
+// Spiegelt ADMIN_EMAIL im Client (index.html) - der feste Admin-Zugang. Wird für
+// backfillClubClaims gebraucht, um diese Funktion auf den Admin-Account zu beschränken.
+const ADMIN_EMAIL = 'admin@die-pudolfs.internal';
+
 // Lädt alle Einträge einer "Einzeldokument pro Eintrag + Index"-Collection unter einem Club
 // (z.B. clubs/<clubId>/events, clubs/<clubId>/occurrence-edits) - spiegelt exakt das Client-
 // seitige Muster aus makeClubEntityStore()/getAll() in index.html.
@@ -473,11 +477,26 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   }
 
   const adminAuth = getAuth();
+  let userRecord;
   try {
-    await adminAuth.getUserByEmail(email);
+    userRecord = await adminAuth.getUserByEmail(email);
   } catch (e) {
     // Nutzer existiert noch nicht -> Account anlegen (ohne Passwort, das setzt das Mitglied selbst).
-    await adminAuth.createUser({ email, emailVerified: false });
+    userRecord = await adminAuth.createUser({ email, emailVerified: false });
+  }
+
+  // Custom Claim 'clubIds' (Array) ordnet den Auth-Account einem oder mehreren Clubs zu - nach
+  // dem Login liest der Client daraus, welche(n) Club(s) dieser Nutzer sehen darf (bei genau
+  // einem Eintrag direkt, bei mehreren über eine Auswahl). WICHTIG: den bestehenden Claim lesen
+  // und die neue clubId nur ERGÄNZEN, nie überschreiben - sonst würde ein zweiter Invite (z.B. in
+  // einem anderen Club) die Zugehörigkeit zu allen bisherigen Clubs löschen.
+  const existingClaims = userRecord.customClaims || {};
+  const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
+  if (!existingClubIds.includes(CLUB_ID)) {
+    await adminAuth.setCustomUserClaims(userRecord.uid, {
+      ...existingClaims,
+      clubIds: [...existingClubIds, CLUB_ID],
+    });
   }
 
   const resetLink = await adminAuth.generatePasswordResetLink(email, {
@@ -529,7 +548,21 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   const adminAuth = getAuth();
   try {
     const userRecord = await adminAuth.getUserByEmail(email);
-    await adminAuth.deleteUser(userRecord.uid);
+    // Ein Nutzer kann Mitglied in mehreren Clubs sein - beim Entfernen darf NICHT der ganze
+    // Account gelöscht werden, sondern nur die eine clubId aus dem Claim-Array entfernt werden.
+    // Erst wenn danach keine Club-Zugehörigkeit mehr übrig ist, wird der Account wirklich gelöscht.
+    const existingClaims = userRecord.customClaims || {};
+    const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
+    const remainingClubIds = existingClubIds.filter((id) => id !== CLUB_ID);
+
+    if (remainingClubIds.length > 0) {
+      await adminAuth.setCustomUserClaims(userRecord.uid, {
+        ...existingClaims,
+        clubIds: remainingClubIds,
+      });
+    } else {
+      await adminAuth.deleteUser(userRecord.uid);
+    }
   } catch (e) {
     if (e.code !== 'auth/user-not-found') {
       logger.error(`Fehler beim Entfernen des Accounts für ${email}:`, e);
@@ -539,6 +572,56 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   }
 
   return { success: true };
+});
+
+// -------- Einmaliges Nachtragen der Custom Claims für bestehende Accounts (Multi-Club-Login) --------
+// Wird nur einmalig gebraucht: als die Custom-Claim-basierte Club-Zuordnung eingeführt wurde,
+// hatten bereits eingeladene Mitglieder-Accounts (über das alte inviteMember ohne Claim-Logik)
+// noch keinen 'clubIds'-Claim - ohne dieses Nachtragen könnten sie sich nicht mehr einloggen
+// (der Client zeigt "Kein Zugriff", wenn der Claim fehlt/leer ist). Nur vom Admin-Account
+// aufrufbar. Idempotent: überspringt Accounts, die den Claim schon haben.
+exports.backfillClubClaims = onCall({}, async (request) => {
+  if (!request.auth || request.auth.token.email !== ADMIN_EMAIL) {
+    throw new HttpsError('permission-denied', 'Nur der Admin-Account darf dies ausführen.');
+  }
+
+  const adminAuth = getAuth();
+  const members = await loadMembers();
+  const memberEmails = (members || []).filter((m) => m.email).map((m) => m.email);
+
+  // Der Admin-Account selbst ist kein Mitglied (loadMembers() findet ihn nicht) - trotzdem
+  // braucht auch er den Claim, sonst könnte sich der Admin nach dieser Umstellung selbst
+  // aussperren. request.auth.token.email ist an dieser Stelle garantiert ADMIN_EMAIL (siehe
+  // Prüfung oben), daher hier explizit mit aufgenommen.
+  const emailsToProcess = [...new Set([ADMIN_EMAIL, ...memberEmails])];
+
+  const updated = [];
+  const skipped = [];
+  const notFound = [];
+
+  for (const email of emailsToProcess) {
+    let userRecord;
+    try {
+      userRecord = await adminAuth.getUserByEmail(email);
+    } catch (e) {
+      notFound.push(email);
+      continue;
+    }
+    const existingClaims = userRecord.customClaims || {};
+    const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
+    if (existingClubIds.includes(CLUB_ID)) {
+      skipped.push(email);
+      continue;
+    }
+    await adminAuth.setCustomUserClaims(userRecord.uid, {
+      ...existingClaims,
+      clubIds: [...existingClubIds, CLUB_ID],
+    });
+    updated.push(email);
+  }
+
+  logger.info(`backfillClubClaims: ${updated.length} aktualisiert, ${skipped.length} übersprungen (bereits vorhanden), ${notFound.length} ohne Auth-Account.`);
+  return { success: true, updated, skipped, notFound };
 });
 
 // -------- Öffentliche Strafen-Übersicht für Gäste (kein Login nötig) --------
