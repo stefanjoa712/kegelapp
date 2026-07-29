@@ -121,6 +121,48 @@ Script laufen lassen, Ausgabe kontrollieren, dann erst den neuen
 nötig (die bestehende Regel deckt beliebige Pfadtiefen unter `clubs/`
 bereits ab).
 
+## Migration: Kegelabende
+
+Viertes Script, `migrate-evenings.js`, migriert die Kegelabende. Anders als
+bei den bisherigen Migrationen liegt hier nicht ein Array in einem Blob,
+sondern jeder Abend bereits als eigenes Dokument (`kegelbuch/evening-<id>`).
+Das Script findet diese über `listDocuments('kegelbuch')` (neue Methode im
+REST-Client) und filtert auf das Präfix `evening-`.
+
+Jeder gefundene Abend wird aufgeteilt:
+
+- **Hauptdokument** `clubs/die-pudolfs/evenings/<id>` - alle Felder außer
+  `finesBySeat`/`adHocFinesBySeat` (Datum, Sitzordnung, Strafenkatalog-
+  Snapshot, Notizen, Abschluss-Status). Diese Felder ändern sich nach dem
+  Anlegen des Abends praktisch nie parallel von mehreren Personen.
+- **Ein Unterdokument pro Sitzplatz mit Strafen**
+  `clubs/die-pudolfs/evenings/<id>/seats/<seatId>` mit den Strafen-Zählern
+  für genau diesen Sitzplatz. Grund: mehrere Personen tragen während eines
+  Abends gleichzeitig auf unterschiedlichen Geräten Strafen für
+  unterschiedliche Sitzplätze ein - ein kompletter Überschrieb des ganzen
+  Abend-Dokuments hätte hier dasselbe Last-Write-Wins-Risiko wie
+  ursprünglich bei den Mitgliedern gehabt.
+
+Zusätzlich wird `kegelbuch/evenings-index` (die Übersichtsliste aller
+Abende) als einfacher Blob nach `clubs/die-pudolfs/data/evenings-index`
+verschoben - analog zu Strafen-/Spiele-Katalog, da neue Abende selten genug
+angelegt werden, dass das Risiko dort vernachlässigbar ist.
+
+```bash
+cd scripts
+node migrate-evenings.js            # Dry-Run
+node migrate-evenings.js --apply    # echte Ausführung
+```
+
+Auch dieses Script ist idempotent und löscht die alten Dokumente unter
+`kegelbuch/` nicht. Ein Firestore-Regeln-Deploy ist hierfür nicht nötig.
+
+**Wichtig:** Dieser Umbau betrifft auch eine Cloud Function
+(`sendFineEmailsOnClose`) - deren Trigger-Pfad wurde von `kegelbuch/{docId}`
+auf `clubs/die-pudolfs/evenings/{docId}` geändert. Nach dem Merge/Deploy
+läuft der GitHub-Actions-Workflow automatisch auch den Functions-Deploy mit,
+kein separater manueller Schritt nötig.
+
 ## Technischer Hintergrund: warum kein firebase-admin?
 
 Ein erster Versuch, das Firebase-CLI-Zugriffstoken einfach an

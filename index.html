@@ -528,7 +528,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, collection, getDoc, getDocFromCache, setDoc, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, collection, getDoc, getDocs, getDocFromCache, setDoc, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
     setPersistence, browserLocalPersistence, browserSessionPersistence,
@@ -578,7 +578,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.35';
+  const APP_VERSION = '1.36';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -930,6 +930,91 @@
   async function getAllOccurrenceEdits(){ return occurrenceEditsStore.getAll(); }
   async function saveOccurrenceEdit(edit){ return occurrenceEditsStore.save(edit); }
 
+  // ---------- Kegelabende ----------
+  // Ein Kegelabend besteht aus einem Hauptdokument (Datum, Sitzordnung/Namen, Strafenkatalog-
+  // Snapshot, Notizen, Abschluss-Status - Felder, die selten und praktisch nie parallel von
+  // mehreren Personen gleichzeitig geändert werden) und einer Unter-Collection mit einem
+  // Dokument PRO SITZPLATZ für die eigentlichen Strafen-Zähler (finesBySeat/adHocFinesBySeat).
+  // Grund für die Aufteilung: mehrere Personen tragen während des Abends gleichzeitig auf
+  // unterschiedlichen Geräten Strafen für unterschiedliche Sitzplätze ein - ein kompletter
+  // Überschrieb des ganzen Abend-Dokuments hätte hier das gleiche Last-Write-Wins-Risiko wie
+  // ursprünglich bei den Mitgliedern. Schreiben pro Sitzplatz läuft über eine Transaktion, damit
+  // auch zwei gleichzeitige Änderungen AM SELBEN Sitzplatz (z.B. zwei Personen zählen für
+  // denselben Platz mit) sich nicht gegenseitig überschreiben, sondern Firestore die Transaktion
+  // automatisch wiederholt.
+  // Pfad: 'clubs/<clubId>/evenings/<eveningId>' (Hauptdokument) und
+  // 'clubs/<clubId>/evenings/<eveningId>/seats/<seatId>' (Sitzplatz-Unterdokument).
+  function eveningDocRef(eveningId){ return doc(db, 'clubs', CURRENT_CLUB_ID, 'evenings', eveningId); }
+  function eveningSeatDocRef(eveningId, seatId){ return doc(db, 'clubs', CURRENT_CLUB_ID, 'evenings', eveningId, 'seats', seatId); }
+  function eveningSeatsCollection(eveningId){ return collection(db, 'clubs', CURRENT_CLUB_ID, 'evenings', eveningId, 'seats'); }
+
+  // Lädt ein Abend-Hauptdokument (ohne Sitzplatz-Strafen).
+  async function getEveningMainDoc(eveningId){
+    const snap = await withTimeout(getDoc(eveningDocRef(eveningId)), STORAGE_TIMEOUT_MS);
+    return snap.exists() ? JSON.parse(snap.data().value) : null;
+  }
+
+  // Lädt alle Sitzplatz-Unterdokumente eines Abends als { [seatId]: {finesBySeat, adHocFinesBySeat} }.
+  async function getEveningSeatFines(eveningId){
+    const snaps = await withTimeout(getDocs(eveningSeatsCollection(eveningId)), STORAGE_TIMEOUT_MS);
+    const result = {};
+    snaps.forEach(snap=>{
+      try{ result[snap.id] = JSON.parse(snap.data().value); }catch(e){ /* einzelnes defektes Dokument ignorieren */ }
+    });
+    return result;
+  }
+
+  // Lädt ein komplettes Abend-Detail (Hauptdokument + alle Sitzplatz-Strafen zusammengeführt) -
+  // der Rest der App arbeitet weiterhin mit detail.finesBySeat/detail.adHocFinesBySeat wie bisher,
+  // ohne dass an jeder Lese-/Anzeigestelle etwas geändert werden musste.
+  async function getEveningDetail(eveningId){
+    const [main, seatFines] = await Promise.all([
+      getEveningMainDoc(eveningId),
+      getEveningSeatFines(eveningId)
+    ]);
+    if(!main) return null;
+    main.finesBySeat = {};
+    main.adHocFinesBySeat = {};
+    for(const seatId of Object.keys(seatFines)){
+      if(seatFines[seatId].finesBySeat) main.finesBySeat[seatId] = seatFines[seatId].finesBySeat;
+      if(seatFines[seatId].adHocFinesBySeat) main.adHocFinesBySeat[seatId] = seatFines[seatId].adHocFinesBySeat;
+    }
+    return main;
+  }
+
+  // Speichert NUR das Hauptdokument (ohne finesBySeat/adHocFinesBySeat - die laufen separat über
+  // saveEveningSeatFines). detail darf die Felder enthalten, sie werden hier einfach ignoriert.
+  async function saveEveningMainDoc(detail){
+    const { finesBySeat, adHocFinesBySeat, ...mainFields } = detail;
+    await withTimeout(setDoc(eveningDocRef(detail.id), { value: JSON.stringify(mainFields) }), STORAGE_TIMEOUT_MS);
+  }
+
+  // Speichert die Strafen für GENAU EINEN Sitzplatz eines Abends, transaktional (falls zwei
+  // Personen gleichzeitig für denselben Sitzplatz mitzählen, wiederholt Firestore die Transaktion
+  // automatisch statt eine der beiden Änderungen zu verlieren).
+  async function saveEveningSeatFines(eveningId, seatId, fines, adHocFines){
+    await withTimeout(runTransaction(db, async (tx)=>{
+      tx.set(eveningSeatDocRef(eveningId, seatId), { value: JSON.stringify({ finesBySeat: fines||{}, adHocFinesBySeat: adHocFines||[] }) });
+    }), STORAGE_TIMEOUT_MS);
+  }
+
+  // Verschiebt das Sitzplatz-Unterdokument von einem Sitzplatz zu einem anderen (z.B. wenn eine
+  // nachträglich hinzugefügte Person die Seite wechselt) - liest den alten Stand, schreibt ihn
+  // unter der neuen seatId, löscht das alte Dokument.
+  async function moveEveningSeatFines(eveningId, oldSeatId, newSeatId){
+    const oldSnap = await withTimeout(getDoc(eveningSeatDocRef(eveningId, oldSeatId)), STORAGE_TIMEOUT_MS);
+    if(!oldSnap.exists()) return;
+    await withTimeout(setDoc(eveningSeatDocRef(eveningId, newSeatId), oldSnap.data()), STORAGE_TIMEOUT_MS);
+    await withTimeout(deleteDoc(eveningSeatDocRef(eveningId, oldSeatId)), STORAGE_TIMEOUT_MS);
+  }
+
+  // Löscht einen kompletten Abend inkl. aller Sitzplatz-Unterdokumente.
+  async function deleteEveningComplete(eveningId){
+    const snaps = await withTimeout(getDocs(eveningSeatsCollection(eveningId)), STORAGE_TIMEOUT_MS);
+    await Promise.all(snaps.docs.map(d=> deleteDoc(d.ref)));
+    await withTimeout(deleteDoc(eveningDocRef(eveningId)), STORAGE_TIMEOUT_MS);
+  }
+
   // direkt drauf, kein 'value'-JSON-String-Wrapper wie bei den anderen Collections - hier gibt es
   // pro Club nur eines, kein Array-Problem, das den Wrapper nötig gemacht hätte).
   async function getClub(){
@@ -1190,7 +1275,7 @@
     try{
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getAllMembers(),
-        getJSONOrThrow('evenings-index', []),
+        getClubJSONOrThrow('evenings-index', []),
         getJSONOrThrow('finance-arrears', state.financeArrears),
         getAllCalendarEvents(),
         getAllOccurrenceEdits()
@@ -1213,7 +1298,7 @@
     if(!eve) return;
     renderLoading('Kegelabend wird geladen…');
     try{
-      const detail = await getJSONOrThrow('evening-'+eve.id, null);
+      const detail = await getEveningDetail(eve.id);
       if(!detail){
         state.mainError = 'Konnte diesen Abend nicht laden.';
         state.view = 'main';
@@ -2246,7 +2331,7 @@
         }else{
           renderLoading('Kegelabend wird geladen…');
           try{
-            const d = await getJSONOrThrow('evening-'+eveningId, null);
+            const d = await getEveningDetail(eveningId);
             if(d){
               state.currentEveningDetail = d;
               const seatObj = d.seating.find(s=>s.seatId===seatId);
@@ -2739,21 +2824,13 @@
     const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
     if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)};
   }
-  // Speichert ein Abend-Detail-Dokument und hält gleichzeitig die Kennzahlen im Index aktuell.
-  async function saveEveningDetail(detail){
-    updateEveningIndexSummary(detail);
-    await Promise.all([
-      setJSON('evening-'+detail.id, detail, true),
-      setJSON('evenings-index', state.eveningsIndex, true)
-    ]);
-  }
   // Holt für Abende, deren Index-Eintrag noch keine Kennzahlen enthält (ältere Einträge vor
   // Einführung dieses Felds), einmalig das Detail-Dokument nach und cacht die Kennzahlen im Index.
   async function backfillEveningSummaries(){
     const missing = state.eveningsIndex.filter(e=> e.income===undefined);
     if(missing.length===0) return;
     try{
-      const details = await Promise.all(missing.map(e=> getJSON('evening-'+e.id, true, null)));
+      const details = await Promise.all(missing.map(e=> getEveningDetail(e.id)));
       let changed = false;
       details.forEach((detail, i)=>{
         if(!detail) return;
@@ -2761,7 +2838,7 @@
         if(idx>=0){ state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)}; changed = true; }
       });
       if(changed){
-        await setJSON('evenings-index', state.eveningsIndex, true);
+        await setClubJSON('evenings-index', state.eveningsIndex);
         if(state.view==='main') render();
       }
     }catch(e){ console.error('Backfill der Abend-Kennzahlen fehlgeschlagen', e); }
@@ -2843,7 +2920,7 @@
   async function openFineDetailFromHistory(eveningId, seatId){
     renderLoading('Kegelabend wird geladen…');
     try{
-      const detail = await getJSONOrThrow('evening-'+eveningId, null);
+      const detail = await getEveningDetail(eveningId);
       if(!detail){ goToArrearsDetail(state.currentArrearsName); return; }
       state.currentEveningDetail = detail;
       const seat = detail.seating.find(s=>s.seatId===seatId);
@@ -2958,6 +3035,29 @@
     `;
   }
 
+  // Speichert die Strafen für einen bestimmten Sitzplatz eines Abends und hält gleichzeitig die
+  // Kennzahlen im Index aktuell - gebündelter Helper für alle Stellen, die nur an EINEM Sitzplatz
+  // etwas ändern (Katalog-Strafe hoch/runter zählen, Geldstrafe hinzufügen/bearbeiten/löschen).
+  async function saveEveningSeatFinesAndIndex(detail, seatId){
+    updateEveningIndexSummary(detail);
+    await Promise.all([
+      saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId]),
+      setClubJSON('evenings-index', state.eveningsIndex)
+    ]);
+  }
+
+  // Speichert die Strafen für MEHRERE Sitzplätze gleichzeitig (z.B. Sammel-Eintragung "Verlorenes
+  // Spiel" für mehrere Mitspieler auf einmal) - jeder Sitzplatz läuft über seine eigene
+  // Transaktion, unterschiedliche Sitzplätze können sich also weiterhin nicht kollidieren.
+  async function saveEveningSeatsFinesAndIndex(detail, seatIds){
+    updateEveningIndexSummary(detail);
+    const uniqueSeatIds = [...new Set(seatIds)];
+    await Promise.all([
+      ...uniqueSeatIds.map(seatId=> saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId])),
+      setClubJSON('evenings-index', state.eveningsIndex)
+    ]);
+  }
+
   async function adjustFineCount(fineId, delta){
     const detail = state.currentEveningDetail;
     const seatId = state.currentFineSeatId;
@@ -2966,7 +3066,7 @@
     const current = detail.finesBySeat[seatId][fineId] || 0;
     detail.finesBySeat[seatId][fineId] = Math.max(0, current + delta);
     render();
-    await saveEveningDetail(detail);
+    await saveEveningSeatFinesAndIndex(detail, seatId);
   }
 
   async function showAddGeldstrafeModal(existingAdHoc){
@@ -3027,7 +3127,7 @@
       }else{
         detail.adHocFinesBySeat[seatId].push({id:uid('adhoc'), name, amount:rounded});
       }
-      await saveEveningDetail(detail);
+      await saveEveningSeatFinesAndIndex(detail, seatId);
       closeGenericModal();
       render();
     });
@@ -3047,7 +3147,7 @@
       const detail = state.currentEveningDetail;
       const seatId = state.currentFineSeatId;
       detail.adHocFinesBySeat[seatId] = (detail.adHocFinesBySeat[seatId]||[]).filter(x=>x.id!==adHocFine.id);
-      await saveEveningDetail(detail);
+      await saveEveningSeatFinesAndIndex(detail, seatId);
       closeGenericModal();
       render();
     });
@@ -3075,6 +3175,10 @@
       detail.skipNotificationEmail = !sendEmails;
       let allMembers = state.members;
       try{ allMembers = await getAllMembers(); state.members = allMembers; }catch(e){}
+      // Frische Sitzplatz-Strafen laden, bevor der Durchschnitt/die Einnahmen berechnet werden -
+      // andere Sitzplätze könnten seit dem letzten Laden von anderen Geräten aus geändert worden
+      // sein, und die Berechnung soll auf dem aktuellen Stand basieren.
+      try{ const freshSeatFines = await getEveningSeatFines(detail.id); detail.finesBySeat = {}; detail.adHocFinesBySeat = {}; for(const seatId of Object.keys(freshSeatFines)){ if(freshSeatFines[seatId].finesBySeat) detail.finesBySeat[seatId] = freshSeatFines[seatId].finesBySeat; if(freshSeatFines[seatId].adHocFinesBySeat) detail.adHocFinesBySeat[seatId] = freshSeatFines[seatId].adHocFinesBySeat; } }catch(e){ /* Fallback: mit dem lokalen Stand weiterrechnen */ }
       const presentSeats = detail.seating.filter(s=>s.name && !s.isGuest);
       const presentNames = new Set(presentSeats.map(s=>s.name));
       const avgRounded = averageOfTotalsRounded(validPresentMemberTotals(detail));
@@ -3126,8 +3230,8 @@
       state.financeArrears = arrears;
 
       await Promise.all([
-        setJSON('evening-'+detail.id, detail, true),
-        setJSON('evenings-index', state.eveningsIndex, true),
+        saveEveningMainDoc(detail),
+        setClubJSON('evenings-index', state.eveningsIndex),
         setJSON('finance-arrears', arrears, true)
       ]);
       await updateAttendanceStatsForEvening(detail, 1);
@@ -3171,8 +3275,8 @@
       const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
       if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:false, ...computeEveningSummaryFields(detail)};
       await Promise.all([
-        setJSON('evening-'+detail.id, detail, true),
-        setJSON('evenings-index', state.eveningsIndex, true)
+        saveEveningMainDoc(detail),
+        setClubJSON('evenings-index', state.eveningsIndex)
       ]);
       await updateAttendanceStatsForEvening(detail, -1);
       closeGenericModal();
@@ -3200,7 +3304,11 @@
         seat.invalid = true;
         delete seat.invalidAmount; // wird erst beim Abschließen fest eingetragen
       }
-      await saveEveningDetail(detail);
+      updateEveningIndexSummary(detail);
+      await Promise.all([
+        saveEveningMainDoc(detail),
+        setClubJSON('evenings-index', state.eveningsIndex)
+      ]);
       closeGenericModal();
       render();
     });
@@ -3226,7 +3334,11 @@
         seat.invalid = false;
         delete seat.invalidAmount;
       }
-      await saveEveningDetail(detail);
+      updateEveningIndexSummary(detail);
+      await Promise.all([
+        saveEveningMainDoc(detail),
+        setClubJSON('evenings-index', state.eveningsIndex)
+      ]);
       closeGenericModal();
       render();
     });
@@ -3349,7 +3461,11 @@
       btn.disabled = true; btn.textContent = 'Wird hinzugefügt…';
       const seat = detail.seating.find(s=>s.seatId===seatId);
       if(seat){ seat.name = name; seat.isGuest = isGuest; seat.addedLater = true; }
-      await saveEveningDetail(detail);
+      updateEveningIndexSummary(detail);
+      await Promise.all([
+        saveEveningMainDoc(detail),
+        setClubJSON('evenings-index', state.eveningsIndex)
+      ]);
       closeGenericModal();
       render();
     });
@@ -3471,7 +3587,8 @@
       }
       const confirmBtn = document.getElementById('bulk-add-confirm-btn');
       confirmBtn.disabled = true; confirmBtn.textContent = 'Wird gespeichert…';
-      await saveEveningDetail(detail);
+      const affectedSeatIds = checkedBoxes.map(cb=>cb.dataset.seatId);
+      await saveEveningSeatsFinesAndIndex(detail, affectedSeatIds);
       closeGenericModal();
       render();
     });
@@ -3936,7 +4053,7 @@
   async function openEveningDetail(id){
     renderLoading('Kegelabend wird geladen…');
     try{
-      const detail = await getJSONOrThrow('evening-'+id, null);
+      const detail = await getEveningDetail(id);
       if(!detail){
         state.mainError = 'Konnte diesen Abend nicht laden.';
         state.view = 'main';
@@ -5409,7 +5526,7 @@
     if(errEl) errEl.innerHTML = '';
     if(btn){ btn.disabled = true; btn.textContent = 'Wird geprüft…'; }
 
-    state.eveningsIndex = await getJSON('evenings-index', true, state.eveningsIndex);
+    state.eveningsIndex = await getClubJSON('evenings-index', state.eveningsIndex);
     const existing = state.eveningsIndex.find(e=>e.date===date);
     if(existing){
       if(btn){ btn.disabled = false; btn.textContent = originalBtnText; }
@@ -5472,8 +5589,8 @@
     const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation };
     const newIndex = [...state.eveningsIndex, {id, date, ...computeEveningSummaryFields(detail)}];
     await Promise.all([
-      setJSON('evening-'+id, detail, true),
-      setJSON('evenings-index', newIndex, true)
+      saveEveningMainDoc(detail),
+      setClubJSON('evenings-index', newIndex)
     ]);
     state.eveningsIndex = newIndex;
 
@@ -5519,7 +5636,7 @@
         clearTimeout(saveTimer);
         saveTimer = setTimeout(async ()=>{
           state.currentEveningDetail.notes = notesTextarea.value;
-          await setJSON('evening-'+state.currentEveningDetail.id, state.currentEveningDetail, true);
+          await saveEveningMainDoc(state.currentEveningDetail);
         }, 800);
       });
     }
@@ -5578,8 +5695,8 @@
       const id = detail.id;
       const newIndex = state.eveningsIndex.filter(e=>e.id!==id);
       const saves = [
-        deleteKey('evening-'+id, true),
-        setJSON('evenings-index', newIndex, true)
+        deleteEveningComplete(id),
+        setClubJSON('evenings-index', newIndex)
       ];
 
       // Wurde der Abend abgeschlossen, wurden dabei Rückstände erhöht - beim Löschen müssen
@@ -5662,7 +5779,7 @@
       if(!seat) return;
       if(!seat.shareToken){
         seat.shareToken = uid('share');
-        await setJSON('evening-'+detail.id, detail, true);
+        await saveEveningMainDoc(detail);
       }
       const shareUrl = `https://us-central1-die-pudolfs.cloudfunctions.net/shareGuestBill?token=${seat.shareToken}`;
       const shareTitle = `Strafen vom Kegelabend – ${seat.name}`;
@@ -5710,7 +5827,10 @@
         return;
       }
       state.currentFineSeatId = newSeatId;
-      await setJSON('evening-'+detail.id, detail, true);
+      await Promise.all([
+        saveEveningMainDoc(detail),
+        moveEveningSeatFines(detail.id, oldSeatId, newSeatId)
+      ]);
       render();
     });
     document.querySelectorAll('.edit-adhoc-btn').forEach(btn=>{
@@ -5776,14 +5896,14 @@
         if(state.view==='main'){
           const [members, eveningsIndex] = await Promise.all([
             getAllMembers(),
-            getJSON('evenings-index', true, state.eveningsIndex)
+            getClubJSON('evenings-index', state.eveningsIndex)
           ]);
           state.members = members;
           state.eveningsIndex = eveningsIndex;
         }else if(state.view==='settings'){
           state.members = await getAllMembers();
         }else if(state.view==='detail' && state.currentEveningDetail){
-          const fresh = await getJSON('evening-'+state.currentEveningDetail.id, true, state.currentEveningDetail);
+          const fresh = await getEveningDetail(state.currentEveningDetail.id);
           if(fresh) state.currentEveningDetail = fresh;
         }
         render();
@@ -5964,7 +6084,7 @@
     try{
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getAllMembers(),
-        getJSONOrThrow('evenings-index', []),
+        getClubJSONOrThrow('evenings-index', []),
         getJSONOrThrow('finance-arrears', []),
         getAllCalendarEvents(),
         getAllOccurrenceEdits()
