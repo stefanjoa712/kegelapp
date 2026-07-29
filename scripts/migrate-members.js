@@ -34,18 +34,17 @@
  * 2. Einmal `firebase login` ausgeführt (falls ihr schon `firebase deploy` nutzt, ist das
  *    bereits passiert). Das Script liest das dabei gespeicherte Firebase-CLI-Login und holt sich
  *    darüber ein Zugriffs-Token - kein separates Google-Cloud-SDK/gcloud nötig.
- * 3. Im 'scripts'-Ordner einmalig: npm install
+ * 3. Im 'scripts'-Ordner einmalig: npm install (aktuell keine externen Abhängigkeiten nötig,
+ *    das Script nutzt nur Node-Bordmittel - der Befehl schadet trotzdem nicht)
  *
  * AUSFÜHRUNG:
  *   cd scripts
- *   npm install
  *   node migrate-members.js            # Dry-Run: zeigt nur an, was passieren würde
  *   node migrate-members.js --apply     # führt die Migration wirklich aus
  */
 
-const { initializeApp } = require('firebase-admin/app');
-const { getFirestore } = require('firebase-admin/firestore');
 const { getFirebaseCliAccessToken } = require('./firebase-cli-credentials');
+const { FirestoreRestClient } = require('./firestore-rest-client');
 
 const PROJECT_ID = 'die-pudolfs';
 const OLD_MEMBERS_KEY = 'members';
@@ -64,19 +63,9 @@ const CLUB_DATA = {
 const apply = process.argv.includes('--apply');
 
 async function main() {
+  console.log('Hole Zugriffs-Token über bestehendes Firebase-CLI-Login...');
   const accessToken = await getFirebaseCliAccessToken();
-  initializeApp({
-    credential: {
-      getAccessToken: async () => ({
-        access_token: accessToken,
-        // Kurzlebiges Token (Firebase-CLI-Zugriffstoken sind i.d.R. ~1h gültig) - für ein
-        // einmaliges kurzes Migrations-Script reicht das, es wird pro Lauf frisch geholt.
-        expires_in: 3000
-      })
-    },
-    projectId: PROJECT_ID
-  });
-  const db = getFirestore();
+  const db = new FirestoreRestClient(PROJECT_ID, accessToken);
 
   console.log(`Projekt: ${PROJECT_ID}`);
   console.log(apply ? 'Modus: ECHTE AUSFÜHRUNG (--apply)' : 'Modus: DRY-RUN (keine Schreibvorgänge, --apply anhängen für echten Lauf)');
@@ -89,17 +78,16 @@ async function main() {
   console.log(`  Gründungsdatum: ${CLUB_DATA.foundedOn}`);
   console.log('');
 
-  const clubRef = db.collection('clubs').doc(CLUB_ID);
-  const membersCollection = clubRef.collection('members');
+  const clubPath = `clubs/${CLUB_ID}`;
+  const membersPath = `${clubPath}/members`;
 
   // ---- Alten Blob laden ----
-  const oldDocRef = db.collection('kegelbuch').doc(OLD_MEMBERS_KEY);
-  const oldSnap = await oldDocRef.get();
+  const oldMembersDoc = await db.getDoc(`kegelbuch/${OLD_MEMBERS_KEY}`);
 
-  if (!oldSnap.exists) {
+  if (!oldMembersDoc) {
     console.log(`Kein Dokument 'kegelbuch/${OLD_MEMBERS_KEY}' gefunden. Mitglieder-Migration wird übersprungen.`);
     if (apply) {
-      await clubRef.set(CLUB_DATA, { merge: true });
+      await db.setDocMerge(clubPath, CLUB_DATA);
       console.log('Club-Stammdaten wurden trotzdem geschrieben.');
     } else {
       console.log('Würde Club-Stammdaten schreiben. Zum echten Ausführen: node migrate-members.js --apply');
@@ -109,7 +97,7 @@ async function main() {
 
   let members;
   try {
-    members = JSON.parse(oldSnap.data().value);
+    members = JSON.parse(oldMembersDoc.value);
   } catch (e) {
     console.error('Konnte den Inhalt von kegelbuch/members nicht als JSON parsen:', e.message);
     process.exitCode = 1;
@@ -130,10 +118,9 @@ async function main() {
   console.log('');
 
   // ---- Bereits bestehenden Index prüfen (für Idempotenz-Hinweis) ----
-  const indexRef = membersCollection.doc(MEMBERS_INDEX_ID);
-  const indexSnap = await indexRef.get();
-  if (indexSnap.exists) {
-    const existingIndex = JSON.parse(indexSnap.data().value);
+  const existingIndexDoc = await db.getDoc(`${membersPath}/${MEMBERS_INDEX_ID}`);
+  if (existingIndexDoc) {
+    const existingIndex = JSON.parse(existingIndexDoc.value);
     console.log(`Hinweis: Es existiert bereits ein Index mit ${existingIndex.length} ID(s). Wird überschrieben/ergänzt.`);
     console.log('');
   }
@@ -152,9 +139,9 @@ async function main() {
   }
 
   if (!apply) {
-    console.log(`Würde ${members.length} Dokument(e) unter 'clubs/${CLUB_ID}/members/<id>' anlegen/aktualisieren`);
-    console.log(`und 'clubs/${CLUB_ID}/members/${MEMBERS_INDEX_ID}' mit ${ids.length} ID(s) schreiben.`);
-    console.log(`Würde 'clubs/${CLUB_ID}' mit den Club-Stammdaten schreiben.`);
+    console.log(`Würde ${members.length} Dokument(e) unter '${membersPath}/<id>' anlegen/aktualisieren`);
+    console.log(`und '${membersPath}/${MEMBERS_INDEX_ID}' mit ${ids.length} ID(s) schreiben.`);
+    console.log(`Würde '${clubPath}' mit den Club-Stammdaten schreiben.`);
     console.log('');
     console.log('Der alte Blob kegelbuch/members bleibt unverändert erhalten.');
     console.log('Zum echten Ausführen: node migrate-members.js --apply');
@@ -163,29 +150,13 @@ async function main() {
 
   // ---- Echte Migration ----
   console.log('Schreibe Club-Stammdaten...');
-  await clubRef.set(CLUB_DATA, { merge: true });
+  await db.setDocMerge(clubPath, CLUB_DATA);
 
   console.log('Schreibe Mitglieder-Dokumente...');
-  const batches = [];
-  let batch = db.batch();
-  let opsInBatch = 0;
-
   for (const member of members) {
-    const ref = membersCollection.doc(member.id);
-    batch.set(ref, { value: JSON.stringify(member) });
-    opsInBatch++;
-    if (opsInBatch >= 450) {
-      batches.push(batch);
-      batch = db.batch();
-      opsInBatch = 0;
-    }
+    await db.setDoc(`${membersPath}/${member.id}`, { value: JSON.stringify(member) });
   }
-  batch.set(indexRef, { value: JSON.stringify(ids) });
-  batches.push(batch);
-
-  for (const b of batches) {
-    await b.commit();
-  }
+  await db.setDoc(`${membersPath}/${MEMBERS_INDEX_ID}`, { value: JSON.stringify(ids) });
 
   console.log(`Fertig. Club '${CLUB_ID}' angelegt, ${members.length} Mitglied(er) migriert, Index geschrieben.`);
   console.log('');
@@ -198,4 +169,3 @@ main().catch(e => {
   console.error('Migration fehlgeschlagen:', e);
   process.exitCode = 1;
 });
-

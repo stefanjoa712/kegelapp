@@ -25,15 +25,14 @@ Voraussetzung: Node.js ist installiert und ihr habt schon mal `firebase login`
 ausgeführt (falls ihr schon `firebase deploy` nutzt, ist das längst passiert -
 kein zusätzliches Google-Cloud-SDK/`gcloud` nötig).
 
-```bash
-cd scripts
-npm install
-```
+Kein `npm install` nötig - das Script kommt komplett mit Node-Bordmitteln aus
+(kein `firebase-admin` mehr, siehe "Technischer Hintergrund" unten).
 
 ## Ausführen
 
 Erst zur Kontrolle ohne Schreibvorgänge (Dry-Run):
 ```bash
+cd scripts
 node migrate-members.js
 ```
 Zeigt an, welche Mitglieder gefunden wurden und was passieren würde. Es wird
@@ -69,4 +68,15 @@ Das legt an:
 Das Script ist idempotent - einfach erneut mit `--apply` ausführen, das
 richtet keinen Schaden an. Der alte Blob wird nie gelöscht, ihr könnt also
 jederzeit zur alten `index.html`-Version zurück-deployen, falls nötig.
+
+## Technischer Hintergrund: warum kein firebase-admin?
+
+Ein erster Versuch, das Firebase-CLI-Zugriffstoken einfach an
+`firebase-admin` durchzureichen, scheiterte mit `firestore/invalid-credential`
+- das SDK verlangt ein "richtiges" Credential-Objekt (Service-Account-Key oder
+über `gcloud` erzeugte Application Default Credentials) und akzeptiert kein
+selbstgebautes Token-Objekt. Das Script spricht deshalb direkt die
+Firestore-REST-API an (`firestore-rest-client.js`) - die braucht nur einen
+normalen `Authorization: Bearer <token>`-Header, genau das, was wir über das
+Firebase-CLI-Login ohnehin schon bekommen.
 
