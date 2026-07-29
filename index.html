@@ -619,7 +619,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.44';
+  const APP_VERSION = '1.45';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4561,7 +4561,7 @@
       btn.disabled = true; btn.textContent = 'Wird entfernt…';
       try{
         const unlinkFn = httpsCallable(functions, 'unlinkMemberAccount');
-        await unlinkFn({ email: member.email });
+        await unlinkFn({ email: member.email, clubId: CURRENT_CLUB_ID });
         const m = state.members.find(x=>x.id===member.id);
         if(m){ m.hasAccount = false; m.lastLogin = null; await saveMember(m); }
         closeGenericModal();
@@ -4590,7 +4590,7 @@
       btn.disabled = true; btn.textContent = 'Wird gesendet…';
       try{
         const inviteMemberFn = httpsCallable(functions, 'inviteMember');
-        await inviteMemberFn({ email: member.email, name: displayName(member) });
+        await inviteMemberFn({ email: member.email, name: displayName(member), clubId: CURRENT_CLUB_ID });
         const m = state.members.find(x=>x.id===member.id);
         if(m){ m.hasAccount = true; await saveMember(m); }
         closeGenericModal();
