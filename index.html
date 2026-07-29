@@ -578,7 +578,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.38';
+  const APP_VERSION = '1.39';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -940,7 +940,20 @@
   // wird. dockId ist die Mitglieds-ID, wo auflösbar, sonst der Name (siehe resolveArrearsDocId).
   const arrearsStore = makeClubEntityStore('arrears');
   async function getAllArrears(){ return arrearsStore.getAll(); }
-  async function saveArrearsEntry(entry){ return arrearsStore.save(entry); }
+  // Speichert einen Rückstands-Eintrag - außer es handelt sich um einen Gast (Dokument-ID
+  // beginnt mit 'guest-', siehe resolveArrearsDocId) UND der Betrag ist auf 0 gefallen: dann wird
+  // der Datensatz komplett gelöscht statt mit amount:0 gespeichert. Für Gäste ist ein Rückstand
+  // ein einmaliges, abgeschlossenes Ereignis - sobald ausgeglichen, gibt es keinen Grund mehr,
+  // Datensatz oder Verlauf zu behalten. Mitglieder-Datensätze bleiben bei 0€ dagegen bestehen
+  // (könnten später wieder einen Rückstand aufbauen, und die Historie ist dort weiterhin nützlich).
+  async function saveArrearsEntry(entry){
+    const isGuest = entry.id && entry.id.startsWith('guest-');
+    if(isGuest && Math.round((entry.amount||0)*100)===0){
+      await arrearsStore.remove(entry.id);
+      return;
+    }
+    return arrearsStore.save(entry);
+  }
 
   // ---------- Kegelabende ----------
   // Ein Kegelabend besteht aus einem Hauptdokument (Datum, Sitzordnung/Namen, Strafenkatalog-
@@ -5315,6 +5328,9 @@
       });
 
       await saveArrearsEntry(e);
+      if(e.id && e.id.startsWith('guest-') && Math.round(e.amount*100)===0){
+        state.financeArrears = state.financeArrears.filter(a=>a!==e);
+      }
       closeGenericModal();
       render();
     });
@@ -5373,6 +5389,9 @@
         setJSON('finance-transactions', state.financeTransactions, true),
         saveArrearsEntry(e)
       ]);
+      if(e.id && e.id.startsWith('guest-') && Math.round(e.amount*100)===0){
+        state.financeArrears = state.financeArrears.filter(a=>a!==e);
+      }
       render();
     });
   }
@@ -5758,8 +5777,12 @@
           subtractFromArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
         });
         (detail.absentMembersFines||[]).forEach(a=>{ subtractFromArrears(a.name, a.amount); });
-        state.financeArrears = arrears;
         saves.push(...touchedArrearsEntries.map(entry=> saveArrearsEntry(entry)));
+        // Gast-Einträge, die durch die Korrektur auf 0 gefallen sind, werden von saveArrearsEntry
+        // in der Datenbank gelöscht - hier den lokalen State entsprechend bereinigen.
+        state.financeArrears = arrears.filter(entry=>
+          !(entry.id && entry.id.startsWith('guest-') && Math.round(entry.amount*100)===0)
+        );
       }
 
       await Promise.all(saves);
