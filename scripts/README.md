@@ -184,6 +184,44 @@ Auch dieses Script ist idempotent und löscht das alte Dokument unter
 `kegelbuch/` nicht. Ein Firestore-Regeln-Deploy ist hierfür nicht nötig,
 die Cloud Functions nutzen `attendance-stats` nicht.
 
+## Migration: Finanz-Rückstände
+
+Sechstes Script, `migrate-arrears.js`, verschiebt die Finanz-Rückstände
+(`kegelbuch/finance-arrears`, ein JSON-Array als Blob) zu eigenen
+Dokumenten `clubs/die-pudolfs/arrears/<docId>` pro Mitglied/Gast + Index.
+Anders als bei Strafen-/Spiele-Katalog werden Rückstände an vielen, oft
+zeitlich nahen Stellen aktualisiert (Abend abschließen/wiederöffnen/
+löschen, Zahlung erfassen, Umsatz stornieren, manuelle Korrektur) - ein
+kompletter Array-Überschrieb hätte hier dasselbe Last-Write-Wins-Risiko
+wie ursprünglich bei den Mitgliedern gehabt.
+
+Die Dokument-ID ist möglichst die Mitglieds-ID (nicht der Name) - ändert
+sich später ein Spitzname, bleibt der Rückstand trotzdem korrekt
+zugeordnet. Nur für Gäste (kein Mitglieds-Datensatz vorhanden) dient der
+Name selbst als Fallback-ID (mit `guest-`-Präfix; Umlaute werden
+transliteriert, alles außer Buchstaben/Ziffern/Bindestrich/Unterstrich
+wird ersetzt, da Gast-Namen aus einem freien Texteingabefeld kommen und
+z.B. Leerzeichen oder Schrägstriche enthalten können).
+
+**Wichtig:** Dieses Script braucht die bereits migrierte Mitgliederliste
+unter `clubs/die-pudolfs/members/` (für die Name-zu-ID-Auflösung) - die
+Mitglieder-Migration (`migrate-members.js`) muss also bereits gelaufen
+sein.
+
+```bash
+cd scripts
+node migrate-arrears.js            # Dry-Run
+node migrate-arrears.js --apply    # echte Ausführung
+```
+
+Falls zwei Mitglieder denselben angezeigten Namen (Spitzname) haben,
+bricht das Script mit einer klaren Fehlermeldung ab, statt Rückstände
+versehentlich zusammenzuführen - in dem Fall müsst ihr erst einen der
+Spitznamen eindeutig machen. Auch dieses Script ist idempotent und löscht
+den alten Blob unter `kegelbuch/` nicht. Ein Firestore-Regeln-Deploy ist
+hierfür nicht nötig, die Cloud Functions greifen nicht direkt auf
+`finance-arrears` zu.
+
 ## Technischer Hintergrund: warum kein firebase-admin?
 
 Ein erster Versuch, das Firebase-CLI-Zugriffstoken einfach an

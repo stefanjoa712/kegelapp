@@ -36,6 +36,14 @@ function jsToFirestoreFields(obj) {
   return fields;
 }
 
+// Encoded jedes Pfad-Segment einzeln (die '/'-Trenner selbst bleiben unangetastet). Nötig, weil
+// Dokument-IDs z.B. bei Gast-Namen Leerzeichen oder andere Sonderzeichen enthalten können ("guest-
+// Max Mustermann") - ein unescapter Pfad lässt Node's http-Client mit
+// 'ERR_UNESCAPED_CHARACTERS' abbrechen, da Leerzeichen in URLs nicht erlaubt sind.
+function encodePathSegments(path) {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
 function request(method, path, accessToken, body) {
   const bodyStr = body ? JSON.stringify(body) : undefined;
   return new Promise((resolve, reject) => {
@@ -85,7 +93,7 @@ class FirestoreRestClient {
 
   // Liest ein Dokument. Gibt null zurück, wenn es nicht existiert.
   async getDoc(docPath) {
-    const result = await request('GET', `${this.base}/${docPath}`, this.accessToken);
+    const result = await request('GET', `${this.base}/${encodePathSegments(docPath)}`, this.accessToken);
     if (!result || !result.fields) return null;
     const obj = {};
     for (const key of Object.keys(result.fields)) obj[key] = firestoreValueToJs(result.fields[key]);
@@ -94,7 +102,7 @@ class FirestoreRestClient {
 
   // Schreibt ein Dokument (überschreibt komplett, wie setDoc ohne merge).
   async setDoc(docPath, data) {
-    await request('PATCH', `${this.base}/${docPath}`, this.accessToken, {
+    await request('PATCH', `${this.base}/${encodePathSegments(docPath)}`, this.accessToken, {
       fields: jsToFirestoreFields(data)
     });
   }
@@ -102,7 +110,7 @@ class FirestoreRestClient {
   // Schreibt ein Dokument nur in den übergebenen Feldern (wie setDoc mit merge:true).
   async setDocMerge(docPath, data) {
     const fieldPaths = Object.keys(data).map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
-    await request('PATCH', `${this.base}/${docPath}?${fieldPaths}`, this.accessToken, {
+    await request('PATCH', `${this.base}/${encodePathSegments(docPath)}?${fieldPaths}`, this.accessToken, {
       fields: jsToFirestoreFields(data)
     });
   }
@@ -114,7 +122,7 @@ class FirestoreRestClient {
     let pageToken;
     do {
       const query = pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : '';
-      const result = await request('GET', `${this.base}/${collectionPath}${query}`, this.accessToken);
+      const result = await request('GET', `${this.base}/${encodePathSegments(collectionPath)}${query}`, this.accessToken);
       if (!result) break;
       (result.documents || []).forEach((docData) => {
         const id = docData.name.split('/').pop();
