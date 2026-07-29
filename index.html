@@ -1047,6 +1047,10 @@
     const months = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
     return `${parts[2]}. ${months[parts[1]-1]} ${parts[0]}`;
   }
+  function formatDateShortDE(iso){
+    const parts = iso.split('-');
+    return `${parts[2]}.${parts[1]}.${parts[0]}`;
+  }
   function pad2(n){ return String(n).padStart(2,'0'); }
   function isoDate(y,m,d){ return `${y}-${pad2(m)}-${pad2(d)}`; }
   function addDaysISO(dateStr, days){
@@ -2167,7 +2171,7 @@
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
     const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement';
-    const isFinanceActive = state.view==='finance';
+    const isFinanceActive = state.view==='finance' || state.view==='arrearsDetail';
     const isCalendarActive = state.view==='calendar' || state.view==='eventDetail';
     const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isCalendarActive ? 'calendar' : (isTodayActive ? 'today' : 'overview')));
     const todayButtonHtml = todayEve ? `
@@ -3800,10 +3804,10 @@
         else title = state.calendarEditingOccurrence.isSeriesEdit ? 'Terminserie bearbeiten' : 'Termin bearbeiten';
       }
     }
-    else if(state.view==='arrearsDetail') title = state.currentArrearsName || '';
+    else if(state.view==='arrearsDetail') title = state.currentArrearsName ? `Rückstand von ${state.currentArrearsName}` : '';
     else if(state.view==='transactionDetail') title = state.currentTransactionId ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen';
     else if(state.view==='new') title = 'Neuer Kegelabend';
-    else if(state.view==='detail' && state.currentEveningDetail) title = `Kegelabend vom ${formatDateDE(state.currentEveningDetail.date)}`;
+    else if(state.view==='detail' && state.currentEveningDetail) title = `Kegelabend vom ${formatDateShortDE(state.currentEveningDetail.date)}`;
     else if(state.view==='personFineDetail') title = `Strafen von ${state.currentFineName || ''}`;
 
     const isClosed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
