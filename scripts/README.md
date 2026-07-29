@@ -222,6 +222,43 @@ den alten Blob unter `kegelbuch/` nicht. Ein Firestore-Regeln-Deploy ist
 hierfür nicht nötig, die Cloud Functions greifen nicht direkt auf
 `finance-arrears` zu.
 
+## Migration: Finanzen
+
+Siebtes Script, `migrate-finance.js`, migriert die verbleibenden
+Finanzbereiche:
+
+- `finance-transactions` -> eigene Dokumente pro Buchung
+  (`clubs/die-pudolfs/transactions/<id>` + Index), analog zu Terminen/
+  Rückmeldungen. Grund: zwei unabhängige Schreibquellen können
+  kollidieren - ein Nutzer legt/bearbeitet/löscht händisch eine Buchung,
+  während die tägliche Cloud Function `processRecurringBookings` (läuft
+  nachts um Mitternacht) automatisch neue Buchungen für fällige
+  Daueraufträge schreibt. Ein kompletter Array-Überschrieb hätte hier
+  dasselbe Last-Write-Wins-Risiko wie ursprünglich bei den Mitgliedern
+  gehabt.
+- `finance-accounts`, `finance-recurring`, `finance-savings-pots` ->
+  jeweils ein einzelnes Blob-Dokument unter `clubs/die-pudolfs/data/`.
+  Kleine, selten parallel bearbeitete Listen, eine Aufteilung lohnt sich
+  hier nicht.
+
+```bash
+cd scripts
+node migrate-finance.js            # Dry-Run
+node migrate-finance.js --apply    # echte Ausführung
+```
+
+**Wichtig:** Dieser Umbau betrifft auch die Cloud Function
+`processRecurringBookings` - sie liest `finance-recurring` jetzt aus
+`clubs/die-pudolfs/data/` und schreibt neue automatische Buchungen einzeln
+unter `clubs/die-pudolfs/transactions/` statt den kompletten Buchungs-Blob
+zu überschreiben. Stellt sicher, dass die Migration lief, **bevor** der
+nächste nächtliche Lauf (Mitternacht) fällig wird - sonst würde die
+Function noch aus dem alten `kegelbuch/`-Pfad lesen/schreiben, während der
+Client bereits die neue Struktur nutzt.
+
+Auch dieses Script ist idempotent und löscht die alten Dokumente unter
+`kegelbuch/` nicht. Ein Firestore-Regeln-Deploy ist hierfür nicht nötig.
+
 ## Technischer Hintergrund: warum kein firebase-admin?
 
 Ein erster Versuch, das Firebase-CLI-Zugriffstoken einfach an

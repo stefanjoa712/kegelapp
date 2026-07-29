@@ -578,7 +578,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.39';
+  const APP_VERSION = '1.40';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -954,6 +954,20 @@
     }
     return arrearsStore.save(entry);
   }
+
+  // ---------- Finanz-Buchungen ----------
+  // Jede Buchung liegt als eigenes Dokument (clubs/<clubId>/transactions/<id>) statt eines
+  // gemeinsamen Blobs mit allen Buchungen. Grund: zwei unabhängige Schreibquellen können
+  // kollidieren - zum einen legt/bearbeitet/löscht ein Nutzer händisch einzelne Buchungen, zum
+  // anderen schreibt die tägliche Cloud Function processRecurringBookings (läuft nachts um
+  // Mitternacht) automatisch neue Buchungen für fällige Daueraufträge. Ein kompletter Array-
+  // Überschrieb hätte hier dasselbe Last-Write-Wins-Risiko wie ursprünglich bei den Mitgliedern -
+  // fällt eine manuelle Änderung zeitlich mit dem nächtlichen Lauf zusammen, könnte eine der
+  // beiden Änderungen die andere überschreiben.
+  const transactionsStore = makeClubEntityStore('transactions');
+  async function getAllTransactions(){ return transactionsStore.getAll(); }
+  async function saveTransaction(tx){ return transactionsStore.save(tx); }
+  async function deleteTransaction(id){ return transactionsStore.remove(id); }
 
   // ---------- Kegelabende ----------
   // Ein Kegelabend besteht aus einem Hauptdokument (Datum, Sitzordnung/Namen, Strafenkatalog-
@@ -1441,9 +1455,9 @@
     renderLoading('Konten werden geladen…');
     try{
       const [accounts, recurring, pots] = await Promise.all([
-        getJSONOrThrow('finance-accounts', []),
-        getJSONOrThrow('finance-recurring', []),
-        getJSONOrThrow('finance-savings-pots', [])
+        getClubJSONOrThrow('finance-accounts', []),
+        getClubJSONOrThrow('finance-recurring', []),
+        getClubJSONOrThrow('finance-savings-pots', [])
       ]);
       state.financeAccounts = accounts;
       state.financeRecurring = recurring;
@@ -1459,12 +1473,12 @@
     renderLoading('Finanzen werden geladen…');
     try{
       const [accounts, transactions, arrears, members, pots, recurring] = await Promise.all([
-        getJSONOrThrow('finance-accounts', []),
-        getJSONOrThrow('finance-transactions', []),
+        getClubJSONOrThrow('finance-accounts', []),
+        getAllTransactions(),
         getAllArrears(),
         getAllMembers(),
-        getJSONOrThrow('finance-savings-pots', []),
-        getJSONOrThrow('finance-recurring', [])
+        getClubJSONOrThrow('finance-savings-pots', []),
+        getClubJSONOrThrow('finance-recurring', [])
       ]);
       state.financeAccounts = accounts;
       state.financeTransactions = transactions;
@@ -2377,8 +2391,8 @@
         if(state.financeAccounts.length===0 && state.financeArrears.length===0){
           try{
             const [accounts, transactions, arrears] = await Promise.all([
-              getJSONOrThrow('finance-accounts', []),
-              getJSONOrThrow('finance-transactions', []),
+              getClubJSONOrThrow('finance-accounts', []),
+              getAllTransactions(),
               getAllArrears()
             ]);
             state.financeAccounts = accounts;
@@ -2394,8 +2408,8 @@
         if(state.financeAccounts.length===0 && state.financeTransactions.length===0){
           try{
             const [accounts, transactions] = await Promise.all([
-              getJSONOrThrow('finance-accounts', []),
-              getJSONOrThrow('finance-transactions', [])
+              getClubJSONOrThrow('finance-accounts', []),
+              getAllTransactions()
             ]);
             state.financeAccounts = accounts;
             state.financeTransactions = transactions;
@@ -2431,9 +2445,9 @@
         if(state.financeAccounts.length===0 && state.financeRecurring.length===0 && state.financeSavingsPots.length===0){
           try{
             const [accounts, recurring, pots] = await Promise.all([
-              getJSONOrThrow('finance-accounts', []),
-              getJSONOrThrow('finance-recurring', []),
-              getJSONOrThrow('finance-savings-pots', [])
+              getClubJSONOrThrow('finance-accounts', []),
+              getClubJSONOrThrow('finance-recurring', []),
+              getClubJSONOrThrow('finance-savings-pots', [])
             ]);
             state.financeAccounts = accounts;
             state.financeRecurring = recurring;
@@ -4226,7 +4240,7 @@
         if(potId) newRec.potId = potId;
         state.financeRecurring.push(newRec);
       }
-      await setJSON('finance-recurring', state.financeRecurring, true);
+      await setClubJSON('finance-recurring', state.financeRecurring);
       goToFinanceManagement();
     });
   }
@@ -4290,7 +4304,7 @@
       const byId = {};
       state.financeAccounts.forEach(a=>{ byId[a.id]=a; });
       state.financeAccounts = newIdOrder.map(id=>byId[id]).filter(Boolean);
-      await setJSON('finance-accounts', state.financeAccounts, true);
+      await setClubJSON('finance-accounts', state.financeAccounts);
     });
   }
 
@@ -4770,7 +4784,7 @@
       const yesBtn = document.getElementById('confirm-delete-finance-account-yes');
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.financeAccounts = state.financeAccounts.filter(a=>a.id!==acc.id);
-      await setJSON('finance-accounts', state.financeAccounts, true);
+      await setClubJSON('finance-accounts', state.financeAccounts);
       closeGenericModal();
       render();
     });
@@ -4790,7 +4804,7 @@
       const yesBtn = document.getElementById('confirm-delete-recurring-yes');
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.financeRecurring = state.financeRecurring.filter(x=>x.id!==r.id);
-      await setJSON('finance-recurring', state.financeRecurring, true);
+      await setClubJSON('finance-recurring', state.financeRecurring);
       closeGenericModal();
       goToFinanceManagement();
     });
@@ -4810,7 +4824,7 @@
       const yesBtn = document.getElementById('confirm-delete-pot-yes');
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.financeSavingsPots = state.financeSavingsPots.filter(x=>x.id!==p.id);
-      await setJSON('finance-savings-pots', state.financeSavingsPots, true);
+      await setClubJSON('finance-savings-pots', state.financeSavingsPots);
       closeGenericModal();
       render();
     });
@@ -4859,7 +4873,7 @@
       }else{
         state.financeSavingsPots.push({id:uid('pot'), name, targetAmount:Math.round(targetAmount*100)/100, targetDate, startAmount:Math.round(startAmount*100)/100});
       }
-      await setJSON('finance-savings-pots', state.financeSavingsPots, true);
+      await setClubJSON('finance-savings-pots', state.financeSavingsPots);
       closeGenericModal();
       render();
     });
@@ -5174,7 +5188,7 @@
         }
         state.financeAccounts.push({id:uid('acc'), name, startBalance: Math.round(startBalance*100)/100});
       }
-      await setJSON('finance-accounts', state.financeAccounts, true);
+      await setClubJSON('finance-accounts', state.financeAccounts);
       closeGenericModal();
       render();
     });
@@ -5198,7 +5212,7 @@
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.financeTransactions = state.financeTransactions.filter(t=>t.id!==transaction.id);
 
-      const saves = [setJSON('finance-transactions', state.financeTransactions, true)];
+      const saves = [deleteTransaction(transaction.id)];
       if(isFromArrears && arrearsName){
         let entry = state.financeArrears.find(a=>a.name===arrearsName);
         if(!entry){ entry = {id: resolveArrearsDocId(arrearsName), name:arrearsName, amount:0, history:[]}; state.financeArrears.push(entry); }
@@ -5371,7 +5385,8 @@
       confirmPaymentBtn.disabled = true; confirmPaymentBtn.textContent = 'Wird bestätigt…';
 
       const rounded = Math.round(paidAmount*100)/100;
-      state.financeTransactions.push({id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded, fromArrears:true, arrearsName: name, createdAt: Date.now()});
+      const newTx = {id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded, fromArrears:true, arrearsName: name, createdAt: Date.now()};
+      state.financeTransactions.push(newTx);
 
       let e = entry;
       if(!e){ e = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; state.financeArrears.push(e); }
@@ -5386,7 +5401,7 @@
       });
 
       await Promise.all([
-        setJSON('finance-transactions', state.financeTransactions, true),
+        saveTransaction(newTx),
         saveArrearsEntry(e)
       ]);
       if(e.id && e.id.startsWith('guest-') && Math.round(e.amount*100)===0){
@@ -5475,7 +5490,7 @@
         saveBtn.disabled = true; saveBtn.textContent = 'Speichert…';
         const t = state.financeTransactions.find(x=>x.id===existingTransaction.id);
         if(t) t.description = description;
-        await setJSON('finance-transactions', state.financeTransactions, true);
+        if(t) await saveTransaction(t);
         history.back();
         return;
       }
@@ -5496,13 +5511,16 @@
       const amount = income>0 ? Math.round(income*100)/100 : -Math.round(expense*100)/100;
       saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
 
+      let savedTx;
       if(isEdit){
         const t = state.financeTransactions.find(x=>x.id===existingTransaction.id);
         if(t){ t.accountId=accountId; t.description=description; t.date=date; t.amount=amount; }
+        savedTx = t;
       }else{
-        state.financeTransactions.push({id:uid('tx'), accountId, description, date, amount, createdAt: Date.now()});
+        savedTx = {id:uid('tx'), accountId, description, date, amount, createdAt: Date.now()};
+        state.financeTransactions.push(savedTx);
       }
-      await setJSON('finance-transactions', state.financeTransactions, true);
+      if(savedTx) await saveTransaction(savedTx);
       history.back();
     });
   }
