@@ -212,13 +212,50 @@ function buildReopenEmailHtml(name, dateStr) {
   `;
 }
 
+// Aktuell einziger Club - siehe CURRENT_CLUB_ID im Client (index.html). Mitglieder liegen seit
+// der Multi-Club-Vorbereitung unter 'clubs/<clubId>/members/<id>' (ein Dokument pro Mitglied +
+// ein Index-Dokument 'clubs/<clubId>/members/_index' mit der Liste aller IDs) statt im alten
+// gemeinsamen Blob 'kegelbuch/members'. Der alte Blob existiert zwar noch (nie automatisch
+// gelöscht), ist aber seit der Migration nicht mehr aktuell - neue/geänderte Mitglieder würden
+// hier sonst fehlen bzw. veraltet sein.
+const CLUB_ID = 'die-pudolfs';
+
+// Lädt alle Einträge einer "Einzeldokument pro Eintrag + Index"-Collection unter einem Club
+// (z.B. clubs/<clubId>/events, clubs/<clubId>/occurrence-edits) - spiegelt exakt das Client-
+// seitige Muster aus makeClubEntityStore()/getAll() in index.html.
+async function loadClubEntityCollection(clubRef, collectionName) {
+  const collectionRef = clubRef.collection(collectionName);
+  const indexSnap = await collectionRef.doc('_index').get();
+  if (!indexSnap.exists) return [];
+  let ids;
+  try { ids = JSON.parse(indexSnap.data().value || '[]'); } catch (e) { return []; }
+  if (ids.length === 0) return [];
+  const snaps = await Promise.all(ids.map(id => collectionRef.doc(id).get()));
+  const items = [];
+  snaps.forEach(snap => {
+    if (!snap.exists) return;
+    try { items.push(JSON.parse(snap.data().value)); } catch (e) { /* einzelnes defektes Dokument ignorieren */ }
+  });
+  return items;
+}
+
 async function loadMembers() {
-  const membersSnap = await db.collection('kegelbuch').doc('members').get();
-  if (!membersSnap.exists) { logger.warn('Keine Mitgliederliste gefunden.'); return null; }
-  try { return JSON.parse(membersSnap.data().value || '[]'); } catch (e) {
-    logger.error('Konnte Mitgliederliste nicht parsen', e);
+  const indexSnap = await db.collection('clubs').doc(CLUB_ID).collection('members').doc('_index').get();
+  if (!indexSnap.exists) { logger.warn('Kein Mitglieder-Index gefunden.'); return null; }
+  let ids;
+  try { ids = JSON.parse(indexSnap.data().value || '[]'); } catch (e) {
+    logger.error('Konnte Mitglieder-Index nicht parsen', e);
     return null;
   }
+  if (ids.length === 0) return [];
+  const membersCollection = db.collection('clubs').doc(CLUB_ID).collection('members');
+  const snaps = await Promise.all(ids.map(id => membersCollection.doc(id).get()));
+  const members = [];
+  snaps.forEach(snap => {
+    if (!snap.exists) return;
+    try { members.push(JSON.parse(snap.data().value)); } catch (e) { /* einzelnes defektes Dokument ignorieren */ }
+  });
+  return members;
 }
 
 function formatEveningDate(detail) {
@@ -634,7 +671,7 @@ exports.processRecurringBookings = onSchedule(
 //   (das Fenster wandert bei jedem Abruf automatisch mit "heute" mit).
 // - Der Zugriff ist über einen zufälligen Token geschützt (?t=...), der
 //   einmalig beim ersten Klick auf "Kalender abonnieren" in der App erzeugt
-//   und in Firestore unter kegelbuch/calendar-feed-token abgelegt wird.
+//   und in Firestore unter clubs/<clubId>/data/calendar-feed-token abgelegt wird.
 // - Da bei jedem Abruf frisch aus Firestore gelesen wird, sind neue/geänderte
 //   Termine sofort im Feed enthalten, unabhängig davon wie oft iOS abruft.
 
@@ -821,21 +858,16 @@ exports.calendarFeed = onRequest(async (req, res) => {
     return;
   }
 
-  const tokenDoc = await db.collection('kegelbuch').doc('calendar-feed-token').get();
+  const clubRef = db.collection('clubs').doc(CLUB_ID);
+  const tokenDoc = await clubRef.collection('data').doc('calendar-feed-token').get();
   const storedToken = tokenDoc.exists ? JSON.parse(tokenDoc.data().value || 'null') : null;
   if (!storedToken || storedToken !== token) {
     res.status(403).send('Ungültiger Link.');
     return;
   }
 
-  const [eventsDoc, editsDoc] = await Promise.all([
-    db.collection('kegelbuch').doc('calendar-events').get(),
-    db.collection('kegelbuch').doc('calendar-occurrence-edits').get(),
-  ]);
-  let events = [];
-  let occurrenceEdits = [];
-  try { events = eventsDoc.exists ? JSON.parse(eventsDoc.data().value || '[]') : []; } catch (e) { events = []; }
-  try { occurrenceEdits = editsDoc.exists ? JSON.parse(editsDoc.data().value || '[]') : []; } catch (e) { occurrenceEdits = []; }
+  const events = await loadClubEntityCollection(clubRef, 'events');
+  const occurrenceEdits = await loadClubEntityCollection(clubRef, 'occurrence-edits');
 
   const today = new Date();
   const startYear = today.getUTCFullYear();
