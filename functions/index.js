@@ -212,13 +212,16 @@ function buildReopenEmailHtml(name, dateStr) {
   `;
 }
 
-// Aktuell einziger Club - siehe CURRENT_CLUB_ID im Client (index.html). Mitglieder liegen seit
-// der Multi-Club-Vorbereitung unter 'clubs/<clubId>/members/<id>' (ein Dokument pro Mitglied +
-// ein Index-Dokument 'clubs/<clubId>/members/_index' mit der Liste aller IDs) statt im alten
-// gemeinsamen Blob 'kegelbuch/members'. Der alte Blob existiert zwar noch (nie automatisch
-// gelöscht), ist aber seit der Migration nicht mehr aktuell - neue/geänderte Mitglieder würden
-// hier sonst fehlen bzw. veraltet sein.
-const CLUB_ID = 'die-pudolfs';
+// Mitglieder liegen seit der Multi-Club-Migration unter 'clubs/<clubId>/members/<id>' (ein
+// Dokument pro Mitglied + ein Index-Dokument 'clubs/<clubId>/members/_index' mit der Liste aller
+// IDs) statt im alten gemeinsamen Blob 'kegelbuch/members'. Der alte Blob existiert zwar noch
+// (nie automatisch gelöscht), ist aber seit der Migration nicht mehr aktuell - neue/geänderte
+// Mitglieder würden hier sonst fehlen bzw. veraltet sein. Alle Functions unten sind
+// multi-club-fähig: clubId kommt je nach Function aus einem Firestore-Trigger-Wildcard
+// (sendFineEmailsOnClose), einem expliziten Parameter vom Client (inviteMember,
+// unlinkMemberAccount) oder wird durch Iteration über alle existierenden Clubs ermittelt
+// (shareGuestBill, calendarFeed, processRecurringBookings) - es gibt bewusst keine feste,
+// hart codierte Club-ID mehr.
 
 // Lädt alle Einträge einer "Einzeldokument pro Eintrag + Index"-Collection unter einem Club
 // (z.B. clubs/<clubId>/events, clubs/<clubId>/occurrence-edits) - spiegelt exakt das Client-
@@ -259,16 +262,16 @@ async function saveClubEntity(clubRef, collectionName, entry) {
   });
 }
 
-async function loadMembers() {
-  const indexSnap = await db.collection('clubs').doc(CLUB_ID).collection('members').doc('_index').get();
-  if (!indexSnap.exists) { logger.warn('Kein Mitglieder-Index gefunden.'); return null; }
+async function loadMembers(clubId) {
+  const indexSnap = await db.collection('clubs').doc(clubId).collection('members').doc('_index').get();
+  if (!indexSnap.exists) { logger.warn(`Kein Mitglieder-Index gefunden für Club ${clubId}.`); return null; }
   let ids;
   try { ids = JSON.parse(indexSnap.data().value || '[]'); } catch (e) {
     logger.error('Konnte Mitglieder-Index nicht parsen', e);
     return null;
   }
   if (ids.length === 0) return [];
-  const membersCollection = db.collection('clubs').doc(CLUB_ID).collection('members');
+  const membersCollection = db.collection('clubs').doc(clubId).collection('members');
   const snaps = await Promise.all(ids.map(id => membersCollection.doc(id).get()));
   const members = [];
   snaps.forEach(snap => {
@@ -289,9 +292,9 @@ async function loadMembers() {
 // nur auf Änderungen am HAUPTDOKUMENT (z.B. den closed-Übergang) - die Sitzplatz-Strafen müssen
 // für den Mailversand separat nachgeladen und ins Objekt gemischt werden, bevor die bestehende
 // Berechnungslogik (fineTotalForSeat, buildCatalogLines, ...) darauf zugreifen kann.
-async function enrichEveningWithSeatFines(detail) {
+async function enrichEveningWithSeatFines(clubId, detail) {
   if (!detail) return detail;
-  const seatsRef = db.collection('clubs').doc(CLUB_ID).collection('evenings').doc(detail.id).collection('seats');
+  const seatsRef = db.collection('clubs').doc(clubId).collection('evenings').doc(detail.id).collection('seats');
   const snaps = await seatsRef.get();
   detail.finesBySeat = {};
   detail.adHocFinesBySeat = {};
@@ -323,8 +326,8 @@ function collectRecipientNames(detail, members) {
   return result;
 }
 
-async function handleEveningClosed(after, docId) {
-  const members = await loadMembers();
+async function handleEveningClosed(clubId, after, docId) {
+  const members = await loadMembers(clubId);
   if (!members) return;
 
   const resend = new Resend(resendApiKey.value());
@@ -392,8 +395,8 @@ async function handleEveningClosed(after, docId) {
   }
 }
 
-async function handleEveningReopened(before, docId) {
-  const members = await loadMembers();
+async function handleEveningReopened(clubId, before, docId) {
+  const members = await loadMembers(clubId);
   if (!members) return;
 
   const resend = new Resend(resendApiKey.value());
@@ -418,13 +421,17 @@ async function handleEveningReopened(before, docId) {
 }
 
 // -------- Die eigentliche Cloud Function --------
-
+// Trigger-Pfad mit Wildcard {clubId} statt fest verdrahteter CLUB_ID: reagiert auf
+// Kegelabend-Änderungen in JEDEM Club, nicht nur dem einen aktuell existierenden. clubId kommt
+// aus event.params und wird an alle Helper (loadMembers, enrichEveningWithSeatFines,
+// handleEveningClosed/Reopened) durchgereicht, statt implizit eine feste Club-ID zu verwenden.
 exports.sendFineEmailsOnClose = onDocumentUpdated(
   {
-    document: `clubs/${CLUB_ID}/evenings/{docId}`,
+    document: 'clubs/{clubId}/evenings/{docId}',
     secrets: [resendApiKey],
   },
   async (event) => {
+    const clubId = event.params.clubId;
     const docId = event.params.docId;
 
     const beforeRaw = event.data.before.data();
@@ -443,13 +450,13 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
     const skipEmail = !!(after && after.skipNotificationEmail);
 
     if (skipEmail) {
-      logger.info(`Mailversand für Abend ${docId} übersprungen (Checkbox deaktiviert).`);
+      logger.info(`Mailversand für Abend ${docId} (Club ${clubId}) übersprungen (Checkbox deaktiviert).`);
     } else if (isClosed && !wasClosed) {
-      await enrichEveningWithSeatFines(after);
-      await handleEveningClosed(after, docId);
+      await enrichEveningWithSeatFines(clubId, after);
+      await handleEveningClosed(clubId, after, docId);
     } else if (!isClosed && wasClosed) {
-      await enrichEveningWithSeatFines(before);
-      await handleEveningReopened(before, docId);
+      await enrichEveningWithSeatFines(clubId, before);
+      await handleEveningReopened(clubId, before, docId);
     }
     // Sonst: keine für E-Mails relevante Änderung (z.B. nur eine Strafe angepasst - löst hier
     // ohnehin kein Update aus, da Strafen jetzt in eigenen Sitzplatz-Dokumenten liegen) - nichts tun.
@@ -467,9 +474,12 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
   }
-  const { email, name } = request.data || {};
+  const { email, name, clubId } = request.data || {};
   if (!email || typeof email !== 'string') {
     throw new HttpsError('invalid-argument', 'E-Mail-Adresse fehlt.');
+  }
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
   }
 
   const adminAuth = getAuth();
@@ -485,13 +495,15 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   // dem Login liest der Client daraus, welche(n) Club(s) dieser Nutzer sehen darf (bei genau
   // einem Eintrag direkt, bei mehreren über eine Auswahl). WICHTIG: den bestehenden Claim lesen
   // und die neue clubId nur ERGÄNZEN, nie überschreiben - sonst würde ein zweiter Invite (z.B. in
-  // einem anderen Club) die Zugehörigkeit zu allen bisherigen Clubs löschen.
+  // einem anderen Club) die Zugehörigkeit zu allen bisherigen Clubs löschen. clubId kommt vom
+  // Client (dessen aktuell aktiver Club, CURRENT_CLUB_ID) statt einer fest verdrahteten Konstante,
+  // damit das Einladen auch für künftige, weitere Clubs funktioniert.
   const existingClaims = userRecord.customClaims || {};
   const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
-  if (!existingClubIds.includes(CLUB_ID)) {
+  if (!existingClubIds.includes(clubId)) {
     await adminAuth.setCustomUserClaims(userRecord.uid, {
       ...existingClaims,
-      clubIds: [...existingClubIds, CLUB_ID],
+      clubIds: [...existingClubIds, clubId],
     });
   }
 
@@ -536,9 +548,12 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
   }
-  const { email } = request.data || {};
+  const { email, clubId } = request.data || {};
   if (!email || typeof email !== 'string') {
     throw new HttpsError('invalid-argument', 'E-Mail-Adresse fehlt.');
+  }
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
   }
 
   const adminAuth = getAuth();
@@ -549,7 +564,7 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
     // Erst wenn danach keine Club-Zugehörigkeit mehr übrig ist, wird der Account wirklich gelöscht.
     const existingClaims = userRecord.customClaims || {};
     const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
-    const remainingClubIds = existingClubIds.filter((id) => id !== CLUB_ID);
+    const remainingClubIds = existingClubIds.filter((id) => id !== clubId);
 
     if (remainingClubIds.length > 0) {
       await adminAuth.setCustomUserClaims(userRecord.uid, {
@@ -636,13 +651,21 @@ exports.shareGuestBill = onRequest(async (req, res) => {
   }
 
   const db = getFirestore();
-  const eveningsSnapshot = await db.collection('clubs').doc(CLUB_ID).collection('evenings').get();
-  let foundDetail = null, foundSeat = null;
-  for (const doc of eveningsSnapshot.docs) {
-    let detail;
-    try { detail = JSON.parse(doc.data().value || '{}'); } catch (e) { continue; }
-    const seat = (detail.seating || []).find(s => s.shareToken === token);
-    if (seat) { foundDetail = detail; foundSeat = seat; break; }
+  // Der Gast-Link enthält bewusst KEINEN Club-Bezug (nur den Token) - solche Links werden an
+  // Gäste ohne Login verschickt und sollen auch nach der Multi-Club-Umstellung unverändert
+  // funktionieren. Da der Token selbst schon eindeutig ist, wird über alle existierenden Clubs
+  // iteriert, bis der passende Sitzplatz gefunden ist, statt einen Club fest anzunehmen.
+  const clubsSnapshot = await db.collection('clubs').get();
+  let foundDetail = null, foundSeat = null, foundClubId = null;
+  for (const clubDoc of clubsSnapshot.docs) {
+    const eveningsSnapshot = await db.collection('clubs').doc(clubDoc.id).collection('evenings').get();
+    for (const doc of eveningsSnapshot.docs) {
+      let detail;
+      try { detail = JSON.parse(doc.data().value || '{}'); } catch (e) { continue; }
+      const seat = (detail.seating || []).find(s => s.shareToken === token);
+      if (seat) { foundDetail = detail; foundSeat = seat; foundClubId = clubDoc.id; break; }
+    }
+    if (foundDetail) break;
   }
 
   if (!foundDetail || !foundSeat) {
@@ -650,7 +673,7 @@ exports.shareGuestBill = onRequest(async (req, res) => {
     return;
   }
 
-  await enrichEveningWithSeatFines(foundDetail);
+  await enrichEveningWithSeatFines(foundClubId, foundDetail);
 
   const dateStr = formatEveningDate(foundDetail);
   const catalogLines = buildCatalogLines(foundDetail, foundSeat.seatId);
@@ -689,51 +712,67 @@ function addOneMonthSameDay(dateStr) {
   return next.toISOString().slice(0, 10);
 }
 
+// Verarbeitet die fälligen Daueraufträge EINES Clubs. Ausgelagert aus dem eigentlichen Scheduler-
+// Handler, damit dieser einfach über alle existierenden Clubs iterieren kann (ein onSchedule-
+// Trigger läuft nicht "pro Club", sondern einmal insgesamt - anders als die Firestore-Trigger mit
+// Wildcard-Pfad oben).
+async function processRecurringBookingsForClub(clubId) {
+  const clubRef = db.collection('clubs').doc(clubId);
+  const recurringDoc = await clubRef.collection('data').doc('finance-recurring').get();
+  if (!recurringDoc.exists) return;
+
+  let recurring;
+  try { recurring = JSON.parse(recurringDoc.data().value || '[]'); } catch (e) {
+    logger.error(`Konnte finance-recurring für Club ${clubId} nicht parsen`, e);
+    return;
+  }
+
+  const todayStr = getTodayInBerlin();
+  const dueBookings = recurring.filter(r => r.nextDate === todayStr);
+  if (dueBookings.length === 0) return;
+
+  const [year, month] = todayStr.split('-').map(Number);
+  const monthLabel = `${MONTH_NAMES_DE[month - 1]} ${year}`;
+
+  const newTransactions = [];
+  dueBookings.forEach(r => {
+    const description = `${r.description} (${monthLabel})`;
+    const transaction = {
+      id: 'tx-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+      accountId: r.accountId,
+      description,
+      date: todayStr,
+      amount: r.amount,
+      createdAt: Date.now(),
+    };
+    if (r.potId) transaction.potId = r.potId;
+    newTransactions.push(transaction);
+    r.nextDate = addOneMonthSameDay(r.nextDate);
+    logger.info(`Club ${clubId}: monatliche Buchung verbucht: "${description}", Betrag ${r.amount}, nächste Ausführung ${r.nextDate}`);
+  });
+
+  // finance-recurring bleibt ein Blob (kleine, selten parallel bearbeitete Liste), aber jede
+  // neue Buchung wird als EIGENES Dokument geschrieben statt den kompletten transactions-Blob
+  // zu überschreiben - sonst könnte dieser nächtliche Lauf eine zeitgleiche manuelle Änderung
+  // im Client überschreiben (das genau zu vermeiden war der Grund für die Migration).
+  await Promise.all([
+    clubRef.collection('data').doc('finance-recurring').set({ value: JSON.stringify(recurring) }),
+    ...newTransactions.map(tx => saveClubEntity(clubRef, 'transactions', tx)),
+  ]);
+}
+
 exports.processRecurringBookings = onSchedule(
   { schedule: '0 0 * * *', timeZone: 'Europe/Berlin' },
   async () => {
-    const clubRef = db.collection('clubs').doc(CLUB_ID);
-    const recurringDoc = await clubRef.collection('data').doc('finance-recurring').get();
-    if (!recurringDoc.exists) return;
-
-    let recurring;
-    try { recurring = JSON.parse(recurringDoc.data().value || '[]'); } catch (e) {
-      logger.error('Konnte finance-recurring nicht parsen', e);
-      return;
+    const clubsSnapshot = await db.collection('clubs').get();
+    for (const clubDoc of clubsSnapshot.docs) {
+      try {
+        await processRecurringBookingsForClub(clubDoc.id);
+      } catch (e) {
+        // Ein Fehler in einem Club darf die Verarbeitung der anderen Clubs nicht verhindern.
+        logger.error(`Fehler bei processRecurringBookings für Club ${clubDoc.id}:`, e);
+      }
     }
-
-    const todayStr = getTodayInBerlin();
-    const dueBookings = recurring.filter(r => r.nextDate === todayStr);
-    if (dueBookings.length === 0) return;
-
-    const [year, month] = todayStr.split('-').map(Number);
-    const monthLabel = `${MONTH_NAMES_DE[month - 1]} ${year}`;
-
-    const newTransactions = [];
-    dueBookings.forEach(r => {
-      const description = `${r.description} (${monthLabel})`;
-      const transaction = {
-        id: 'tx-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
-        accountId: r.accountId,
-        description,
-        date: todayStr,
-        amount: r.amount,
-        createdAt: Date.now(),
-      };
-      if (r.potId) transaction.potId = r.potId;
-      newTransactions.push(transaction);
-      r.nextDate = addOneMonthSameDay(r.nextDate);
-      logger.info(`Monatliche Buchung verbucht: "${description}", Betrag ${r.amount}, nächste Ausführung ${r.nextDate}`);
-    });
-
-    // finance-recurring bleibt ein Blob (kleine, selten parallel bearbeitete Liste), aber jede
-    // neue Buchung wird als EIGENES Dokument geschrieben statt den kompletten transactions-Blob
-    // zu überschreiben - sonst könnte dieser nächtliche Lauf eine zeitgleiche manuelle Änderung
-    // im Client überschreiben (das genau zu vermeiden war der Grund für die Migration).
-    await Promise.all([
-      clubRef.collection('data').doc('finance-recurring').set({ value: JSON.stringify(recurring) }),
-      ...newTransactions.map(tx => saveClubEntity(clubRef, 'transactions', tx)),
-    ]);
   }
 );
 
@@ -935,16 +974,25 @@ exports.calendarFeed = onRequest(async (req, res) => {
     return;
   }
 
-  const clubRef = db.collection('clubs').doc(CLUB_ID);
-  const tokenDoc = await clubRef.collection('data').doc('calendar-feed-token').get();
-  const storedToken = tokenDoc.exists ? JSON.parse(tokenDoc.data().value || 'null') : null;
-  if (!storedToken || storedToken !== token) {
+  // Der Feed-Link enthält bewusst KEINEN Club-Bezug (nur den Token) - dieser Link wird als
+  // Kalender-Abo eingerichtet und soll auch nach der Multi-Club-Umstellung unverändert
+  // funktionieren. Da der Token selbst schon eindeutig ist, wird über alle existierenden Clubs
+  // iteriert, bis der passende Token gefunden ist, statt einen Club fest anzunehmen.
+  const clubsSnapshot = await db.collection('clubs').get();
+  let matchedClubRef = null;
+  for (const clubDoc of clubsSnapshot.docs) {
+    const candidateClubRef = db.collection('clubs').doc(clubDoc.id);
+    const tokenDoc = await candidateClubRef.collection('data').doc('calendar-feed-token').get();
+    const storedToken = tokenDoc.exists ? JSON.parse(tokenDoc.data().value || 'null') : null;
+    if (storedToken && storedToken === token) { matchedClubRef = candidateClubRef; break; }
+  }
+  if (!matchedClubRef) {
     res.status(403).send('Ungültiger Link.');
     return;
   }
 
-  const events = await loadClubEntityCollection(clubRef, 'events');
-  const occurrenceEdits = await loadClubEntityCollection(clubRef, 'occurrence-edits');
+  const events = await loadClubEntityCollection(matchedClubRef, 'events');
+  const occurrenceEdits = await loadClubEntityCollection(matchedClubRef, 'occurrence-edits');
 
   const today = new Date();
   const startYear = today.getUTCFullYear();
