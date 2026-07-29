@@ -2256,7 +2256,7 @@
     return '#uebersicht';
   }
 
-  function render(){
+  function render(opts){
     if(window.__resetPullIndicator) window.__resetPullIndicator();
     const app = document.getElementById('app');
     let body = '';
@@ -2281,8 +2281,9 @@
     attachListeners();
 
     const sig = historySignature();
-    if(!isPopstateNavigation && sig !== lastHistorySignature){
-      const method = lastHistorySignature===null ? 'replaceState' : 'pushState';
+    const forceReplace = opts && opts.replaceCurrent;
+    if(!isPopstateNavigation && (forceReplace || sig !== lastHistorySignature)){
+      const method = (forceReplace || lastHistorySignature===null) ? 'replaceState' : 'pushState';
       history[method]({sig}, '', hashFor(sig));
     }
     lastHistorySignature = sig;
@@ -5900,7 +5901,7 @@
         saveEveningMainDoc(detail),
         moveEveningSeatFines(detail.id, oldSeatId, newSeatId)
       ]);
-      render();
+      render({replaceCurrent:true});
     });
     document.querySelectorAll('.edit-adhoc-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
