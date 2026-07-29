@@ -5992,7 +5992,7 @@
     }
 
     document.addEventListener('touchstart', e=>{
-      if(scrollTop()>0 || state.view==='new' || document.getElementById('generic-modal-root')){
+      if(scrollTop()>0 || state.view==='new' || document.getElementById('generic-modal-root') || !getContainer()){
         pulling = false;
         return;
       }
