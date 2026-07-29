@@ -6068,7 +6068,7 @@
           <p class="form-error" id="login-error"></p>
           <button type="button" class="btn-primary" id="login-submit-btn" style="width:100%;">Anmelden</button>
         </div>
-        <p class="hint" id="create-club-link" style="margin-top:16px; cursor:pointer; text-decoration:underline;">Kegelclub anlegen</p>
+        <p class="muted" id="create-club-link" style="margin-top:16px; text-align:center; cursor:pointer; text-decoration:underline;">Kegelclub anlegen</p>
       </div>
     `;
     document.getElementById('create-club-link').addEventListener('click', ()=> renderCreateClubScreen());
@@ -6121,14 +6121,14 @@
 
           <label for="cc-name">Name des Kegelclubs</label>
           <input type="text" id="cc-name" placeholder="z.B. Die Meisterkegler">
-          <p class="hint" id="cc-id-preview" style="margin-top:-6px; margin-bottom:14px;"></p>
+          <p class="muted" id="cc-id-preview" style="margin-top:4px; margin-bottom:14px;"></p>
 
           <label for="cc-founded">Gründungsdatum</label>
           <input type="date" id="cc-founded" value="${todayISO()}">
 
           <label for="cc-paypal">PayPal Name (optional)</label>
           <input type="text" id="cc-paypal" placeholder="z.B. MaxMustermann">
-          <p class="hint" style="margin-top:-6px; margin-bottom:14px;">Wird genutzt, um die PayPal.Me-Adresse des Clubs zu erzeugen.</p>
+          <p class="muted" style="margin-top:4px; margin-bottom:14px;">Wird genutzt, um die PayPal.Me-Adresse des Clubs zu erzeugen.</p>
 
           <h3 class="section-title" style="margin-top:22px;">Erstes Mitglied (Kassenwart)</h3>
           <label for="cc-first-name">Vorname</label>
@@ -6143,7 +6143,7 @@
           <p class="form-error" id="cc-error"></p>
           <button type="button" class="btn-primary" id="cc-submit-btn" style="width:100%;">Kegelclub anlegen</button>
         </div>
-        <p class="hint" id="cc-back-link" style="margin-top:16px; cursor:pointer; text-decoration:underline;">Zurück zur Anmeldung</p>
+        <p class="muted" id="cc-back-link" style="margin-top:16px; text-align:center; cursor:pointer; text-decoration:underline;">Zurück zur Anmeldung</p>
       </div>
     `;
     document.getElementById('cc-back-link').addEventListener('click', ()=> renderLoginScreen());
