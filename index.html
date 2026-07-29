@@ -6050,7 +6050,19 @@
   setInterval(checkForUpdate, 5 * 60 * 1000);
 
   // ---------- Auth: Login, "eingeloggt bleiben", Einladungslink zum Passwort-Setzen ----------
-  function renderLoginScreen(infoMsg){
+  // Einfacher, von state.view unabhängiger Browser-Zurück-Mechanismus für den Wechsel
+  // Login-Screen <-> "Kegelclub anlegen"-Seite (läuft VOR jedem Login, wo der große
+  // state.view-History-Mechanismus weiter unten noch nicht greift).
+  window.addEventListener('popstate', (event)=>{
+    const screen = event.state && event.state.authScreen;
+    if(screen==='create-club'){ renderCreateClubScreen({ fromPopstate: true }); }
+    else if(screen==='login'){ renderLoginScreen(null, { fromPopstate: true }); }
+  });
+
+  function renderLoginScreen(infoMsg, opts){
+    if(!(opts && opts.fromPopstate)){
+      history.replaceState({authScreen:'login'}, '', location.pathname);
+    }
     document.getElementById('app').innerHTML = `
       <div class="login-screen">
         <img src="${LOGO_DATA_URI}" alt="Die Pudolfs Kegelclub" class="login-logo">
@@ -6068,8 +6080,10 @@
           <p class="form-error" id="login-error"></p>
           <button type="button" class="btn-primary" id="login-submit-btn" style="width:100%;">Anmelden</button>
         </div>
+        <p class="muted" id="create-club-link" style="margin-top:16px; text-align:center; cursor:pointer; font-weight:700;">Kegelclub anlegen</p>
       </div>
     `;
+    document.getElementById('create-club-link').addEventListener('click', ()=> renderCreateClubScreen());
     const emailInput = document.getElementById('login-email');
     emailInput.focus();
     const submit = async ()=>{
@@ -6092,6 +6106,75 @@
     };
     document.getElementById('login-submit-btn').addEventListener('click', submit);
     document.getElementById('login-password').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); submit(); } });
+  }
+
+  // Seite zum Anlegen eines neuen Kegelclubs - läuft VOR jedem Login (kein Auth vorhanden),
+  // ruft dafür die eigenständige createClub-Cloud-Function auf (siehe functions/index.js).
+  function renderCreateClubScreen(opts){
+    if(!(opts && opts.fromPopstate)){
+      history.pushState({authScreen:'create-club'}, '', location.pathname);
+    }
+    document.getElementById('app').innerHTML = `
+      <div class="login-screen">
+        <img src="${LOGO_DATA_URI}" alt="Die Pudolfs Kegelclub" class="login-logo">
+        <div class="card login-card">
+          <h2 class="section-title">Kegelclub anlegen</h2>
+
+          <label for="cc-name">Name des Kegelclubs</label>
+          <input type="text" id="cc-name" placeholder="z.B. Die Meisterkegler" style="margin-bottom:14px;">
+
+          <label for="cc-founded">Gründungsdatum</label>
+          <input type="date" id="cc-founded" value="${todayISO()}">
+
+          <label for="cc-paypal">PayPal Name (optional)</label>
+          <input type="text" id="cc-paypal" placeholder="z.B. MaxMustermann">
+          <p class="muted" style="margin-top:4px; margin-bottom:14px;">Wird genutzt, um die PayPal.Me-Adresse des Clubs zu erzeugen.</p>
+
+          <h3 class="section-title" style="margin-top:22px;">Erstes Mitglied (Kassenwart)</h3>
+          <label for="cc-first-name">Vorname</label>
+          <input type="text" id="cc-first-name" placeholder="Vorname">
+          <label for="cc-last-name">Name</label>
+          <input type="text" id="cc-last-name" placeholder="Nachname">
+          <label for="cc-nickname">Spitzname (optional)</label>
+          <input type="text" id="cc-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt">
+          <label for="cc-email">E-Mail-Adresse</label>
+          <input type="email" id="cc-email" placeholder="name@beispiel.de">
+
+          <p class="form-error" id="cc-error"></p>
+          <button type="button" class="btn-primary" id="cc-submit-btn" style="width:100%;">Kegelclub anlegen</button>
+        </div>
+        <p class="muted" id="cc-back-link" style="margin-top:16px; text-align:center; cursor:pointer; text-decoration:underline;">Zurück zur Anmeldung</p>
+      </div>
+    `;
+    document.getElementById('cc-back-link').addEventListener('click', ()=> history.back());
+    document.getElementById('cc-name').focus();
+
+    document.getElementById('cc-submit-btn').addEventListener('click', async ()=>{
+      const clubName = document.getElementById('cc-name').value.trim();
+      const foundedOn = document.getElementById('cc-founded').value;
+      const paypalName = document.getElementById('cc-paypal').value.trim();
+      const firstName = document.getElementById('cc-first-name').value.trim();
+      const lastName = document.getElementById('cc-last-name').value.trim();
+      const nickname = document.getElementById('cc-nickname').value.trim();
+      const email = document.getElementById('cc-email').value.trim();
+      const errEl = document.getElementById('cc-error');
+      errEl.textContent = '';
+
+      if(!clubName){ errEl.textContent = 'Bitte einen Clubnamen angeben.'; return; }
+      if(!foundedOn){ errEl.textContent = 'Bitte ein Gründungsdatum angeben.'; return; }
+      if(!firstName || !lastName || !email){ errEl.textContent = 'Bitte Vorname, Name und E-Mail-Adresse des Kassenwarts angeben.'; return; }
+
+      const btn = document.getElementById('cc-submit-btn');
+      btn.disabled = true; btn.textContent = 'Wird angelegt…';
+      try{
+        const createClubFn = httpsCallable(functions, 'createClub');
+        await createClubFn({ clubName, foundedOn, paypalName, firstName, lastName, nickname, email });
+        renderLoginScreen('Kegelclub angelegt! Der Kassenwart bekommt gleich eine E-Mail zum Festlegen des Passworts.');
+      }catch(e){
+        btn.disabled = false; btn.textContent = 'Kegelclub anlegen';
+        errEl.textContent = 'Kegelclub konnte nicht angelegt werden. Bitte später erneut versuchen.';
+      }
+    });
   }
 
   // Zeigt an, dass der eingeloggte Account keinem Club zugeordnet ist (Custom Claim 'clubIds'

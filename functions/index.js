@@ -542,6 +542,120 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   return { success: true };
 });
 
+// -------- Neuen Kegelclub anlegen (v2, KEIN Login nötig - Aufruf von der öffentlichen "Kegelclub anlegen"-Seite) --------
+// Bewusst ohne Kennwort/Schutzmechanismus - die URL wird nirgends beworben oder verlinkt,
+// nur an Personen weitergegeben, die tatsächlich einen neuen Club anlegen sollen.
+
+const MEMBERS_INDEX_ID = '_index';
+
+function slugifyClubName(name) {
+  return String(name)
+    .trim()
+    .toLowerCase()
+    .replace(/[äöüß]/g, c => ({ 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss' }[c]))
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // übrige Akzente entfernen
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'club';
+}
+
+function buildClubInviteEmailHtml(name) {
+  return `
+    <div style="font-family:sans-serif; color:#161616; max-width:480px;">
+      <p>Hallo ${escapeHtml(name || '')},</p>
+      <p>dein neuer Kegelclub wurde angelegt und du wurdest als Kassenwart eingetragen.</p>
+      <p>
+        <a href="RESET_LINK_PLACEHOLDER" style="display:inline-block; background:#E3421F; color:#fff; font-weight:800; text-decoration:none; padding:12px 22px; border-radius:8px;">
+          Passwort festlegen
+        </a>
+      </p>
+      <p>Danach kannst du dich mit deiner E-Mail-Adresse und deinem neuen Passwort in der App anmelden.</p>
+      <p>Kegelgruß,<br>Die Pudolfs</p>
+    </div>
+  `;
+}
+
+exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
+  const { clubName, foundedOn, paypalName, firstName, lastName, nickname, email } = request.data || {};
+
+  if (!clubName || typeof clubName !== 'string' || !clubName.trim()) {
+    throw new HttpsError('invalid-argument', 'Clubname fehlt.');
+  }
+  if (!foundedOn || typeof foundedOn !== 'string') {
+    throw new HttpsError('invalid-argument', 'Gründungsdatum fehlt.');
+  }
+  if (!firstName || !lastName || !email) {
+    throw new HttpsError('invalid-argument', 'Angaben zum Kassenwart unvollständig.');
+  }
+
+  // Eindeutige, lesbare Club-ID aus dem Namen ableiten - bei Kollision Zahl anhängen (club-name,
+  // club-name-2, club-name-3, ...), analog zum Vorgehen bei Mitglieds-IDs an anderer Stelle.
+  const baseId = slugifyClubName(clubName);
+  let clubId = baseId;
+  let suffix = 1;
+  while ((await db.collection('clubs').doc(clubId).get()).exists) {
+    suffix += 1;
+    clubId = `${baseId}-${suffix}`;
+  }
+
+  const clubData = { name: clubName.trim(), foundedOn };
+  if (paypalName && typeof paypalName === 'string' && paypalName.trim()) {
+    clubData.paypalName = paypalName.trim();
+  }
+  await db.collection('clubs').doc(clubId).set(clubData);
+
+  const memberId = 'm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  const member = {
+    id: memberId,
+    firstName: firstName.trim(),
+    lastName: lastName.trim(),
+    nickname: (nickname || '').trim(),
+    email: email.trim(),
+    role: 'Kassenwart',
+  };
+  const membersCollection = db.collection('clubs').doc(clubId).collection('members');
+  await membersCollection.doc(memberId).set({ value: JSON.stringify(member) });
+  await membersCollection.doc(MEMBERS_INDEX_ID).set({ value: JSON.stringify([memberId]) });
+
+  // Auth-Account für den Kassenwart anlegen und dem neuen Club per Custom Claim zuordnen
+  // (gleiche Logik wie in inviteMember, hier eigenständig gehalten - siehe Notiz oben).
+  const adminAuth = getAuth();
+  let userRecord;
+  try {
+    userRecord = await adminAuth.getUserByEmail(member.email);
+  } catch (e) {
+    userRecord = await adminAuth.createUser({ email: member.email, emailVerified: false });
+  }
+  const existingClaims = userRecord.customClaims || {};
+  const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
+  if (!existingClubIds.includes(clubId)) {
+    await adminAuth.setCustomUserClaims(userRecord.uid, {
+      ...existingClaims,
+      clubIds: [...existingClubIds, clubId],
+    });
+  }
+
+  const resetLink = await adminAuth.generatePasswordResetLink(member.email, {
+    url: HOSTING_URL,
+    handleCodeInApp: false,
+  });
+  const html = buildClubInviteEmailHtml(member.firstName).replace('RESET_LINK_PLACEHOLDER', resetLink);
+
+  const resend = new Resend(resendApiKey.value());
+  try {
+    await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: member.email,
+      subject: `Dein neuer Kegelclub "${clubData.name}" wurde angelegt`,
+      html,
+    });
+  } catch (err) {
+    logger.error(`Fehler beim Senden der Club-Einladung an ${member.email}:`, err);
+    throw new HttpsError('internal', 'Club wurde angelegt, aber die Einladungs-E-Mail konnte nicht gesendet werden.');
+  }
+
+  return { success: true, clubId };
+});
+
 // -------- Account-Verknüpfung eines Mitglieds aufheben (v2) --------
 
 exports.unlinkMemberAccount = onCall({}, async (request) => {
