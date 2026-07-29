@@ -531,7 +531,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, collection, getDoc, getDocs, getDocFromCache, setDoc, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, collection, getDoc, getDocs, getDocFromCache, setDoc, deleteDoc, deleteField, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
     setPersistence, browserLocalPersistence, browserSessionPersistence,
@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.48';
+  const APP_VERSION = '1.49';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1405,6 +1405,17 @@
     state.view = 'settingsMenu';
     render();
   }
+  async function goToClubManagement(){
+    state.view = 'clubManagement';
+    renderLoading('Clubdaten werden geladen…');
+    try{
+      CURRENT_CLUB_DATA = await getClub();
+      state.view = 'clubManagement';
+      render();
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToClubManagement);
+    }
+  }
   function goToRecurringDetail(existingRecurring){
     state.currentRecurringId = existingRecurring ? existingRecurring.id : null;
     state.view = 'recurringDetail';
@@ -1524,7 +1535,7 @@
   }
 
   function goBackFromHeader(){
-    if(state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
+    if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
     else if(state.view==='memberDetail') goToSettings();
     else if(state.view==='recurringDetail') goToFinanceManagement();
     else if(state.view==='eventDetail') goBackFromEventDetail();
@@ -1544,6 +1555,18 @@
       <div class="card">
         <h2 class="section-title">Einstellungen</h2>
         <div class="settings-menu-list">
+          <button type="button" class="settings-menu-item" id="settings-menu-club-btn">
+            <span class="settings-menu-item-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 21V9l9-6 9 6v12"/>
+                <path d="M9 21v-7h6v7"/>
+              </svg>
+            </span>
+            <span class="settings-menu-item-label">Clubverwaltung</span>
+            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
           <button type="button" class="settings-menu-item" id="settings-menu-mitglieder-btn">
             <span class="settings-menu-item-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1764,6 +1787,23 @@
         <p class="hint">Ist ein Spartopf ausgewählt, fließt diese Buchung immer direkt in diesen Topf statt in die allgemeine Aufteilung.</p>
         <p class="form-error" id="rec-detail-error"></p>
         <button type="button" class="btn-primary" id="save-rec-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+      </div>
+    `;
+  }
+
+  function viewClubManagement(){
+    const club = CURRENT_CLUB_DATA || {};
+    return `
+      <div class="card">
+        <h2 class="section-title">Clubdaten</h2>
+        <label for="club-name">Clubname</label>
+        <input type="text" id="club-name" placeholder="z. B. Die Pudolfs" value="${escapeHtml(club.name || '')}">
+        <label for="club-founded">Gründungsdatum</label>
+        <input type="date" id="club-founded" value="${club.foundedOn || ''}">
+        <label for="club-paypal">PayPal.Me-Name</label>
+        <input type="text" id="club-paypal" placeholder="z. B. diepudolfs (aus paypal.com/paypalme/diepudolfs)" value="${escapeHtml(club.paypalName || '')}">
+        <p class="form-error" id="club-form-error"></p>
+        <button type="button" class="btn-primary" id="save-club-btn" style="margin-top:8px;">Speichern</button>
       </div>
     `;
   }
@@ -2179,7 +2219,7 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement';
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement';
     const isFinanceActive = state.view==='finance' || state.view==='arrearsDetail';
     const isCalendarActive = state.view==='calendar' || state.view==='eventDetail';
     const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isCalendarActive ? 'calendar' : (isTodayActive ? 'today' : 'overview')));
@@ -2251,6 +2291,7 @@
   }
   function hashFor(sig){
     if(sig==='settingsMenu') return '#einstellungen';
+    if(sig==='clubManagement') return '#clubverwaltung';
     if(sig==='settings') return '#mitglieder';
     if(sig==='finesManagement') return '#strafen';
     if(sig==='gamesManagement') return '#spiele';
@@ -2275,6 +2316,7 @@
     let body = '';
     if(state.view==='main') body = viewMain();
     else if(state.view==='settingsMenu') body = viewSettingsMenu();
+    else if(state.view==='clubManagement') body = viewClubManagement();
     else if(state.view==='settings') body = viewSettings();
     else if(state.view==='memberDetail') body = viewMemberDetail();
     else if(state.view==='finesManagement') body = viewFinesManagement();
@@ -2319,6 +2361,8 @@
     (async ()=>{
       if(sig==='settingsMenu'){
         goToSettingsMenu();
+      }else if(sig==='clubManagement'){
+        await goToClubManagement();
       }else if(sig==='settings'){
         await goToSettings();
       }else if(sig==='finesManagement'){
@@ -3805,6 +3849,7 @@
     }
     let title = '';
     if(state.view==='settingsMenu') title = 'Einstellungen';
+    else if(state.view==='clubManagement') title = 'Clubverwaltung';
     else if(state.view==='settings') title = 'Mitgliederverwaltung';
     else if(state.view==='memberDetail') title = state.currentMemberId ? 'Mitglied bearbeiten' : 'Neues Mitglied';
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
@@ -4066,6 +4111,7 @@
 
     if(state.view==='main') attachMainListeners();
     else if(state.view==='settingsMenu') attachSettingsMenuListeners();
+    else if(state.view==='clubManagement') attachClubManagementListeners();
     else if(state.view==='settings') attachSettingsListeners();
     else if(state.view==='memberDetail') attachMemberDetailListeners();
     else if(state.view==='finesManagement') attachFinesManagementListeners();
@@ -4083,7 +4129,40 @@
     else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
   }
 
+  function attachClubManagementListeners(){
+    const saveBtn = document.getElementById('save-club-btn');
+    if(!saveBtn) return;
+    saveBtn.addEventListener('click', async ()=>{
+      const errEl = document.getElementById('club-form-error');
+      const name = document.getElementById('club-name').value.trim();
+      const foundedOn = document.getElementById('club-founded').value;
+      const paypalName = document.getElementById('club-paypal').value.trim();
+
+      if(!name){ errEl.textContent = 'Bitte einen Clubnamen angeben.'; return; }
+      if(!foundedOn){ errEl.textContent = 'Bitte ein Gründungsdatum angeben.'; return; }
+
+      saveBtn.disabled = true; saveBtn.textContent = 'Speichert…';
+      try{
+        // Die Club-ID (Dokument-Pfad) bleibt unverändert, nur die Stammdaten selbst werden
+        // aktualisiert - siehe saveClub()/clubRef() weiter oben. saveClub() nutzt merge:true,
+        // daher muss ein geleertes PayPal-Feld explizit per deleteField() entfernt werden -
+        // ein einfaches Weglassen des Felds im Payload würde es serverseitig NICHT löschen.
+        const clubUpdate = { name, foundedOn, paypalName: paypalName ? paypalName : deleteField() };
+        await saveClub(clubUpdate);
+        CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), name, foundedOn };
+        if(paypalName){ CURRENT_CLUB_DATA.paypalName = paypalName; } else { delete CURRENT_CLUB_DATA.paypalName; }
+        applyClubBranding();
+        render();
+      }catch(e){
+        errEl.textContent = 'Speichern fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
+        saveBtn.disabled = false; saveBtn.textContent = 'Speichern';
+      }
+    });
+  }
+
   function attachSettingsMenuListeners(){
+    const clubBtn = document.getElementById('settings-menu-club-btn');
+    if(clubBtn) clubBtn.addEventListener('click', goToClubManagement);
     const mitgliederBtn = document.getElementById('settings-menu-mitglieder-btn');
     if(mitgliederBtn) mitgliederBtn.addEventListener('click', goToSettings);
     const strafenBtn = document.getElementById('settings-menu-strafen-btn');
