@@ -3802,8 +3802,17 @@
     else if(state.view==='arrearsDetail') title = state.currentArrearsName || '';
     else if(state.view==='transactionDetail') title = state.currentTransactionId ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen';
     else if(state.view==='new') title = 'Neuer Kegelabend';
-    else if(state.view==='detail' && state.currentEveningDetail) title = formatDateDE(state.currentEveningDetail.date);
-    else if(state.view==='personFineDetail') title = state.currentFineName || '';
+    else if(state.view==='detail' && state.currentEveningDetail) title = `Kegelabend vom ${formatDateDE(state.currentEveningDetail.date)}`;
+    else if(state.view==='personFineDetail'){
+      const evDate = state.currentEveningDetail ? state.currentEveningDetail.date : null;
+      if(evDate){
+        const parts = evDate.split('-');
+        const shortDate = `${parts[2]}.${parts[1]}.${parts[0].slice(2)}`;
+        title = `Strafen von ${state.currentFineName || ''} (${shortDate})`;
+      } else {
+        title = state.currentFineName || '';
+      }
+    }
 
     const isClosed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
     const detailHeaderExtrasHtml = state.view==='detail' ? `
