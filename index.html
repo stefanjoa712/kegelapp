@@ -575,11 +575,9 @@
   // - Mehrere Clubs -> Auswahl-Screen zeigen (Club-Namen aus clubs/<clubId>-Stammdaten geladen),
   //   Nutzer wählt; die Wahl wird NICHT gemerkt, bei jedem Login erneut gefragt.
   // - Kein Club, aber Admin-Account -> Auswahl über ALLE existierenden Clubs (nicht nur die aus
-  //   dem - hier leeren - Claim). Sonderfall: der Admin ist kein Mitglied und bekommt seinen
-  //   Claim nicht über inviteMember, sondern nur über den "Claims nachtragen"-Button in den
-  //   Einstellungen (backfillClubClaims) - dieser Button ist aber selbst erst NACH einem
-  //   erfolgreichen Login erreichbar. Ohne diesen Fallback würde sich der Admin nach der
-  //   Umstellung dauerhaft aussperren, ohne je bis zu diesem Button zu kommen.
+  //   dem - hier leeren - Claim). Sonderfall: der Admin ist kein Mitglied und bekommt daher nie
+  //   einen Claim über inviteMember zugewiesen - ohne diesen Fallback gäbe es keinen Weg, wie der
+  //   Admin sich selbst einen Club zuordnen könnte, und er würde sich dauerhaft aussperren.
   // - Kein Club, kein Admin -> Fehlermeldung, kein Zugriff auf die App.
   // 'forceRefresh=true' erzwingt einen neuen ID-Token vom Server (Firebase cached Tokens bis zu
   // einer Stunde) - wichtig direkt nach einer frischen Einladung, wo der Claim serverseitig
@@ -621,7 +619,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.42';
+  const APP_VERSION = '1.43';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2711,19 +2709,6 @@
     const membersHtml = state.members.length===0
       ? `<p class="empty-state">Noch keine Mitglieder angelegt. Füge oben rechts das erste hinzu.</p>`
       : sortedMembers.map(memberRowHtml).join('');
-    const isAdmin = auth.currentUser && auth.currentUser.email===ADMIN_EMAIL;
-    // Einmaliger Admin-Button zum Nachtragen der Custom Claims (Multi-Club-Login) bei Accounts,
-    // die vor dieser Umstellung eingeladen wurden. Kann gefahrlos mehrfach geklickt werden
-    // (backfillClubClaims ist idempotent) - bleibt bewusst dauerhaft sichtbar statt sich nach
-    // einmaligem Gebrauch selbst zu entfernen, falls doch mal ein Account übersehen wurde.
-    const backfillClaimsHtml = isAdmin ? `
-      <div class="card">
-        <h2 class="section-title">Club-Zuordnung nachtragen</h2>
-        <p class="hint">Trägt bei allen bestehenden Accounts (inkl. Admin) den Club-Zugehörigkeits-Claim nach, falls er fehlt. Kann gefahrlos mehrfach ausgeführt werden.</p>
-        <button type="button" class="btn-secondary" id="backfill-claims-btn">Claims nachtragen</button>
-        <p class="hint" id="backfill-claims-result" style="margin-top:10px;"></p>
-      </div>
-    ` : '';
     return `
       <div class="card">
         <div class="settings-header-row">
@@ -2731,7 +2716,6 @@
         </div>
         ${membersHtml}
       </div>
-      ${backfillClaimsHtml}
     `;
   }
 
@@ -4125,21 +4109,6 @@
     });
     const openAddMemberBtn = document.getElementById('header-add-member-btn');
     if(openAddMemberBtn) openAddMemberBtn.addEventListener('click', ()=>goToMemberDetail(null));
-
-    const backfillBtn = document.getElementById('backfill-claims-btn');
-    if(backfillBtn) backfillBtn.addEventListener('click', async ()=>{
-      const resultEl = document.getElementById('backfill-claims-result');
-      backfillBtn.disabled = true; backfillBtn.textContent = 'Wird ausgeführt…';
-      try{
-        const backfillFn = httpsCallable(functions, 'backfillClubClaims');
-        const result = await backfillFn();
-        const { updated, skipped, notFound } = result.data;
-        if(resultEl) resultEl.textContent = `Aktualisiert: ${updated.length}, übersprungen (schon vorhanden): ${skipped.length}, ohne Account: ${notFound.length}.`;
-      }catch(e){
-        if(resultEl) resultEl.textContent = 'Fehlgeschlagen. Bitte später erneut versuchen.';
-      }
-      backfillBtn.disabled = false; backfillBtn.textContent = 'Claims nachtragen';
-    });
   }
 
   function attachMemberDetailListeners(){
