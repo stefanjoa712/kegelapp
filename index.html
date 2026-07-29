@@ -578,7 +578,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.32';
+  const APP_VERSION = '1.33';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -731,6 +731,69 @@
   }
   async function deleteKey(key, shared){
     try{ await withTimeout(deleteDoc(doc(db, 'kegelbuch', key)), STORAGE_TIMEOUT_MS); }catch(e){ console.error('deleteKey fehlgeschlagen für', key, e); }
+  }
+
+  // ---------- Club-gebundene Varianten von getJSON/getJSONOrThrow/setJSON ----------
+  // Identisches Verhalten (Cache-First, Hintergrund-Abgleich, Timeout-Handling) wie die
+  // Varianten oben, nur dass die Dokumente unter 'clubs/<clubId>/<key>' statt im gemeinsamen
+  // 'kegelbuch/' liegen - Vorbereitung, damit die App mehrere Kegelclubs verwalten kann. Für
+  // Daten, die nur diesen einen Club betreffen (z.B. Strafen-/Spiele-Katalog), aber wo sich der
+  // Aufwand einer Aufteilung in Einzeldokumente (wie bei den Mitgliedern) nicht lohnt, weil es
+  // sich um kleine, selten parallel bearbeitete Listen handelt.
+  function clubDocRef(key){ return doc(db, 'clubs', CURRENT_CLUB_ID, key); }
+  async function getClubJSON(key, fallback, onBackgroundUpdate){
+    let cacheResult;
+    try{
+      const cacheSnap = await getDocFromCache(clubDocRef(key));
+      cacheResult = cacheSnap.exists() ? JSON.parse(cacheSnap.data().value) : fallback;
+    }catch(e){
+      cacheResult = undefined;
+    }
+    withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
+      const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
+      if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
+        onBackgroundUpdate(serverResult);
+      }
+    }).catch(e=>{
+      console.error('getClubJSON Server-Abgleich fehlgeschlagen für', key, e);
+    });
+    if(cacheResult!==undefined) return cacheResult;
+    try{
+      const snap = await withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS);
+      return snap.exists() ? JSON.parse(snap.data().value) : fallback;
+    }catch(e){
+      console.error('getClubJSON fehlgeschlagen für', key, e);
+      return fallback;
+    }
+  }
+  async function getClubJSONOrThrow(key, fallback, onBackgroundUpdate){
+    let cacheResult;
+    try{
+      const cacheSnap = await getDocFromCache(clubDocRef(key));
+      cacheResult = cacheSnap.exists() ? JSON.parse(cacheSnap.data().value) : fallback;
+    }catch(e){
+      cacheResult = undefined;
+    }
+    withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
+      const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
+      if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
+        onBackgroundUpdate(serverResult);
+      }
+    }).catch(e=>{
+      console.error('getClubJSONOrThrow Server-Abgleich fehlgeschlagen für', key, e);
+    });
+    if(cacheResult!==undefined) return cacheResult;
+    const snap = await withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS);
+    return snap.exists() ? JSON.parse(snap.data().value) : fallback;
+  }
+  async function setClubJSON(key, value){
+    try{
+      await withTimeout(setDoc(clubDocRef(key), { value: JSON.stringify(value) }), STORAGE_TIMEOUT_MS);
+      return true;
+    }catch(e){
+      console.error('setClubJSON fehlgeschlagen für', key, e);
+      return false;
+    }
   }
 
   // ---------- Mitglieder: eigene Firestore-Dokumente unter dem jeweiligen Club statt einem
@@ -1169,7 +1232,7 @@
     state.view = 'finesManagement';
     renderLoading('Strafen werden geladen…');
     try{
-      state.finesCatalog = await getJSONOrThrow('fines-catalog', []);
+      state.finesCatalog = await getClubJSONOrThrow('fines-catalog', []);
       state.view = 'finesManagement';
       render();
     }catch(e){
@@ -1180,7 +1243,7 @@
     state.view = 'gamesManagement';
     renderLoading('Spiele werden geladen…');
     try{
-      state.gamesCatalog = await getJSONOrThrow('games-catalog', []);
+      state.gamesCatalog = await getClubJSONOrThrow('games-catalog', []);
       state.view = 'gamesManagement';
       render();
     }catch(e){
@@ -2832,7 +2895,7 @@
 
   async function showAddGeldstrafeModal(existingAdHoc){
     const isEdit = !!existingAdHoc;
-    try{ state.gamesCatalog = await getJSON('games-catalog', true, state.gamesCatalog); }catch(e){}
+    try{ state.gamesCatalog = await getClubJSON('games-catalog', state.gamesCatalog); }catch(e){}
     const matchingGame = isEdit ? state.gamesCatalog.find(g=>g.name===existingAdHoc.name) : null;
     const showCustom = isEdit && !matchingGame;
     const gameOptionsHtml = state.gamesCatalog.map(g=>`<option value="${escapeHtml(g.id)}"${matchingGame && matchingGame.id===g.id ? ' selected' : ''}>${escapeHtml(g.name)}</option>`).join('');
@@ -3218,7 +3281,7 @@
 
   async function showBulkAddFineModal(){
     const detail = state.currentEveningDetail;
-    try{ state.gamesCatalog = await getJSON('games-catalog', true, state.gamesCatalog); }catch(e){}
+    try{ state.gamesCatalog = await getClubJSON('games-catalog', state.gamesCatalog); }catch(e){}
     const catalog = (detail.finesCatalogSnapshot || []).filter(f=>f.type!=='fremdstrafe');
     const games = state.gamesCatalog;
     if(catalog.length===0 && games.length===0){
@@ -3948,7 +4011,7 @@
       const byId = {};
       state.finesCatalog.forEach(f=>{ byId[f.id]=f; });
       state.finesCatalog = newIdOrder.map(id=>byId[id]).filter(Boolean);
-      await setJSON('fines-catalog', state.finesCatalog, true);
+      await setClubJSON('fines-catalog', state.finesCatalog);
     });
   }
 
@@ -4332,7 +4395,7 @@
       const yesBtn = document.getElementById('confirm-delete-fine-modal-yes');
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.finesCatalog = state.finesCatalog.filter(f=>f.id!==fine.id);
-      await setJSON('fines-catalog', state.finesCatalog, true);
+      await setClubJSON('fines-catalog', state.finesCatalog);
       closeGenericModal();
       render();
     });
@@ -4390,7 +4453,7 @@
       }else{
         state.finesCatalog.push({id:uid('f'), name, amount:rounded, type});
       }
-      await setJSON('fines-catalog', state.finesCatalog, true);
+      await setClubJSON('fines-catalog', state.finesCatalog);
       closeGenericModal();
       render();
     });
@@ -4410,7 +4473,7 @@
       const yesBtn = document.getElementById('confirm-delete-game-modal-yes');
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       state.gamesCatalog = state.gamesCatalog.filter(g=>g.id!==game.id);
-      await setJSON('games-catalog', state.gamesCatalog, true);
+      await setClubJSON('games-catalog', state.gamesCatalog);
       closeGenericModal();
       render();
     });
@@ -4448,7 +4511,7 @@
       }else{
         state.gamesCatalog.push({id:uid('game'), name, type});
       }
-      await setJSON('games-catalog', state.gamesCatalog, true);
+      await setClubJSON('games-catalog', state.gamesCatalog);
       closeGenericModal();
       render();
     });
@@ -5278,7 +5341,7 @@
 
     // Aktuelle Strafenliste als feste Kopie für diesen Abend übernehmen - spätere Änderungen
     // in der Strafenverwaltung dürfen diesen Abend nicht mehr beeinflussen.
-    const finesCatalogAtCreation = await getJSON('fines-catalog', true, state.finesCatalog);
+    const finesCatalogAtCreation = await getClubJSON('fines-catalog', state.finesCatalog);
     state.finesCatalog = finesCatalogAtCreation;
 
     const occupiedSeatIds = buildSeatPriorityOrder().slice(0, participants.length);

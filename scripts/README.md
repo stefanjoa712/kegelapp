@@ -69,6 +69,28 @@ Das Script ist idempotent - einfach erneut mit `--apply` ausführen, das
 richtet keinen Schaden an. Der alte Blob wird nie gelöscht, ihr könnt also
 jederzeit zur alten `index.html`-Version zurück-deployen, falls nötig.
 
+## Migration: Strafen- und Spiele-Katalog
+
+Zweites Script, `migrate-fines-games.js`, verschiebt analog den Strafen-
+Katalog (`kegelbuch/fines-catalog`) und den Spiele-Katalog
+(`kegelbuch/games-catalog`) zu `clubs/die-pudolfs/fines-catalog` bzw.
+`clubs/die-pudolfs/games-catalog`. Anders als bei den Mitgliedern bleibt
+hier jeweils ein einzelnes Blob-Dokument pro Club - beide Listen sind klein
+und selten parallel bearbeitet, eine Aufteilung in Einzeldokumente lohnt sich
+hier nicht.
+
+```bash
+cd scripts
+node migrate-fines-games.js            # Dry-Run
+node migrate-fines-games.js --apply    # echte Ausführung
+```
+
+Auch dieses Script ist idempotent und löscht die alten Dokumente unter
+`kegelbuch/` nicht - gleiches Vorgehen wie bei der Mitglieder-Migration
+(siehe "Danach" oben): erst `firestore.rules` deployen (bereits erledigt,
+wenn ihr die Mitglieder-Migration schon gemacht habt), dann Script laufen
+lassen, dann erst den neuen `index.html`-Stand deployen.
+
 ## Technischer Hintergrund: warum kein firebase-admin?
 
 Ein erster Versuch, das Firebase-CLI-Zugriffstoken einfach an
