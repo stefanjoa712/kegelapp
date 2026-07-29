@@ -473,11 +473,26 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   }
 
   const adminAuth = getAuth();
+  let userRecord;
   try {
-    await adminAuth.getUserByEmail(email);
+    userRecord = await adminAuth.getUserByEmail(email);
   } catch (e) {
     // Nutzer existiert noch nicht -> Account anlegen (ohne Passwort, das setzt das Mitglied selbst).
-    await adminAuth.createUser({ email, emailVerified: false });
+    userRecord = await adminAuth.createUser({ email, emailVerified: false });
+  }
+
+  // Custom Claim 'clubIds' (Array) ordnet den Auth-Account einem oder mehreren Clubs zu - nach
+  // dem Login liest der Client daraus, welche(n) Club(s) dieser Nutzer sehen darf (bei genau
+  // einem Eintrag direkt, bei mehreren über eine Auswahl). WICHTIG: den bestehenden Claim lesen
+  // und die neue clubId nur ERGÄNZEN, nie überschreiben - sonst würde ein zweiter Invite (z.B. in
+  // einem anderen Club) die Zugehörigkeit zu allen bisherigen Clubs löschen.
+  const existingClaims = userRecord.customClaims || {};
+  const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
+  if (!existingClubIds.includes(CLUB_ID)) {
+    await adminAuth.setCustomUserClaims(userRecord.uid, {
+      ...existingClaims,
+      clubIds: [...existingClubIds, CLUB_ID],
+    });
   }
 
   const resetLink = await adminAuth.generatePasswordResetLink(email, {
@@ -529,7 +544,21 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   const adminAuth = getAuth();
   try {
     const userRecord = await adminAuth.getUserByEmail(email);
-    await adminAuth.deleteUser(userRecord.uid);
+    // Ein Nutzer kann Mitglied in mehreren Clubs sein - beim Entfernen darf NICHT der ganze
+    // Account gelöscht werden, sondern nur die eine clubId aus dem Claim-Array entfernt werden.
+    // Erst wenn danach keine Club-Zugehörigkeit mehr übrig ist, wird der Account wirklich gelöscht.
+    const existingClaims = userRecord.customClaims || {};
+    const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
+    const remainingClubIds = existingClubIds.filter((id) => id !== CLUB_ID);
+
+    if (remainingClubIds.length > 0) {
+      await adminAuth.setCustomUserClaims(userRecord.uid, {
+        ...existingClaims,
+        clubIds: remainingClubIds,
+      });
+    } else {
+      await adminAuth.deleteUser(userRecord.uid);
+    }
   } catch (e) {
     if (e.code !== 'auth/user-not-found') {
       logger.error(`Fehler beim Entfernen des Accounts für ${email}:`, e);
