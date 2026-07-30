@@ -313,6 +313,15 @@ function formatEveningDate(detail) {
   });
 }
 
+// Ausgeschriebenes Datumsformat ("30. Juli 2026") wie formatDateDE im Client - wird für
+// History-Notizen gebraucht, die exakt im gewohnten Format bleiben sollen (im Unterschied zu
+// formatEveningDate oben, das für die E-Mail-Betreffzeile numerisch formatiert).
+function formatDateDEServer(iso) {
+  const parts = iso.split('-').map(Number);
+  const months = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+  return `${parts[2]}. ${months[parts[1] - 1]} ${parts[0]}`;
+}
+
 // Sammelt alle Empfänger (Anwesende + Abwesende mit Durchschnittsbetrag) mit gepflegter E-Mail.
 function collectRecipientNames(detail, members) {
   const names = [];
@@ -419,6 +428,421 @@ async function handleEveningReopened(clubId, before, docId) {
     }
   }
 }
+
+// -------- Kegelabend abschließen (closeEvening) --------
+// Läuft serverseitig statt im Client, damit die Firestore Rules für arrears/transactions eng
+// gefasst bleiben können (nur Kassenwart/Admin) OHNE den automatischen Rückstands-Zuwachs beim
+// Abschließen eines Abends zu blockieren - diese Function läuft mit Admin-SDK-Rechten und umgeht
+// die Rules, exakt wie deleteClub/inviteMember es bereits tun. Bildet 1:1 die bisherige
+// Client-Logik aus dem 'confirm-close-evening-yes'-Handler in index.html nach - siehe dort für
+// den ursprünglichen, Zeile für Zeile äquivalenten Ablauf.
+
+// Pool für Durchschnittsberechnungen: anwesende, gültige (nicht invalide) Mitglieder - ohne Gäste.
+// Identisch zur Client-Funktion gleichen Namens.
+function validPresentMemberTotals(detail, excludeSeatId) {
+  return detail.seating
+    .filter(s => s.name && !s.invalid && s.seatId !== excludeSeatId)
+    .map(s => roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
+}
+function averageOfTotalsRounded(totals) {
+  if (totals.length === 0) return 0;
+  return roundUpToFullEuro(totals.reduce((a, b) => a + b, 0) / totals.length);
+}
+
+// Für die Übersichtsliste: kompakte Kennzahlen eines Abends. Identisch zur Client-Funktion
+// computeEveningSummaryFields, benötigt hier zusätzlich die Mitgliederanzahl als Parameter (der
+// Client liest sie aus state.members, hier gibt es keinen globalen State).
+function computeEveningSummaryFields(detail, memberCount) {
+  const occupied = detail.seating.filter(s => s.name);
+  const presentCount = occupied.filter(s => !s.isGuest).length;
+  const guestCount = occupied.filter(s => s.isGuest).length;
+  const absentList = detail.closed ? (detail.absentMembersFines || []) : [];
+  const absentCount = detail.closed ? absentList.length : Math.max(0, memberCount - presentCount);
+  let income = 0;
+  occupied.forEach(s => { income += roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)); });
+  absentList.forEach(a => { income += a.amount; });
+  return { presentCount, guestCount, absentCount, income };
+}
+
+// ID-Auflösung für Rückstands-Dokumente: bevorzugt die Mitglieds-ID, damit eine spätere
+// Umbenennung den Rückstand nicht "verwaist" lässt. Identisch zur Client-Funktion
+// resolveArrearsDocId in index.html.
+function resolveArrearsDocIdServer(name, members) {
+  const member = members.find(m => displayName(m) === name);
+  if (member) return member.id;
+  const transliterated = name
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue');
+  return 'guest-' + transliterated.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+// Serverseitiges Äquivalent zu updateAttendanceStatsForEvening in index.html - aktualisiert die
+// vorab aggregierte Anwesenheitsstatistik (clubs/{clubId}/data/attendance-stats) um einen Abend.
+async function updateAttendanceStatsForEveningServer(clubRef, detail, direction) {
+  const statsRef = clubRef.collection('data').doc('attendance-stats');
+  const statsSnap = await statsRef.get();
+  let stats = { totalsByYear: {}, attendanceByMember: {} };
+  if (statsSnap.exists) {
+    try { stats = JSON.parse(statsSnap.data().value || '{}'); } catch (e) { /* Fallback bleibt leer */ }
+  }
+  if (!stats.totalsByYear) stats.totalsByYear = {};
+  if (!stats.attendanceByMember) stats.attendanceByMember = {};
+
+  const year = detail.date.slice(0, 4);
+  const newTotal = (stats.totalsByYear[year] || 0) + direction;
+  if (newTotal > 0) stats.totalsByYear[year] = newTotal; else delete stats.totalsByYear[year];
+
+  const presentMemberNames = new Set(detail.seating.filter(s => s.name && !s.isGuest).map(s => s.name));
+  presentMemberNames.forEach(name => {
+    if (!stats.attendanceByMember[name]) stats.attendanceByMember[name] = {};
+    const newCount = (stats.attendanceByMember[name][year] || 0) + direction;
+    if (newCount > 0) stats.attendanceByMember[name][year] = newCount; else delete stats.attendanceByMember[name][year];
+  });
+  await statsRef.set({ value: JSON.stringify(stats) });
+}
+
+exports.closeEvening = onCall({}, async (request) => {
+  // Enger gefasst als canManageMembers(): hier nur Kassenwart oder Admin, bewusst nicht
+  // Präsident - dieselbe Berechtigung wie die übrige Finanzverwaltung
+  // (siehe canManageFinances() in firestore.rules und index.html).
+  requireFinanceRole(request);
+
+  const { clubId, eveningId, skipNotificationEmail } = request.data || {};
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
+  }
+  if (!eveningId || typeof eveningId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
+  }
+
+  const clubRef = db.collection('clubs').doc(clubId);
+  const eveningRef = clubRef.collection('evenings').doc(eveningId);
+
+  // Frisch aus Firestore lesen (nicht vom Client übernehmen) - das ist der zentrale Punkt für
+  // "Daten müssen aktuell sein": egal was der Client lokal denkt, hier zählt ausschließlich der
+  // Stand, der tatsächlich in der Datenbank steht. Der Client wartet vor diesem Aufruf zusätzlich
+  // selbst auf offene Speichervorgänge (siehe attachDetailListeners in index.html), aber auch
+  // ohne das wäre diese Function korrekt, weil sie nie mit veralteten Werten rechnet.
+  const eveningSnap = await eveningRef.get();
+  if (!eveningSnap.exists) {
+    throw new HttpsError('not-found', 'Kegelabend wurde nicht gefunden.');
+  }
+  let detail;
+  try {
+    detail = JSON.parse(eveningSnap.data().value);
+  } catch (e) {
+    throw new HttpsError('internal', 'Abend-Dokument konnte nicht gelesen werden.');
+  }
+  if (detail.closed) {
+    throw new HttpsError('failed-precondition', 'Dieser Abend ist bereits abgeschlossen.');
+  }
+
+  await enrichEveningWithSeatFines(clubId, detail);
+
+  const members = await loadMembers(clubId);
+  if (!members) {
+    throw new HttpsError('internal', 'Mitgliederliste konnte nicht geladen werden.');
+  }
+
+  detail.skipNotificationEmail = !!skipNotificationEmail;
+
+  const presentSeats = detail.seating.filter(s => s.name && !s.isGuest);
+  const presentNames = new Set(presentSeats.map(s => s.name));
+  const avgRounded = averageOfTotalsRounded(validPresentMemberTotals(detail));
+
+  // Invalide markierte Personen: Durchschnitt jetzt fest einfrieren.
+  detail.seating.forEach(s => {
+    if (s.invalid && s.invalidAmount === undefined) s.invalidAmount = avgRounded;
+  });
+
+  const absentMembers = members.filter(m => !presentNames.has(displayName(m)));
+  detail.absentMembersFines = absentMembers.map(m => ({ name: displayName(m), amount: avgRounded }));
+  detail.closed = true;
+
+  // Aktuelle Rückstände laden (arrears-Subcollection, ein Dokument pro Person).
+  const arrearsSnap = await clubRef.collection('arrears').get();
+  const arrears = [];
+  arrearsSnap.forEach(snap => {
+    try { arrears.push(JSON.parse(snap.data().value)); } catch (e) { /* einzelnes defektes Dokument ignorieren */ }
+  });
+
+  // Snapshot des Rückstands VOR der heutigen Erhöhung - direkt auf dem Abend gespeichert, damit
+  // sendFineEmailsOnClose beim Mailversand keinen separaten, potenziell inkonsistenten Zugriff
+  // braucht.
+  const priorArrearsSnapshot = {};
+  detail.seating.filter(s => s.name).forEach(s => {
+    const existing = arrears.find(a => a.name === s.name);
+    priorArrearsSnapshot[s.name] = existing ? existing.amount : 0;
+  });
+  detail.absentMembersFines.forEach(a => {
+    if (priorArrearsSnapshot[a.name] === undefined) {
+      const existing = arrears.find(x => x.name === a.name);
+      priorArrearsSnapshot[a.name] = existing ? existing.amount : 0;
+    }
+  });
+  detail.priorArrearsSnapshot = priorArrearsSnapshot;
+
+  const touchedArrearsEntries = [];
+  function addToArrears(name, amount, seatId) {
+    if (!amount) return;
+    let entry = arrears.find(a => a.name === name);
+    if (!entry) { entry = { id: resolveArrearsDocIdServer(name, members), name, amount: 0, history: [] }; arrears.push(entry); }
+    if (!entry.id) entry.id = resolveArrearsDocIdServer(name, members);
+    if (!entry.history) entry.history = [];
+    entry.amount = Math.round((entry.amount + amount) * 100) / 100;
+    entry.history.push({
+      id: `hist-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, date: detail.date, type: 'increase', delta: amount,
+      note: `Strafen vom Kegelabend am ${formatDateDEServer(detail.date)}`, balanceAfter: entry.amount, createdAt: Date.now(),
+      eveningId: detail.id, seatId: seatId || undefined,
+    });
+    if (!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
+  }
+  detail.seating.filter(s => s.name).forEach(s => {
+    addToArrears(s.name, roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)), s.seatId);
+  });
+  detail.absentMembersFines.forEach(a => { addToArrears(a.name, a.amount); });
+
+  // Index-Eintrag (evenings-index, liegt unter clubs/{clubId}/data/evenings-index) aktualisieren -
+  // dieselbe Kennzahlen-Logik wie computeEveningSummaryFields im Client.
+  const dataRef = clubRef.collection('data').doc('evenings-index');
+  const indexSnap = await dataRef.get();
+  let eveningsIndex = [];
+  if (indexSnap.exists) {
+    try { eveningsIndex = JSON.parse(indexSnap.data().value || '[]'); } catch (e) { eveningsIndex = []; }
+  }
+  const idx = eveningsIndex.findIndex(e => e.id === detail.id);
+  const summaryFields = computeEveningSummaryFields(detail, members.length);
+  if (idx >= 0) eveningsIndex[idx] = { ...eveningsIndex[idx], closed: true, ...summaryFields };
+
+  // Alle Schreibvorgänge (Hauptdokument, Index, jeder betroffene Rückstands-Eintrag) in EINEM
+  // atomaren Batch - entweder alles oder nichts, kein Teilfehler-Risiko wie bei einem einfachen
+  // Promise.all. Firestore erlaubt bis zu 500 Schreiboperationen pro Batch, das reicht für jeden
+  // realistischen Kegelclub-Abend deutlich.
+  const { finesBySeat, adHocFinesBySeat, ...mainFields } = detail;
+  const batch = db.batch();
+  batch.set(eveningRef, { value: JSON.stringify(mainFields) });
+  batch.set(dataRef, { value: JSON.stringify(eveningsIndex) });
+  touchedArrearsEntries.forEach(entry => {
+    batch.set(clubRef.collection('arrears').doc(entry.id), { value: JSON.stringify(entry) });
+  });
+  await batch.commit();
+
+  // Anwesenheitsstatistik aktualisieren (attendance-stats unter clubs/{clubId}/data) - separat vom
+  // Batch, da diese Funktion bereits ihre eigene, unabhängige Lese-Schreib-Logik hat und nicht Teil
+  // der Kernbuchung ist (ein Fehlschlag hier soll den restlichen Abschluss nicht verhindern).
+  try {
+    await updateAttendanceStatsForEveningServer(clubRef, detail, 1);
+  } catch (e) {
+    logger.error(`Anwesenheitsstatistik für Abend ${eveningId} konnte nicht aktualisiert werden:`, e);
+  }
+
+  return { success: true };
+});
+
+// Serverseitiges Äquivalent zu reverseArrearsForEvening im Client - nimmt die beim Abschließen
+// eines Abends gebuchten Rückstands-Erhöhungen wieder zurück. Gibt KEINE Promises zurück (anders
+// als die Client-Version), sondern nur die aktualisierten Arrears-Entries - das Schreiben passiert
+// beim Aufrufer einheitlich über einen Batch, analog zu closeEvening.
+function reverseArrearsForEveningServer(detail, arrears, members, noteText) {
+  const touchedArrearsEntries = [];
+  function subtractFromArrears(name, amount) {
+    if (!amount) return;
+    let entry = arrears.find(a => a.name === name);
+    if (!entry) { entry = { id: resolveArrearsDocIdServer(name, members), name, amount: 0, history: [] }; arrears.push(entry); }
+    if (!entry.id) entry.id = resolveArrearsDocIdServer(name, members);
+    if (!entry.history) entry.history = [];
+    // Der ursprüngliche "Strafen"-Eintrag dieses Abends verweist auf die Sitzplatz-Strafen - die
+    // sind jetzt veraltet (Abend wird wieder geöffnet/gelöscht), daher den Link kappen.
+    entry.history.forEach(h => {
+      if (h.type === 'increase' && h.eveningId === detail.id) { delete h.eveningId; delete h.seatId; }
+    });
+    entry.amount = Math.round((entry.amount - amount) * 100) / 100;
+    entry.history.push({
+      id: `hist-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, date: getTodayInBerlin(), type: 'correction', delta: -amount,
+      note: noteText, balanceAfter: entry.amount, createdAt: Date.now(),
+    });
+    if (!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
+  }
+  detail.seating.filter(s => s.name).forEach(s => {
+    subtractFromArrears(s.name, roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
+  });
+  (detail.absentMembersFines || []).forEach(a => { subtractFromArrears(a.name, a.amount); });
+  return touchedArrearsEntries;
+}
+
+// Prüft, ob der Aufrufer die Rolle Kassenwart oder den Admin-Account hat - dieselbe Berechtigung
+// wie canManageFinances() in firestore.rules und index.html. Wirft bei fehlender Berechtigung.
+function requireFinanceRole(request) {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  const callerRole = request.auth.token.role || 'Mitglied';
+  const isCallerAdmin = request.auth.token.email === 'admin@die-pudolfs.internal';
+  if (!isCallerAdmin && callerRole !== 'Kassenwart') {
+    throw new HttpsError('permission-denied', 'Nur Kassenwart oder Admin dürfen diese Aktion ausführen.');
+  }
+}
+
+exports.reopenEvening = onCall({}, async (request) => {
+  requireFinanceRole(request);
+
+  const { clubId, eveningId, skipNotificationEmail } = request.data || {};
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
+  }
+  if (!eveningId || typeof eveningId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
+  }
+
+  const clubRef = db.collection('clubs').doc(clubId);
+  const eveningRef = clubRef.collection('evenings').doc(eveningId);
+
+  const eveningSnap = await eveningRef.get();
+  if (!eveningSnap.exists) {
+    throw new HttpsError('not-found', 'Kegelabend wurde nicht gefunden.');
+  }
+  let detail;
+  try {
+    detail = JSON.parse(eveningSnap.data().value);
+  } catch (e) {
+    throw new HttpsError('internal', 'Abend-Dokument konnte nicht gelesen werden.');
+  }
+  if (!detail.closed) {
+    throw new HttpsError('failed-precondition', 'Dieser Abend ist nicht abgeschlossen.');
+  }
+
+  await enrichEveningWithSeatFines(clubId, detail);
+  const members = await loadMembers(clubId);
+  if (!members) {
+    throw new HttpsError('internal', 'Mitgliederliste konnte nicht geladen werden.');
+  }
+
+  detail.closed = false;
+  detail.skipNotificationEmail = !!skipNotificationEmail;
+
+  const arrearsSnap = await clubRef.collection('arrears').get();
+  const arrears = [];
+  arrearsSnap.forEach(snap => {
+    try { arrears.push(JSON.parse(snap.data().value)); } catch (e) { /* einzelnes defektes Dokument ignorieren */ }
+  });
+  const noteText = `Kegelabend vom ${formatDateDEServer(detail.date)} wieder geöffnet`;
+  const touchedArrearsEntries = reverseArrearsForEveningServer(detail, arrears, members, noteText);
+
+  const dataRef = clubRef.collection('data').doc('evenings-index');
+  const indexSnap = await dataRef.get();
+  let eveningsIndex = [];
+  if (indexSnap.exists) {
+    try { eveningsIndex = JSON.parse(indexSnap.data().value || '[]'); } catch (e) { eveningsIndex = []; }
+  }
+  const idx = eveningsIndex.findIndex(e => e.id === detail.id);
+  const summaryFields = computeEveningSummaryFields(detail, members.length);
+  if (idx >= 0) eveningsIndex[idx] = { ...eveningsIndex[idx], closed: false, ...summaryFields };
+
+  const { finesBySeat, adHocFinesBySeat, ...mainFields } = detail;
+  const batch = db.batch();
+  batch.set(eveningRef, { value: JSON.stringify(mainFields) });
+  batch.set(dataRef, { value: JSON.stringify(eveningsIndex) });
+  touchedArrearsEntries.forEach(entry => {
+    const isGuest = entry.id && entry.id.startsWith('guest-');
+    const entryRef = clubRef.collection('arrears').doc(entry.id);
+    // Gast-Einträge, die durch die Korrektur auf 0 gefallen sind, werden gelöscht statt mit
+    // amount:0 gespeichert - identisch zu saveArrearsEntry() im Client.
+    if (isGuest && Math.round((entry.amount || 0) * 100) === 0) {
+      batch.delete(entryRef);
+    } else {
+      batch.set(entryRef, { value: JSON.stringify(entry) });
+    }
+  });
+  await batch.commit();
+
+  try {
+    await updateAttendanceStatsForEveningServer(clubRef, detail, -1);
+  } catch (e) {
+    logger.error(`Anwesenheitsstatistik für Abend ${eveningId} (Wiedereröffnung) konnte nicht aktualisiert werden:`, e);
+  }
+
+  return { success: true };
+});
+
+exports.deleteEvening = onCall({}, async (request) => {
+  requireFinanceRole(request);
+
+  const { clubId, eveningId } = request.data || {};
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
+  }
+  if (!eveningId || typeof eveningId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
+  }
+
+  const clubRef = db.collection('clubs').doc(clubId);
+  const eveningRef = clubRef.collection('evenings').doc(eveningId);
+
+  const eveningSnap = await eveningRef.get();
+  if (!eveningSnap.exists) {
+    throw new HttpsError('not-found', 'Kegelabend wurde nicht gefunden.');
+  }
+  let detail;
+  try {
+    detail = JSON.parse(eveningSnap.data().value);
+  } catch (e) {
+    throw new HttpsError('internal', 'Abend-Dokument konnte nicht gelesen werden.');
+  }
+  await enrichEveningWithSeatFines(clubId, detail);
+
+  const wasClosed = !!detail.closed;
+  let touchedArrearsEntries = [];
+  let members = null;
+  if (wasClosed) {
+    members = await loadMembers(clubId);
+    if (!members) {
+      throw new HttpsError('internal', 'Mitgliederliste konnte nicht geladen werden.');
+    }
+    const arrearsSnap = await clubRef.collection('arrears').get();
+    const arrears = [];
+    arrearsSnap.forEach(snap => {
+      try { arrears.push(JSON.parse(snap.data().value)); } catch (e) { /* einzelnes defektes Dokument ignorieren */ }
+    });
+    const noteText = `Kegelabend vom ${formatDateDEServer(detail.date)} gelöscht`;
+    touchedArrearsEntries = reverseArrearsForEveningServer(detail, arrears, members, noteText);
+  }
+
+  const dataRef = clubRef.collection('data').doc('evenings-index');
+  const indexSnap = await dataRef.get();
+  let eveningsIndex = [];
+  if (indexSnap.exists) {
+    try { eveningsIndex = JSON.parse(indexSnap.data().value || '[]'); } catch (e) { eveningsIndex = []; }
+  }
+  eveningsIndex = eveningsIndex.filter(e => e.id !== eveningId);
+
+  // Alle Sitzplatz-Unterdokumente + Hauptdokument löschen, Index aktualisieren, betroffene
+  // Rückstände korrigieren - alles in einem Batch.
+  const seatsSnap = await eveningRef.collection('seats').get();
+  const batch = db.batch();
+  seatsSnap.forEach(seatDoc => { batch.delete(seatDoc.ref); });
+  batch.delete(eveningRef);
+  batch.set(dataRef, { value: JSON.stringify(eveningsIndex) });
+  touchedArrearsEntries.forEach(entry => {
+    const isGuest = entry.id && entry.id.startsWith('guest-');
+    const entryRef = clubRef.collection('arrears').doc(entry.id);
+    if (isGuest && Math.round((entry.amount || 0) * 100) === 0) {
+      batch.delete(entryRef);
+    } else {
+      batch.set(entryRef, { value: JSON.stringify(entry) });
+    }
+  });
+  await batch.commit();
+
+  if (wasClosed) {
+    try {
+      await updateAttendanceStatsForEveningServer(clubRef, detail, -1);
+    } catch (e) {
+      logger.error(`Anwesenheitsstatistik für gelöschten Abend ${eveningId} konnte nicht aktualisiert werden:`, e);
+    }
+  }
+
+  return { success: true };
+});
 
 // -------- Die eigentliche Cloud Function --------
 // Trigger-Pfad mit Wildcard {clubId} statt fest verdrahteter CLUB_ID: reagiert auf

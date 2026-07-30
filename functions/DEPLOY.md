@@ -103,3 +103,37 @@ Mitglieder-Schreibzugriff auf Admin, Kassenwart und Präsident zu beschränken.
   bis zu 1 Stunde (Firebase cached ID-Tokens) oder nach erneutem Login/Reload
   mit erzwungenem Token-Refresh - für Rollenwechsel in einem Kegelclub
   unkritisch.
+
+## Kegelabend abschließen/wieder öffnen/löschen als Cloud Function
+
+Seit Version 1.60 laufen diese drei Aktionen serverseitig
+(`closeEvening`, `reopenEvening`, `deleteEvening` in `functions/index.js`)
+statt direkt aus dem Client heraus. Grund: die Firestore Rules für
+`clubs/{clubId}/arrears` und `clubs/{clubId}/transactions` sind auf
+Kassenwart/Admin beschränkt (`canManageFinances()`), aber alle drei
+Aktionen buchen automatisch Rückstands-Änderungen für JEDEN Nutzer, der
+einen Abend abschließt - ohne den Umbau hätte die Rules-Einschränkung
+diesen zentralen Ablauf für alle anderen Rollen gebrochen.
+
+- **Deploy:** ganz normal über `firebase deploy --only functions`.
+- **Neue Cloud Run Functions → öffentlichen Zugriff freischalten:**
+  wie bei den anderen `onCall`-Functions muss auch bei `closeEvening`,
+  `reopenEvening` und `deleteEvening` nach dem allerersten Deploy in der
+  Google Cloud Console unter Cloud Run manuell "Öffentlichen Zugriff
+  erlauben" gesetzt werden.
+- **Atomare Schreibvorgänge:** alle drei nutzen einen Firestore
+  `WriteBatch` (Hauptdokument, Index, betroffene Rückstands-Einträge in
+  einem Rutsch) statt einzelner `Promise.all`-Schreibvorgänge wie zuvor
+  im Client - ein Teilfehler kann die Buchung nicht mehr in einem
+  inkonsistenten Zwischenzustand hinterlassen.
+- **Berechtigung:** nur Kassenwart oder Admin (`requireFinanceRole()`),
+  bewusst enger als die übrige Mitglieder-/Clubverwaltung (dort zählt auch
+  Präsident) - identisch zu `canManageFinances()` in `firestore.rules` und
+  `index.html`.
+- **Notizen-Debounce:** der Client wartet vor dem Aufruf von `closeEvening`
+  auf `pendingNotesSave` (siehe Notizen-Textarea-Handler in `index.html`,
+  800ms Debounce), damit ein gerade getippter Notiz-Text garantiert
+  gespeichert ist, bevor serverseitig gerechnet wird. Strafen speichern
+  dagegen bereits bei jeder Änderung sofort (kein Debounce), sind also
+  unabhängig davon immer aktuell.
+

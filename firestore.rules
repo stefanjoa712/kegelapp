@@ -27,6 +27,12 @@ service cloud.firestore {
       return isAdmin() || currentRole() in ['Kassenwart', 'Präsident'];
     }
 
+    // Finanzbereich (Umsätze, Rückstandszahlungen): enger gefasst als canManageMembers() - hier
+    // darf NUR Kassenwart oder Admin schreiben, bewusst nicht Präsident.
+    function canManageFinances() {
+      return isAdmin() || currentRole() == 'Kassenwart';
+    }
+
     // Club-Stammdaten und club-eigene Daten (Mitglieder, Strafen-/Spiele-Katalog, ...).
     // Vorbereitung Multi-Club-Fähigkeit: aktuell gibt es nur einen Club, aber jeder Club-Baum
     // ist strukturell getrennt - die Regel gilt pro Club-Pfad, eine spätere feinere Zuordnung
@@ -70,11 +76,17 @@ service cloud.firestore {
     match /clubs/{clubId}/occurrence-edits/{document=**} {
       allow read, write: if request.auth != null;
     }
+    // Rückstände und Umsätze: Lesen bleibt für alle eingeloggten Nutzer offen (jeder sieht seinen
+    // eigenen Rückstand und die Finanzübersicht), Schreiben (Zahlung erfassen, Rückstand
+    // korrigieren, Umsatz anlegen/bearbeiten/löschen) nur für Kassenwart oder Admin - enger als
+    // die übrige Mitglieder-/Clubverwaltung (siehe canManageFinances()).
     match /clubs/{clubId}/arrears/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if canManageFinances();
     }
     match /clubs/{clubId}/transactions/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if canManageFinances();
     }
     // 'data'-Subcollection (clubs/{clubId}/data/{key}): generischer Key-Value-Speicher für
     // Strafen-/Spielekatalog, Finanzkonten, wiederkehrende Buchungen, Sparziele,

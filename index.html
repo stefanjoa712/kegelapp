@@ -630,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.59';
+  const APP_VERSION = '1.60';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -654,6 +654,12 @@
   ];
 
   // ---------- Zustand ----------
+  // Ausstehender Notizen-Speichervorgang (800ms Debounce, siehe Notizen-Textarea-Handler weiter
+  // unten): null, solange nichts aussteht, sonst ein Promise, das auflöst sobald der zuletzt
+  // gestartete Speichervorgang abgeschlossen ist. Wird von closeEvening() awaited, damit ein
+  // Kegelabend niemals mit noch nicht persistierten Notizen abgeschlossen wird.
+  let pendingNotesSave = null;
+
   const state = {
     view:'loading',
     members:[],
@@ -1023,13 +1029,6 @@
     await withTimeout(deleteDoc(eveningSeatDocRef(eveningId, oldSeatId)), STORAGE_TIMEOUT_MS);
   }
 
-  // Löscht einen kompletten Abend inkl. aller Sitzplatz-Unterdokumente.
-  async function deleteEveningComplete(eveningId){
-    const snaps = await withTimeout(getDocs(eveningSeatsCollection(eveningId)), STORAGE_TIMEOUT_MS);
-    await Promise.all(snaps.docs.map(d=> deleteDoc(d.ref)));
-    await withTimeout(deleteDoc(eveningDocRef(eveningId)), STORAGE_TIMEOUT_MS);
-  }
-
   // direkt drauf, kein 'value'-JSON-String-Wrapper wie bei den anderen Collections - hier gibt es
   // pro Club nur eines, kein Array-Problem, das den Wrapper nötig gemacht hätte).
   // clubIdOverride erlaubt das Laden EINES BELIEBIGEN Clubs, unabhängig von CURRENT_CLUB_ID -
@@ -1358,27 +1357,6 @@
 
   // Ermittelt für ein Mitglied, an wie vielen Kegelabenden pro Jahr es teilgenommen hat
   // (im Verhältnis zu allen Abenden in diesem Jahr).
-  // Aktualisiert das vorab aggregierte Statistik-Dokument (attendance-stats) für einen Abend.
-  // direction = +1 beim Abschließen, -1 beim Wieder-Öffnen oder Löschen eines abgeschlossenen Abends.
-  async function updateAttendanceStatsForEvening(detail, direction){
-    let stats;
-    try{ stats = await getClubJSONOrThrow('attendance-stats', {totalsByYear:{}, attendanceByMember:{}}); }
-    catch(e){ stats = {totalsByYear:{}, attendanceByMember:{}}; }
-    if(!stats.totalsByYear) stats.totalsByYear = {};
-    if(!stats.attendanceByMember) stats.attendanceByMember = {};
-
-    const year = detail.date.slice(0,4);
-    const newTotal = (stats.totalsByYear[year]||0) + direction;
-    if(newTotal>0) stats.totalsByYear[year] = newTotal; else delete stats.totalsByYear[year];
-
-    const presentMemberNames = new Set(detail.seating.filter(s=>s.name && !s.isGuest).map(s=>s.name));
-    presentMemberNames.forEach(name=>{
-      if(!stats.attendanceByMember[name]) stats.attendanceByMember[name] = {};
-      const newCount = (stats.attendanceByMember[name][year]||0) + direction;
-      if(newCount>0) stats.attendanceByMember[name][year] = newCount; else delete stats.attendanceByMember[name][year];
-    });
-    await setClubJSON('attendance-stats', stats);
-  }
 
   // Liest die vorab aggregierte Statistik (ein einziges Dokument statt aller Abende einzeln).
   async function computeMemberAttendanceStats(memberName){
@@ -2755,6 +2733,14 @@
     return state.currentUserRole==='Kassenwart' || state.currentUserRole==='Präsident';
   }
 
+  // Finanzbereich (Umsätze anlegen/bearbeiten, Rückstandszahlungen erfassen/korrigieren): enger
+  // gefasst als canManageMembers() - hier darf NUR Kassenwart oder Admin, bewusst nicht Präsident.
+  function canManageFinances(){
+    const user = auth.currentUser;
+    if(user && user.email===ADMIN_EMAIL) return true;
+    return state.currentUserRole==='Kassenwart';
+  }
+
   function getCurrentMemberName(){
     const user = auth.currentUser;
     if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
@@ -3415,6 +3401,7 @@
         <input type="checkbox" id="close-send-emails-checkbox" checked>
         <span>Mails an Mitglieder senden</span>
       </label>
+      <p class="form-error" id="close-evening-error"></p>
       <div class="confirm-row-buttons">
         <button type="button" class="btn-primary" id="confirm-close-evening-yes">Ja, abschließen</button>
         <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
@@ -3423,116 +3410,40 @@
     document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
     document.getElementById('confirm-close-evening-yes').addEventListener('click', async ()=>{
       const btn = document.getElementById('confirm-close-evening-yes');
+      const errEl = document.getElementById('close-evening-error');
       const sendEmails = document.getElementById('close-send-emails-checkbox').checked;
-      btn.disabled = true; btn.textContent = 'Wird abgeschlossen…';
       const detail = state.currentEveningDetail;
-      detail.skipNotificationEmail = !sendEmails;
-      let allMembers = state.members;
-      try{ allMembers = await getAllMembers(); state.members = allMembers; }catch(e){}
-      // Frische Sitzplatz-Strafen laden, bevor der Durchschnitt/die Einnahmen berechnet werden -
-      // andere Sitzplätze könnten seit dem letzten Laden von anderen Geräten aus geändert worden
-      // sein, und die Berechnung soll auf dem aktuellen Stand basieren.
-      try{ const freshSeatFines = await getEveningSeatFines(detail.id); detail.finesBySeat = {}; detail.adHocFinesBySeat = {}; for(const seatId of Object.keys(freshSeatFines)){ if(freshSeatFines[seatId].finesBySeat) detail.finesBySeat[seatId] = freshSeatFines[seatId].finesBySeat; if(freshSeatFines[seatId].adHocFinesBySeat) detail.adHocFinesBySeat[seatId] = freshSeatFines[seatId].adHocFinesBySeat; } }catch(e){ /* Fallback: mit dem lokalen Stand weiterrechnen */ }
-      const presentSeats = detail.seating.filter(s=>s.name && !s.isGuest);
-      const presentNames = new Set(presentSeats.map(s=>s.name));
-      const avgRounded = averageOfTotalsRounded(validPresentMemberTotals(detail));
-      // Invalide markierte Personen: Durchschnitt jetzt fest einfrieren.
-      detail.seating.forEach(s=>{
-        if(s.invalid && s.invalidAmount===undefined) s.invalidAmount = avgRounded;
-      });
-      const absentMembers = allMembers.filter(m=> !presentNames.has(displayName(m)));
-      detail.absentMembersFines = absentMembers.map(m=>({ name: displayName(m), amount: avgRounded }));
-      detail.closed = true;
-      const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
-      if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:true, ...computeEveningSummaryFields(detail)};
+      btn.disabled = true; btn.textContent = 'Wird abgeschlossen…';
 
-      // Strafen aller Anwesenden (Mitglieder + Gäste) und Abwesenden zu den offenen Rückständen addieren.
-      let arrears = state.financeArrears;
-      try{ arrears = await getAllArrears(); }catch(e){}
-      // Snapshot des Rückstands VOR der heutigen Erhöhung - direkt auf dem Abend gespeichert,
-      // damit die Cloud Function beim Mailversand keinen Race-Condition-Zugriff auf ein
-      // separates, parallel geschriebenes Dokument braucht.
-      const priorArrearsSnapshot = {};
-      detail.seating.filter(s=>s.name).forEach(s=>{
-        const existing = arrears.find(a=>a.name===s.name);
-        priorArrearsSnapshot[s.name] = existing ? existing.amount : 0;
-      });
-      detail.absentMembersFines.forEach(a=>{
-        if(priorArrearsSnapshot[a.name]===undefined){
-          const existing = arrears.find(x=>x.name===a.name);
-          priorArrearsSnapshot[a.name] = existing ? existing.amount : 0;
-        }
-      });
-      detail.priorArrearsSnapshot = priorArrearsSnapshot;
+      // Sicherstellen, dass wirklich ALLE lokal eingegebenen Änderungen in der Datenbank stehen,
+      // bevor der Abschluss serverseitig berechnet wird:
+      // - Strafen selbst speichern bei jeder Änderung sofort (kein Debounce), sind also bereits
+      //   persistiert, sobald der Nutzer eine Aktion abgeschlossen hat.
+      // - Notizen laufen dagegen über einen 800ms-Debounce-Timer (siehe Notizen-Textarea-Handler) -
+      //   ohne dieses Warten könnte ein gerade getippter, aber noch nicht gespeicherter Notiz-Text
+      //   verloren gehen bzw. der Abschluss mit veralteten Daten laufen.
+      if(pendingNotesSave){ try{ await pendingNotesSave; }catch(e){} }
 
-      const touchedArrearsEntries = [];
-      function addToArrears(name, amount, seatId){
-        if(!amount) return;
-        let entry = arrears.find(a=>a.name===name);
-        if(!entry){ entry = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; arrears.push(entry); }
-        if(!entry.id) entry.id = resolveArrearsDocId(name);
-        if(!entry.history) entry.history = [];
-        entry.amount = Math.round((entry.amount + amount)*100)/100;
-        entry.history.push({
-          id: uid('hist'), date: detail.date, type:'increase', delta: amount,
-          note: `Strafen vom Kegelabend am ${formatDateDE(detail.date)}`, balanceAfter: entry.amount, createdAt: Date.now(),
-          eveningId: detail.id, seatId: seatId||undefined
-        });
-        if(!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
+      try{
+        const closeEveningFn = httpsCallable(functions, 'closeEvening');
+        await closeEveningFn({ clubId: CURRENT_CLUB_ID, eveningId: detail.id, skipNotificationEmail: !sendEmails });
+      }catch(e){
+        if(errEl) errEl.textContent = 'Abschließen fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
+        btn.disabled = false; btn.textContent = 'Ja, abschließen';
+        return;
       }
-      detail.seating.filter(s=>s.name).forEach(s=>{
-        addToArrears(s.name, roundedFineTotalForSeat(detail, s.seatId), s.seatId);
-      });
-      detail.absentMembersFines.forEach(a=>{ addToArrears(a.name, a.amount); });
-      state.financeArrears = arrears;
 
-      await Promise.all([
-        saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex),
-        ...touchedArrearsEntries.map(entry=> saveArrearsEntry(entry))
-      ]);
-      await updateAttendanceStatsForEvening(detail, 1);
+      // Frischen Stand nachladen (die Function hat serverseitig berechnet und geschrieben) statt
+      // die lokalen Annahmen des Clients zu übernehmen - so zeigt die Detailansicht garantiert
+      // exakt das, was tatsächlich in der Datenbank steht.
       closeGenericModal();
+      try{
+        state.currentEveningDetail = await getEveningDetail(detail.id);
+        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); }catch(e){}
+        try{ state.financeArrears = await getAllArrears(); }catch(e){}
+      }catch(e){ /* Detailansicht rendert notfalls mit dem letzten bekannten Stand weiter */ }
       render();
     });
-  }
-
-  // Nimmt die beim Abschließen eines Abends gebuchten Rückstands-Erhöhungen wieder zurück.
-  // Wird sowohl beim Wieder-Öffnen als auch beim Löschen eines abgeschlossenen Abends genutzt.
-  // Gibt die zu speichernden Arrears-Entries als Promise-Array zurück (noch nicht awaited),
-  // damit der Aufrufer sie parallel mit anderen Saves ausführen kann.
-  async function reverseArrearsForEvening(detail, noteText){
-    let arrears = state.financeArrears;
-    try{ arrears = await getAllArrears(); }catch(e){}
-    const touchedArrearsEntries = [];
-    function subtractFromArrears(name, amount){
-      if(!amount) return;
-      let entry = arrears.find(a=>a.name===name);
-      if(!entry){ entry = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; arrears.push(entry); }
-      if(!entry.id) entry.id = resolveArrearsDocId(name);
-      if(!entry.history) entry.history = [];
-      // Der ursprüngliche "Strafen"-Eintrag dieses Abends verweist auf die Sitzplatz-Strafen -
-      // die sind jetzt veraltet (Abend wird bearbeitet/gelöscht), daher den Link kappen.
-      entry.history.forEach(h=>{
-        if(h.type==='increase' && h.eveningId===detail.id){ delete h.eveningId; delete h.seatId; }
-      });
-      entry.amount = Math.round((entry.amount - amount)*100)/100;
-      entry.history.push({
-        id: uid('hist'), date: todayISO(), type:'correction', delta: -amount,
-        note: noteText, balanceAfter: entry.amount, createdAt: Date.now()
-      });
-      if(!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
-    }
-    detail.seating.filter(s=>s.name).forEach(s=>{
-      subtractFromArrears(s.name, roundedFineTotalForSeat(detail, s.seatId));
-    });
-    (detail.absentMembersFines||[]).forEach(a=>{ subtractFromArrears(a.name, a.amount); });
-    // Gast-Einträge, die durch die Korrektur auf 0 gefallen sind, werden von saveArrearsEntry
-    // in der Datenbank gelöscht - hier den lokalen State entsprechend bereinigen.
-    state.financeArrears = arrears.filter(entry=>
-      !(entry.id && entry.id.startsWith('guest-') && Math.round(entry.amount*100)===0)
-    );
-    return touchedArrearsEntries.map(entry=> saveArrearsEntry(entry));
   }
 
   function showReopenEveningModal(){
@@ -3565,22 +3476,22 @@
       const btn = document.getElementById('confirm-reopen-yes');
       btn.disabled = true; btn.textContent = 'Öffnet…';
       const detail = state.currentEveningDetail;
-      detail.closed = false;
-      detail.skipNotificationEmail = !sendEmails;
-      const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
-      if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], closed:false, ...computeEveningSummaryFields(detail)};
 
-      // Beim Abschließen wurden Rückstände erhöht - beim Wieder-Öffnen müssen genau diese
-      // Beträge wieder abgezogen werden (analog zum Löschen eines abgeschlossenen Abends).
-      const arrearsSaves = await reverseArrearsForEvening(detail, `Kegelabend vom ${formatDateDE(detail.date)} wieder geöffnet`);
+      try{
+        const reopenEveningFn = httpsCallable(functions, 'reopenEvening');
+        await reopenEveningFn({ clubId: CURRENT_CLUB_ID, eveningId: detail.id, skipNotificationEmail: !sendEmails });
+      }catch(e){
+        if(errEl) errEl.textContent = 'Wieder-Öffnen fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
+        btn.disabled = false; btn.textContent = 'Öffnen';
+        return;
+      }
 
-      await Promise.all([
-        saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex),
-        ...arrearsSaves
-      ]);
-      await updateAttendanceStatsForEvening(detail, -1);
       closeGenericModal();
+      try{
+        state.currentEveningDetail = await getEveningDetail(detail.id);
+        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); }catch(e){}
+        try{ state.financeArrears = await getAllArrears(); }catch(e){}
+      }catch(e){ /* Detailansicht rendert notfalls mit dem letzten bekannten Stand weiter */ }
       render();
     });
   }
@@ -4051,11 +3962,11 @@
         </button>
         <div class="header-overflow-menu" id="header-overflow-menu" hidden>
           ${isClosed ? '' : `<button type="button" class="header-overflow-item neutral" id="header-add-attendee-btn">Mitglied/Gast hinzufügen</button>`}
-          ${isClosed
+          ${canManageFinances() ? (isClosed
             ? `<button type="button" class="header-overflow-item neutral" id="header-overflow-reopen-btn">Kegelabend wieder öffnen</button>`
             : `<button type="button" class="header-overflow-item neutral" id="header-overflow-close-btn">Kegelabend abschließen</button>`
-          }
-          <button type="button" class="header-overflow-item" id="header-overflow-delete-btn">Kegelabend löschen</button>
+          ) : ''}
+          ${canManageFinances() ? `<button type="button" class="header-overflow-item" id="header-overflow-delete-btn">Kegelabend löschen</button>` : ''}
         </div>
       </div>
     ` : '';
@@ -4066,7 +3977,7 @@
       settings: canManageMembers() ? { id: 'header-add-member-btn', label: 'Mitglied hinzufügen' } : null,
       finesManagement: canManageMembers() ? { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' } : null,
       gamesManagement: canManageMembers() ? { id: 'header-add-game-btn', label: 'Spiel hinzufügen' } : null,
-      finance: { id: 'header-add-transaction-btn', label: 'Umsatz hinzufügen' },
+      finance: canManageFinances() ? { id: 'header-add-transaction-btn', label: 'Umsatz hinzufügen' } : null,
       calendar: { id: 'header-add-event-btn', label: 'Termin hinzufügen' },
     }[state.view];
     const settingsAddBtnHtml = settingsAddBtnConfig ? `
@@ -4137,7 +4048,7 @@
     ` : ''}
     ` : '';
 
-    const arrearsOverflowHtml = state.view==='arrearsDetail' ? `
+    const arrearsOverflowHtml = (state.view==='arrearsDetail' && canManageFinances()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-arrears-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -4149,7 +4060,7 @@
     ` : '';
 
     const currentTxForOverflow = state.currentTransactionId ? state.financeTransactions.find(t=>t.id===state.currentTransactionId) : null;
-    const txOverflowHtml = (state.view==='transactionDetail' && currentTxForOverflow) ? `
+    const txOverflowHtml = (state.view==='transactionDetail' && currentTxForOverflow && canManageFinances()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-tx-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -5615,10 +5526,12 @@
         <div class="own-arrears-amount">${fmtEuro(amount)}</div>
         <div class="own-arrears-label">Offener Rückstand</div>
       </div>
+      ${canManageFinances() ? `
       <div class="card">
         <h2 class="section-title">Zahlung erfassen</h2>
         ${paymentFormHtml}
       </div>
+      ` : ''}
       <div class="card">
         <h2 class="section-title">Verlauf</h2>
         ${historyHtml}
@@ -5746,23 +5659,27 @@
     const existingTransaction = state.currentTransactionId ? state.financeTransactions.find(t=>t.id===state.currentTransactionId) : null;
     const isEdit = !!existingTransaction;
     const isLocked = isEdit && !!existingTransaction.fromArrears;
+    // Read-Only für Nutzer ohne Finanz-Verwaltungsrechte (siehe canManageFinances()) - enger
+    // gefasst als canManageMembers(): hier nur Kassenwart oder Admin, kein Präsident.
+    const readOnly = !canManageFinances();
+    const disabledAttr = readOnly ? ' disabled' : '';
     if(state.financeAccounts.length===0){
       return `<div class="card"><p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in den Einstellungen unter „Finanzverwaltung" eines an.</p></div>`;
     }
     if(isLocked){
       return `
         <div class="card">
-          <p class="hint">Dieser Umsatz stammt aus einer Rückstandszahlung. Betrag, Konto und Datum sind nicht mehr änderbar, die Bezeichnung schon.</p>
+          ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Admin können Umsätze bearbeiten.</p>` : `<p class="hint">Dieser Umsatz stammt aus einer Rückstandszahlung. Betrag, Konto und Datum sind nicht mehr änderbar, die Bezeichnung schon.</p>`}
           <label for="new-tx-description">Bezeichnung</label>
-          <input type="text" id="new-tx-description" value="${escapeHtml(existingTransaction.description)}">
+          <input type="text" id="new-tx-description" value="${escapeHtml(existingTransaction.description)}"${disabledAttr}>
           <label>Konto/Kasse</label>
           <input type="text" value="${escapeHtml(financeAccountNameById(existingTransaction.accountId))}" disabled>
           <label>Datum</label>
           <input type="text" value="${formatDateDE(existingTransaction.date)}" disabled>
           <label>${existingTransaction.amount>=0?'Einnahme':'Ausgabe'} (€)</label>
           <input type="text" value="${fmtEuro(Math.abs(existingTransaction.amount))}" disabled>
-          <p class="form-error" id="tx-form-error"></p>
-          <button type="button" class="btn-primary" id="save-tx-btn" style="width:100%;">Speichern</button>
+          ${readOnly ? '' : `<p class="form-error" id="tx-form-error"></p>
+          <button type="button" class="btn-primary" id="save-tx-btn" style="width:100%;">Speichern</button>`}
         </div>
       `;
     }
@@ -5770,18 +5687,19 @@
     const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${(isEdit && existingTransaction.accountId===a.id)?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
     return `
       <div class="card">
+        ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Admin können Umsätze bearbeiten.</p>` : ''}
         <label for="new-tx-account">Konto/Kasse</label>
-        <select id="new-tx-account">${accountOptionsHtml}</select>
+        <select id="new-tx-account"${disabledAttr}>${accountOptionsHtml}</select>
         <label for="new-tx-description">Bezeichnung</label>
-        <input type="text" id="new-tx-description" placeholder="z. B. Kegelbahn Miete" value="${isEdit?escapeHtml(existingTransaction.description):''}">
+        <input type="text" id="new-tx-description" placeholder="z. B. Kegelbahn Miete" value="${isEdit?escapeHtml(existingTransaction.description):''}"${disabledAttr}>
         <label for="new-tx-date">Datum</label>
-        <input type="date" id="new-tx-date" value="${isEdit?existingTransaction.date:todayISO()}">
+        <input type="date" id="new-tx-date" value="${isEdit?existingTransaction.date:todayISO()}"${disabledAttr}>
         <label for="new-tx-income">Einnahme (€)</label>
-        <input type="number" id="new-tx-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(existingTransaction.amount).toFixed(2):''}">
+        <input type="number" id="new-tx-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(existingTransaction.amount).toFixed(2):''}"${disabledAttr}>
         <label for="new-tx-expense">Ausgabe (€)</label>
-        <input type="number" id="new-tx-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(existingTransaction.amount).toFixed(2):''}">
-        <p class="form-error" id="tx-form-error"></p>
-        <button type="button" class="btn-primary" id="save-tx-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+        <input type="number" id="new-tx-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(existingTransaction.amount).toFixed(2):''}"${disabledAttr}>
+        ${readOnly ? '' : `<p class="form-error" id="tx-form-error"></p>
+        <button type="button" class="btn-primary" id="save-tx-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
     `;
   }
@@ -6030,12 +5948,19 @@
     const notesTextarea = document.getElementById('evening-notes-textarea');
     if(notesTextarea && !notesTextarea.readOnly){
       let saveTimer = null;
+      let resolvePendingNotesSave = null;
       notesTextarea.addEventListener('input', ()=>{
         clearTimeout(saveTimer);
-        saveTimer = setTimeout(async ()=>{
-          state.currentEveningDetail.notes = notesTextarea.value;
-          await saveEveningMainDoc(state.currentEveningDetail);
-        }, 800);
+        if(resolvePendingNotesSave) resolvePendingNotesSave(); // altes, abgebrochenes Promise nicht ewig offen lassen
+        pendingNotesSave = new Promise(resolve=>{
+          resolvePendingNotesSave = resolve;
+          saveTimer = setTimeout(async ()=>{
+            state.currentEveningDetail.notes = notesTextarea.value;
+            await saveEveningMainDoc(state.currentEveningDetail);
+            pendingNotesSave = null;
+            resolve();
+          }, 800);
+        });
       });
     }
     document.querySelectorAll('.fines-summary-row:not(.not-clickable)').forEach(row=>{
@@ -6091,24 +6016,19 @@
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       const detail = state.currentEveningDetail;
       const id = detail.id;
-      const newIndex = state.eveningsIndex.filter(e=>e.id!==id);
-      const saves = [
-        deleteEveningComplete(id),
-        setClubJSON('evenings-index', newIndex)
-      ];
 
-      // Wurde der Abend abgeschlossen, wurden dabei Rückstände erhöht - beim Löschen müssen
-      // genau diese Beträge wieder abgezogen werden.
-      if(detail.closed){
-        const arrearsSaves = await reverseArrearsForEvening(detail, `Kegelabend vom ${formatDateDE(detail.date)} gelöscht`);
-        saves.push(...arrearsSaves);
+      try{
+        const deleteEveningFn = httpsCallable(functions, 'deleteEvening');
+        await deleteEveningFn({ clubId: CURRENT_CLUB_ID, eveningId: id });
+      }catch(e){
+        if(pwErrEl) pwErrEl.textContent = 'Löschen fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
+        yesBtn.disabled = false; yesBtn.textContent = 'Löschen';
+        return;
       }
 
-      await Promise.all(saves);
-      if(detail.closed){
-        await updateAttendanceStatsForEvening(detail, -1);
-      }
-      state.eveningsIndex = newIndex;
+      state.eveningsIndex = state.eveningsIndex.filter(e=>e.id!==id);
+      try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); }catch(e){}
+      try{ state.financeArrears = await getAllArrears(); }catch(e){}
       state.confirmDeleteEveningId = null;
       goToMain();
     });
