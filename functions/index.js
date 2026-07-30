@@ -689,6 +689,15 @@ exports.deleteClub = onCall({}, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
   }
+  // Nur Admin, Kassenwart oder Präsident dürfen einen Club löschen - dieselbe Berechtigung wie
+  // die Mitglieder-/Clubverwaltung (siehe canManageMembers() in firestore.rules). onCall-Functions
+  // laufen mit Admin-SDK-Rechten und umgehen die Firestore Rules komplett, deshalb muss diese
+  // Prüfung hier eigenständig erfolgen - der Custom Claim 'role' steht direkt in request.auth.token.
+  const callerRole = request.auth.token.role || 'Mitglied';
+  const isCallerAdmin = request.auth.token.email === 'admin@die-pudolfs.internal';
+  if (!isCallerAdmin && callerRole !== 'Kassenwart' && callerRole !== 'Präsident') {
+    throw new HttpsError('permission-denied', 'Nur Kassenwart, Präsident oder Admin dürfen einen Club löschen.');
+  }
   const { clubId } = request.data || {};
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');

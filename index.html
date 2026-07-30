@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.53';
+  const APP_VERSION = '1.54';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1798,17 +1798,22 @@
 
   function viewClubManagement(){
     const club = CURRENT_CLUB_DATA || {};
+    // Read-Only für Nutzer ohne Verwaltungsrechte (siehe canManageMembers()) - dieselbe
+    // Berechtigung wie die Mitgliederverwaltung.
+    const readOnly = !canManageMembers();
+    const disabledAttr = readOnly ? ' disabled' : '';
     return `
       <div class="card">
         <h2 class="section-title">Clubdaten</h2>
+        ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Präsident können die Clubverwaltung bearbeiten.</p>` : ''}
         <label for="club-name">Clubname</label>
-        <input type="text" id="club-name" placeholder="z. B. Die Pudolfs" value="${escapeHtml(club.name || '')}">
+        <input type="text" id="club-name" placeholder="z. B. Die Pudolfs" value="${escapeHtml(club.name || '')}"${disabledAttr}>
         <label for="club-founded">Gründungsdatum</label>
-        <input type="date" id="club-founded" value="${club.foundedOn || ''}">
+        <input type="date" id="club-founded" value="${club.foundedOn || ''}"${disabledAttr}>
         <label for="club-paypal">PayPal.Me-Name</label>
-        <input type="text" id="club-paypal" placeholder="z. B. diepudolfs (aus paypal.com/paypalme/diepudolfs)" value="${escapeHtml(club.paypalName || '')}">
+        <input type="text" id="club-paypal" placeholder="z. B. diepudolfs (aus paypal.com/paypalme/diepudolfs)" value="${escapeHtml(club.paypalName || '')}"${disabledAttr}>
         <p class="form-error" id="club-form-error"></p>
-        <button type="button" class="btn-primary" id="save-club-btn" style="margin-top:8px;">Speichern</button>
+        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-club-btn" style="margin-top:8px;">Speichern</button>`}
       </div>
     `;
   }
@@ -4094,7 +4099,7 @@
       </div>
     ` : '';
 
-    const clubOverflowHtml = (state.view==='clubManagement') ? `
+    const clubOverflowHtml = (state.view==='clubManagement' && canManageMembers()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-club-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>

@@ -37,9 +37,12 @@ service cloud.firestore {
     // überlappender match-Block NEBEN (nicht innerhalb) der allgemeinen Club-Regel unten -
     // eine pauschale write-Freigabe auf Club-Ebene würde die members-Einschränkung sonst aushebeln.
 
-    // Club-Stammdaten selbst (der Club-Dokument, z.B. Name, PayPal-Name) - unverändert offen.
+    // Club-Stammdaten selbst (der Club-Dokument, z.B. Name, PayPal-Name): Lesen bleibt für alle
+    // eingeloggten Nutzer offen (Branding/Name werden überall angezeigt), Schreiben nur für
+    // Admin, Kassenwart oder Präsident - dieselbe Berechtigung wie die Mitgliederverwaltung.
     match /clubs/{clubId} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if canManageMembers();
     }
 
     // Mitgliederverwaltung (members/{memberId} inkl. _index-Dokument): Lesen bleibt für alle
