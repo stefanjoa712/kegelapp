@@ -73,5 +73,13 @@ service cloud.firestore {
     match /clubs/{clubId}/transactions/{document=**} {
       allow read, write: if request.auth != null;
     }
+    // 'data'-Subcollection (clubs/{clubId}/data/{key}): generischer Key-Value-Speicher für
+    // Strafen-/Spielekatalog, Finanzkonten, wiederkehrende Buchungen, Sparziele,
+    // Anwesenheitsstatistik, Kalender-Feed-Token und den Abende-Index (siehe clubDocRef() in
+    // index.html). Wurde beim ursprünglichen Umbau übersehen, was zu Verbindungsfehlern in der
+    // Spiele-/Strafenverwaltung, Finanzübersicht u.a. führte - hier nachgetragen.
+    match /clubs/{clubId}/data/{document=**} {
+      allow read, write: if request.auth != null;
+    }
   }
 }
