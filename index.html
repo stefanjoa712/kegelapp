@@ -630,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.57';
+  const APP_VERSION = '1.58';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -683,6 +683,7 @@
     currentUserRole: 'Mitglied',
     currentRecurringId: null,
     currentFineId: null,
+    currentGameId: null,
     currentMemberStats: {},
     eventDetailOrigin: 'calendar',
     currentEveningDetail:null,
@@ -1414,6 +1415,12 @@
     render();
   }
 
+  function goToGameDetail(game){
+    state.currentGameId = game ? game.id : null;
+    state.view = 'gameDetail';
+    render();
+  }
+
   function goToSettingsMenu(){
     state.view = 'settingsMenu';
     render();
@@ -1551,6 +1558,7 @@
     if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
     else if(state.view==='memberDetail') goToSettings();
     else if(state.view==='fineDetail') goToFinesManagement();
+    else if(state.view==='gameDetail') goToGamesManagement();
     else if(state.view==='recurringDetail') goToFinanceManagement();
     else if(state.view==='eventDetail') goBackFromEventDetail();
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
@@ -1764,12 +1772,11 @@
     return type;
   }
   function gameRowHtml(game){
-    return `<div class="member-row" data-id="${game.id}">
+    return `<div class="member-row row-clickable" data-id="${game.id}">
       <span class="fine-row-name">${escapeHtml(game.name)}</span>
       <span class="row-actions">
         <span class="game-type-badge">${escapeHtml(gameTypeLabel(game.type))}</span>
-        <button type="button" class="icon-btn edit-game-btn" data-id="${game.id}" aria-label="Bearbeiten">✎</button>
-        <button type="button" class="icon-btn delete-game-btn" data-id="${game.id}" aria-label="Löschen">✕</button>
+        <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </span>
     </div>`;
   }
@@ -1783,7 +1790,30 @@
         <div class="settings-header-row">
           <h2 class="section-title">Spiele <span class="member-count">(${state.gamesCatalog.length})</span></h2>
         </div>
-        ${listHtml}
+        <div id="games-list-container">${listHtml}</div>
+      </div>
+    `;
+  }
+
+  function viewGameDetail(){
+    const game = state.gamesCatalog.find(g=>g.id===state.currentGameId);
+    const isEdit = !!game;
+    // Read-Only für Nutzer ohne Verwaltungsrechte (siehe canManageMembers()) - dieselbe
+    // Berechtigung wie Mitglieder-, Club- und Strafenverwaltung.
+    const readOnly = !canManageMembers();
+    const disabledAttr = readOnly ? ' disabled' : '';
+    return `
+      <div class="card">
+        ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Präsident können Spiele bearbeiten.</p>` : ''}
+        <label for="game-detail-name">Name</label>
+        <input type="text" id="game-detail-name" placeholder="z. B. Bierlauf" value="${isEdit?escapeHtml(game.name):''}"${disabledAttr}>
+        <label for="game-detail-type">Spielart</label>
+        <select id="game-detail-type"${disabledAttr}>
+          <option value="group"${(!isEdit || game.type==='group')?' selected':''}>Gruppenspiel</option>
+          <option value="single"${(isEdit && game.type==='single')?' selected':''}>Einzelspiel</option>
+        </select>
+        <p class="form-error" id="game-detail-error"></p>
+        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-game-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
     `;
   }
@@ -2313,7 +2343,7 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='fineDetail' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement';
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='fineDetail' || state.view==='gamesManagement' || state.view==='gameDetail' || state.view==='financeManagement' || state.view==='eventManagement';
     const isFinanceActive = state.view==='finance' || state.view==='arrearsDetail';
     const isCalendarActive = state.view==='calendar' || state.view==='eventDetail';
     const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isCalendarActive ? 'calendar' : (isTodayActive ? 'today' : 'overview')));
@@ -2381,6 +2411,7 @@
     if(state.view==='memberDetail') return 'memberDetail:'+(state.currentMemberId||'new');
     if(state.view==='recurringDetail') return 'recurringDetail:'+(state.currentRecurringId||'new');
     if(state.view==='fineDetail') return 'fineDetail:'+(state.currentFineId||'new');
+    if(state.view==='gameDetail') return 'gameDetail:'+(state.currentGameId||'new');
     if(state.view==='eventDetail') return 'eventDetail:'+(state.calendarEditingOccurrence ? state.calendarEditingOccurrence.seriesId+':'+state.calendarEditingOccurrence.occurrenceDate : 'new');
     return state.view;
   }
@@ -2401,6 +2432,7 @@
     if(sig.startsWith('memberDetail:')) return '#mitglied';
     if(sig.startsWith('recurringDetail:')) return '#buchung';
     if(sig.startsWith('fineDetail:')) return '#strafe';
+    if(sig.startsWith('gameDetail:')) return '#spiel';
     if(sig.startsWith('eventDetail:')) return '#termin';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
@@ -2417,6 +2449,7 @@
     else if(state.view==='memberDetail') body = viewMemberDetail();
     else if(state.view==='finesManagement') body = viewFinesManagement();
     else if(state.view==='fineDetail') body = viewFineDetail();
+    else if(state.view==='gameDetail') body = viewGameDetail();
     else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='recurringDetail') body = viewRecurringDetail();
@@ -2443,7 +2476,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-fine-overflow-menu','header-fine-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-fine-overflow-menu','header-fine-overflow-btn'], ['header-game-overflow-menu','header-game-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -2588,6 +2621,14 @@
         }
         state.currentFineId = fineId==='new' ? null : fineId;
         state.view = 'fineDetail';
+        render();
+      }else if(sig.startsWith('gameDetail:')){
+        const gameId = sig.slice('gameDetail:'.length);
+        if(state.gamesCatalog.length===0){
+          try{ state.gamesCatalog = await getClubJSONOrThrow('games-catalog', []); }catch(e){}
+        }
+        state.currentGameId = gameId==='new' ? null : gameId;
+        state.view = 'gameDetail';
         render();
       }else if(sig.startsWith('eventDetail:')){
         const rest = sig.slice('eventDetail:'.length);
@@ -3974,6 +4015,7 @@
     else if(state.view==='memberDetail') title = state.currentMemberId ? 'Mitglied bearbeiten' : 'Neues Mitglied';
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
     else if(state.view==='fineDetail') title = state.currentFineId ? 'Strafe bearbeiten' : 'Strafe hinzufügen';
+    else if(state.view==='gameDetail') title = state.currentGameId ? 'Spiel bearbeiten' : 'Spiel hinzufügen';
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='recurringDetail') title = state.currentRecurringId ? 'Buchung bearbeiten' : 'Monatliche Buchung hinzufügen';
@@ -4023,7 +4065,7 @@
       // für alle anderen wird der Button gar nicht erst gerendert, statt ihn nur zu deaktivieren.
       settings: canManageMembers() ? { id: 'header-add-member-btn', label: 'Mitglied hinzufügen' } : null,
       finesManagement: canManageMembers() ? { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' } : null,
-      gamesManagement: { id: 'header-add-game-btn', label: 'Spiel hinzufügen' },
+      gamesManagement: canManageMembers() ? { id: 'header-add-game-btn', label: 'Spiel hinzufügen' } : null,
       finance: { id: 'header-add-transaction-btn', label: 'Umsatz hinzufügen' },
       calendar: { id: 'header-add-event-btn', label: 'Termin hinzufügen' },
     }[state.view];
@@ -4184,6 +4226,17 @@
       </div>
     ` : '';
 
+    const gameOverflowHtml = (state.view==='gameDetail' && state.currentGameId && canManageMembers()) ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-game-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-game-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-game-btn">Spiel löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const tabsHtml = state.view==='detail' ? `
       <div class="tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
@@ -4200,7 +4253,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${fineOverflowHtml}${calOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${fineOverflowHtml}${gameOverflowHtml}${calOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -4261,6 +4314,7 @@
     else if(state.view==='memberDetail') attachMemberDetailListeners();
     else if(state.view==='finesManagement') attachFinesManagementListeners();
     else if(state.view==='fineDetail') attachFineDetailListeners();
+    else if(state.view==='gameDetail') attachGameDetailListeners();
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
     else if(state.view==='recurringDetail') attachRecurringDetailListeners();
@@ -4600,20 +4654,56 @@
   }
 
   function attachGamesManagementListeners(){
-    document.querySelectorAll('.edit-game-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const g = state.gamesCatalog.find(x=>x.id===b.dataset.id);
-        if(g) showGameFormModal(g);
-      });
-    });
-    document.querySelectorAll('.delete-game-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const g = state.gamesCatalog.find(x=>x.id===b.dataset.id);
-        if(g) showDeleteGameModal(g);
+    document.querySelectorAll('#games-list-container .row-clickable[data-id]').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const g = state.gamesCatalog.find(x=>x.id===row.dataset.id);
+        if(g) goToGameDetail(g);
       });
     });
     const openAddGameBtn = document.getElementById('header-add-game-btn');
-    if(openAddGameBtn) openAddGameBtn.addEventListener('click', ()=>showGameFormModal());
+    if(openAddGameBtn) openAddGameBtn.addEventListener('click', ()=>goToGameDetail(null));
+  }
+
+  function attachGameDetailListeners(){
+    const game = state.gamesCatalog.find(g=>g.id===state.currentGameId);
+    const isEdit = !!game;
+
+    const overflowBtn = document.getElementById('header-game-overflow-btn');
+    const overflowMenu = document.getElementById('header-game-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
+    }
+
+    const saveBtn = document.getElementById('save-game-detail-btn');
+    if(saveBtn){
+      saveBtn.addEventListener('click', async ()=>{
+        const name = document.getElementById('game-detail-name').value.trim();
+        const type = document.getElementById('game-detail-type').value;
+        const errEl = document.getElementById('game-detail-error');
+        if(!name){ if(errEl) errEl.textContent='Bitte einen Namen angeben.'; return; }
+        saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+        if(isEdit){
+          const g = state.gamesCatalog.find(x=>x.id===game.id);
+          if(g){ g.name=name; g.type=type; }
+        }else{
+          state.gamesCatalog.push({id:uid('game'), name, type});
+        }
+        await setClubJSON('games-catalog', state.gamesCatalog);
+        goToGamesManagement();
+      });
+    }
+
+    const deleteBtn = document.getElementById('header-delete-game-btn');
+    if(deleteBtn){
+      deleteBtn.addEventListener('click', ()=>{
+        const menu = document.getElementById('header-game-overflow-menu');
+        if(menu) menu.hidden = true;
+        if(game) showDeleteGameModal(game);
+      });
+    }
   }
 
   function attachFinanceManagementListeners(){
@@ -5001,45 +5091,7 @@
       state.gamesCatalog = state.gamesCatalog.filter(g=>g.id!==game.id);
       await setClubJSON('games-catalog', state.gamesCatalog);
       closeGenericModal();
-      render();
-    });
-  }
-
-  function showGameFormModal(existingGame){
-    const isEdit = !!existingGame;
-    showModal(`
-      <h3>${isEdit ? 'Spiel bearbeiten' : 'Spiel hinzufügen'}</h3>
-      <label for="new-game-name">Name</label>
-      <input type="text" id="new-game-name" placeholder="z. B. Bierlauf" value="${isEdit?escapeHtml(existingGame.name):''}">
-      <label for="new-game-type">Spielart</label>
-      <select id="new-game-type">
-        <option value="group"${(!isEdit || existingGame.type==='group')?' selected':''}>Gruppenspiel</option>
-        <option value="single"${(isEdit && existingGame.type==='single')?' selected':''}>Einzelspiel</option>
-      </select>
-      <p class="form-error" id="game-form-error"></p>
-      <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="add-game-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
-        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
-      </div>
-    `);
-    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    document.getElementById('new-game-name').focus();
-    document.getElementById('add-game-btn').addEventListener('click', async ()=>{
-      const name = document.getElementById('new-game-name').value.trim();
-      const type = document.getElementById('new-game-type').value;
-      const errEl = document.getElementById('game-form-error');
-      if(!name){ if(errEl) errEl.textContent='Bitte einen Namen angeben.'; return; }
-      const submitBtn = document.getElementById('add-game-btn');
-      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
-      if(isEdit){
-        const g = state.gamesCatalog.find(x=>x.id===existingGame.id);
-        if(g){ g.name=name; g.type=type; }
-      }else{
-        state.gamesCatalog.push({id:uid('game'), name, type});
-      }
-      await setClubJSON('games-catalog', state.gamesCatalog);
-      closeGenericModal();
-      render();
+      goToGamesManagement();
     });
   }
 
