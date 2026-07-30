@@ -396,7 +396,7 @@
   .fine-row-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .fine-row-amount{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft); white-space:nowrap;}
   .member-row:last-child{border-bottom:none;}
-  .row-actions{display:flex; gap:4px;}
+  .row-actions{display:flex; align-items:center; gap:4px;}
   .nickname-tag{color:var(--brass); font-style:italic; font-weight:400;}
   .role-tag{display:inline-block; font-size:0.72em; font-weight:600; letter-spacing:.02em; text-transform:uppercase; color:var(--brass); border:1px solid var(--brass); border-radius:20px; padding:1px 8px; margin-left:6px; vertical-align:middle;}
   .icon-btn{background:none; border:none; font-size:15px; cursor:pointer; color:var(--muted); padding:3px 6px; border-radius:3px;}
@@ -630,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.56';
+  const APP_VERSION = '1.57';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1698,11 +1698,14 @@
     return '';
   }
   function fineRowHtml(fine){
-    return `<div class="member-row draggable-row row-clickable" data-id="${fine.id}">
-      <span class="fine-row-info">
+    const canReorder = canManageMembers();
+    const dragHandleHtml = canReorder ? `
         <span class="drag-handle" aria-label="Verschieben">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
-        </span>
+        </span>` : '';
+    return `<div class="member-row${canReorder?' draggable-row':''} row-clickable" data-id="${fine.id}">
+      <span class="fine-row-info">
+        ${dragHandleHtml}
         <span class="fine-type-icon" title="${escapeHtml(fineTypeLabel(fine.type))}">${fineTypeIconSvg(fine.type)}</span>
         <span class="fine-row-name">${escapeHtml(fine.name)}</span>
       </span>
