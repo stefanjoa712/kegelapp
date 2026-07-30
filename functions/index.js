@@ -10,7 +10,7 @@
  * oder im Client sichtbar. Einrichtung siehe DEPLOY.md im gleichen Ordner.
  */
 
-const { onDocumentUpdated } = require('firebase-functions/v2/firestore');
+const { onDocumentUpdated, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError, onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
@@ -491,19 +491,38 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
     userRecord = await adminAuth.createUser({ email, emailVerified: false });
   }
 
+  // Aktuelle Rolle aus dem Mitgliedsdokument lesen, um den Rollen-Claim sofort zu setzen -
+  // ohne darauf zu warten, dass syncMemberRoleClaim (Firestore-Trigger) separat feuert.
+  let currentRole = 'Mitglied';
+  try {
+    const membersSnap = await db.collection('clubs').doc(clubId).collection('members').get();
+    membersSnap.forEach((docSnap) => {
+      if (docSnap.id === MEMBERS_INDEX_ID) return;
+      const m = JSON.parse(docSnap.data().value);
+      if (m && m.email && m.email.toLowerCase() === email.toLowerCase()) {
+        currentRole = m.role || 'Mitglied';
+      }
+    });
+  } catch (e) {
+    logger.error(`Rolle für ${email} konnte beim Einladen nicht ermittelt werden:`, e);
+  }
+
   // Custom Claim 'clubIds' (Array) ordnet den Auth-Account einem oder mehreren Clubs zu - nach
   // dem Login liest der Client daraus, welche(n) Club(s) dieser Nutzer sehen darf (bei genau
   // einem Eintrag direkt, bei mehreren über eine Auswahl). WICHTIG: den bestehenden Claim lesen
   // und die neue clubId nur ERGÄNZEN, nie überschreiben - sonst würde ein zweiter Invite (z.B. in
   // einem anderen Club) die Zugehörigkeit zu allen bisherigen Clubs löschen. clubId kommt vom
   // Client (dessen aktuell aktiver Club, CURRENT_CLUB_ID) statt einer fest verdrahteten Konstante,
-  // damit das Einladen auch für künftige, weitere Clubs funktioniert.
+  // damit das Einladen auch für künftige, weitere Clubs funktioniert. 'role' wird bei jedem Invite
+  // aktualisiert (nicht nur ergänzt), da es sich - anders als clubIds - pro Club nicht summiert.
   const existingClaims = userRecord.customClaims || {};
   const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
-  if (!existingClubIds.includes(clubId)) {
+  const nextClubIds = existingClubIds.includes(clubId) ? existingClubIds : [...existingClubIds, clubId];
+  if (!existingClubIds.includes(clubId) || existingClaims.role !== currentRole) {
     await adminAuth.setCustomUserClaims(userRecord.uid, {
       ...existingClaims,
-      clubIds: [...existingClubIds, clubId],
+      clubIds: nextClubIds,
+      role: currentRole,
     });
   }
 
@@ -627,10 +646,11 @@ exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
   }
   const existingClaims = userRecord.customClaims || {};
   const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
-  if (!existingClubIds.includes(clubId)) {
+  if (!existingClubIds.includes(clubId) || existingClaims.role !== member.role) {
     await adminAuth.setCustomUserClaims(userRecord.uid, {
       ...existingClaims,
-      clubIds: [...existingClubIds, clubId],
+      clubIds: existingClubIds.includes(clubId) ? existingClubIds : [...existingClubIds, clubId],
+      role: member.role,
     });
   }
 
@@ -761,6 +781,62 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   }
 
   return { success: true };
+});
+
+// -------- Rollen-Rechte: Custom Claim 'role' synchron zum Mitgliedsdokument halten --------
+// Die Firestore Rules können die Rolle eines eingeloggten Nutzers nicht direkt aus dem
+// Mitgliedsdokument lesen (das würde für JEDE Regel-Auswertung einen extra Read kosten) -
+// stattdessen wird die Rolle als Custom Claim im Auth-Token gespiegelt, genau wie 'clubIds'.
+// Dieser Trigger feuert bei jedem Schreiben auf ein Mitgliedsdokument (angelegt, geändert,
+// gelöscht) und gleicht den Claim des zugehörigen Auth-Accounts (per E-Mail verknüpft) ab.
+// Wichtig: Ein gecachtes ID-Token auf dem Client kann bis zu 1h alt sein, d.h. eine gerade erst
+// heruntergestufte Rolle greift serverseitig etwas verzögert - für Rollenwechsel in einem
+// Kegelclub unkritisch. inviteMember und createClub setzen den Claim zusätzlich sofort beim
+// Erstanlegen, damit ein frisch eingeladenes Mitglied nicht auf diesen Trigger warten muss.
+exports.syncMemberRoleClaim = onDocumentWritten('clubs/{clubId}/members/{memberId}', async (event) => {
+  const { memberId } = event.params;
+  if (memberId === MEMBERS_INDEX_ID) return; // Index-Dokument, kein echtes Mitglied
+
+  const beforeData = event.data.before.exists ? JSON.parse(event.data.before.data().value) : null;
+  const afterData = event.data.after.exists ? JSON.parse(event.data.after.data().value) : null;
+
+  const adminAuth = getAuth();
+
+  // Mitglied gelöscht oder E-Mail entfernt: alten Auth-Account (falls vorhanden) auf die
+  // Standardrolle 'Mitglied' zurücksetzen, statt ihm eine veraltete Rolle zu lassen.
+  const oldEmail = beforeData && beforeData.email;
+  const newEmail = afterData && afterData.email;
+  const newRole = (afterData && afterData.role) || 'Mitglied';
+
+  if (oldEmail && oldEmail !== newEmail) {
+    try {
+      const oldUser = await adminAuth.getUserByEmail(oldEmail);
+      const existingClaims = oldUser.customClaims || {};
+      if (existingClaims.role !== 'Mitglied') {
+        await adminAuth.setCustomUserClaims(oldUser.uid, { ...existingClaims, role: 'Mitglied' });
+      }
+    } catch (e) {
+      if (e.code !== 'auth/user-not-found') {
+        logger.error(`Rollen-Reset für alte E-Mail ${oldEmail} fehlgeschlagen:`, e);
+      }
+    }
+  }
+
+  if (!newEmail) return; // kein aktueller Account zum Aktualisieren
+
+  try {
+    const userRecord = await adminAuth.getUserByEmail(newEmail);
+    const existingClaims = userRecord.customClaims || {};
+    if (existingClaims.role !== newRole) {
+      await adminAuth.setCustomUserClaims(userRecord.uid, { ...existingClaims, role: newRole });
+    }
+  } catch (e) {
+    if (e.code !== 'auth/user-not-found') {
+      logger.error(`Rollen-Claim-Sync für ${newEmail} fehlgeschlagen:`, e);
+    }
+    // Noch kein Auth-Account (Mitglied wurde noch nicht eingeladen) - beim Einladen setzt
+    // inviteMember den Claim direkt, hier gibt es nichts zu tun.
+  }
 });
 
 // -------- Öffentliche Strafen-Übersicht für Gäste (kein Login nötig) --------

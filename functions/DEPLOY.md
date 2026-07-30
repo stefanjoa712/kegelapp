@@ -66,3 +66,40 @@ abgeschlossen wird, feuert die Function und verschickt die E-Mails.
   löst also erneut einen Mail-Versand aus.
 - Ohne gepflegte E-Mail-Adresse beim Mitglied wird schlicht nichts versendet
   - kein Fehler, keine Aktion nötig.
+
+## Rollen-Rechte (syncMemberRoleClaim)
+
+Seit Version 1.51 gibt es einen Firestore-Trigger `syncMemberRoleClaim`, der
+den Custom Claim `role` eines Auth-Accounts synchron zum `role`-Feld im
+Mitgliedsdokument hält. Die Firestore Rules nutzen diesen Claim, um
+Mitglieder-Schreibzugriff auf Admin, Kassenwart und Präsident zu beschränken.
+
+- **Deploy:** ganz normal über `firebase deploy --only functions` (kein
+  separater Schritt nötig, `syncMemberRoleClaim` wird mit ausgerollt).
+- **Neue Cloud Run Function → öffentlichen Zugriff freischalten:** wie bei
+  `inviteMember`, `unlinkMemberAccount` und `shareGuestBill` muss auch bei
+  dieser Function nach dem allerersten Deploy in der Google Cloud Console
+  unter Cloud Run manuell "Öffentlichen Zugriff erlauben" gesetzt werden -
+  sonst schlägt der Trigger mit einem Berechtigungsfehler fehl. Da es sich
+  um einen Firestore-Trigger (kein `onCall`) handelt, betrifft das primär
+  die Rechte, mit denen die Function selbst laufen darf (Firestore/Auth
+  Admin SDK) - prüft nach dem Deploy einmal die Logs (**Functions → Logs**),
+  ob beim Speichern eines Mitglieds ein Eintrag von `syncMemberRoleClaim`
+  ohne Fehler erscheint.
+- **Firestore Rules:** läuft automatisch über die GitHub Action (Job
+  `deploy-firestore-rules` in `.github/workflows/firebase-hosting-deploy.yml`),
+  aber NUR wenn sich `firestore.rules` im jeweiligen Push geändert hat. Bei
+  einem Push, der die Datei nicht anfasst, wird kein Rules-Deploy ausgelöst -
+  bei Bedarf weiterhin manuell möglich: `firebase deploy --only firestore:rules`.
+- **Bestehende Mitglieder nachziehen:** `syncMemberRoleClaim` feuert nur bei
+  KÜNFTIGEN Schreibvorgängen auf ein Mitgliedsdokument - bestehende Mitglieder
+  bekommen den `role`-Claim beim ersten Deploy nicht rückwirkend gesetzt. Nach
+  dem ersten Deploy einmalig als Admin jedes bestehende Mitglied mit Account
+  öffnen und auf "Speichern" klicken (auch ohne inhaltliche Änderung) - das
+  reicht als Schreibvorgang, um den Trigger auszulösen. Betroffene Nutzer
+  müssen sich danach einmal neu einloggen, damit ihr Browser den aktuellen
+  Claim bekommt (Firebase cached ID-Tokens bis zu 1h).
+- Ein bereits eingeloggter Nutzer bemerkt einen Rollenwechsel ggf. erst nach
+  bis zu 1 Stunde (Firebase cached ID-Tokens) oder nach erneutem Login/Reload
+  mit erzwungenem Token-Refresh - für Rollenwechsel in einem Kegelclub
+  unkritisch.

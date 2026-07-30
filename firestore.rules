@@ -6,15 +6,72 @@ service cloud.firestore {
     match /kegelbuch/{document=**} {
       allow read, write: if request.auth != null;
     }
+
+    // Fester Admin-Zugang der App (siehe ADMIN_EMAIL in index.html) - erkennt den Admin-Account
+    // an seiner festen E-Mail-Adresse, unabhängig von Club-Zugehörigkeit oder Rollen-Claim.
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'admin@die-pudolfs.internal';
+    }
+
+    // Rolle des eingeloggten Nutzers aus dem Custom Claim 'role' (siehe syncMemberRoleClaim in
+    // functions/index.js, hält den Claim synchron zum role-Feld im Mitgliedsdokument). Fehlt der
+    // Claim (z.B. Account noch nicht synchronisiert), wird sicherheitshalber 'Mitglied' angenommen -
+    // also read-only, nie versehentlich zu viele Rechte.
+    function currentRole() {
+      return request.auth != null
+        ? (('role' in request.auth.token) ? request.auth.token.role : 'Mitglied')
+        : 'Mitglied';
+    }
+
+    function canManageMembers() {
+      return isAdmin() || currentRole() in ['Kassenwart', 'Präsident'];
+    }
+
     // Club-Stammdaten und club-eigene Daten (Mitglieder, Strafen-/Spiele-Katalog, ...).
     // Vorbereitung Multi-Club-Fähigkeit: aktuell gibt es nur einen Club, aber jeder Club-Baum
     // ist strukturell getrennt - die Regel gilt pro Club-Pfad, eine spätere feinere Zuordnung
     // (z.B. "nur Mitglieder dieses Clubs") kann hier ergänzt werden, ohne andere Clubs anzufassen.
+    // ACHTUNG: überlappende match-Blöcke werden bei Firestore-Regeln mit ODER verknüpft
+    // ("Zugriff erlaubt, wenn IRGENDEINE zutreffende Regel es erlaubt" - nicht "die
+    // spezifischste Regel gewinnt"). Deshalb steht die members-Regel als eigener, nicht
+    // überlappender match-Block NEBEN (nicht innerhalb) der allgemeinen Club-Regel unten -
+    // eine pauschale write-Freigabe auf Club-Ebene würde die members-Einschränkung sonst aushebeln.
+
+    // Club-Stammdaten selbst (der Club-Dokument, z.B. Name, PayPal-Name) - unverändert offen.
     match /clubs/{clubId} {
       allow read, write: if request.auth != null;
-      match /{document=**} {
-        allow read, write: if request.auth != null;
-      }
+    }
+
+    // Mitgliederverwaltung (members/{memberId} inkl. _index-Dokument): Lesen bleibt für alle
+    // eingeloggten Nutzer offen (jeder sieht die Mitgliederliste), Schreiben (Anlegen, Ändern,
+    // Löschen) nur für Admin, Kassenwart oder Präsident.
+    match /clubs/{clubId}/members/{memberId} {
+      allow read: if request.auth != null;
+      allow write: if canManageMembers();
+    }
+
+    // Alle übrigen Club-Unterdaten - unverändert offen für jeden eingeloggten Nutzer. Jede
+    // Subcollection wird EINZELN und NICHT über einen rekursiven Wildcard aufgeführt: ein
+    // {document=**}-Wildcard würde (per ODER-Verknüpfung überlappender match-Blöcke, siehe oben)
+    // auch members/** wieder öffnen und die Einschränkung aushebeln. Kommt künftig eine neue
+    // Subcollection hinzu, muss sie hier ergänzt werden (bewusst kein Auto-Einschluss).
+    match /clubs/{clubId}/evenings/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    match /clubs/{clubId}/events/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    match /clubs/{clubId}/rsvps/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    match /clubs/{clubId}/occurrence-edits/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    match /clubs/{clubId}/arrears/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    match /clubs/{clubId}/transactions/{document=**} {
+      allow read, write: if request.auth != null;
     }
   }
 }

@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.50';
+  const APP_VERSION = '1.51';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -675,6 +675,11 @@
     calendarSelectedDate: todayISO(),
     calendarEditingOccurrence: null,
     currentMemberId: null,
+    // Rolle des eingeloggten Nutzers (Custom Claim 'role', siehe canManageMembers()) - wird beim
+    // Login einmal aus dem ID-Token gelesen (siehe bootstrapAuth). Admin-Account zählt gesondert
+    // über ADMIN_EMAIL, nicht über dieses Feld. Default 'Mitglied' = read-only, bis das echte
+    // Token geladen ist (nie versehentlich zu viele Rechte in der kurzen Ladezeit anzeigen).
+    currentUserRole: 'Mitglied',
     currentRecurringId: null,
     currentMemberStats: {},
     eventDetailOrigin: 'calendar',
@@ -2643,6 +2648,16 @@
     return `https://paypal.com/paypalme/${username}/${amount.toFixed(2)}`;
   }
 
+  // Client-seitiges Gegenstück zu canManageMembers() in firestore.rules: steuert, ob die
+  // Mitgliederverwaltung als bearbeitbar oder read-only angezeigt wird. Die eigentliche
+  // Durchsetzung passiert in den Firestore Rules - das hier ist NUR UI (Buttons ausblenden,
+  // Formulare sperren), kein Sicherheitsmechanismus für sich allein.
+  function canManageMembers(){
+    const user = auth.currentUser;
+    if(user && user.email===ADMIN_EMAIL) return true;
+    return state.currentUserRole==='Kassenwart' || state.currentUserRole==='Präsident';
+  }
+
   function getCurrentMemberName(){
     const user = auth.currentUser;
     if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
@@ -2740,11 +2755,15 @@
   function viewMemberDetail(){
     const member = state.members.find(m=>m.id===state.currentMemberId);
     const isEdit = !!member;
+    // Read-Only für Nutzer ohne Verwaltungsrechte (siehe canManageMembers()): Formularfelder
+    // werden nur angezeigt, nicht bearbeitbar - Speichern/Einladen/Verknüpfung-aufheben entfallen.
+    const readOnly = !canManageMembers();
+    const disabledAttr = readOnly ? ' disabled' : '';
 
     let accountSectionHtml = '';
     if(isEdit){
       if(!member.email){
-        accountSectionHtml = `
+        accountSectionHtml = readOnly ? '' : `
           <div class="card">
             <h2 class="section-title">Account</h2>
             <p class="empty-state">Keine E-Mail hinterlegt – für einen Account-Zugang zuerst eine E-Mail-Adresse eintragen und speichern.</p>
@@ -2756,7 +2775,7 @@
           <div class="card">
             <h2 class="section-title">Account</h2>
             <p class="cal-event-meta">Account verknüpft · ${lastLoginText}</p>
-            <button type="button" class="btn-secondary" id="member-detail-unlink-btn" style="width:100%; margin-top:10px;">Verknüpfung aufheben</button>
+            ${readOnly ? '' : `<button type="button" class="btn-secondary" id="member-detail-unlink-btn" style="width:100%; margin-top:10px;">Verknüpfung aufheben</button>`}
           </div>
         `;
       }else{
@@ -2764,7 +2783,7 @@
           <div class="card">
             <h2 class="section-title">Account</h2>
             <p class="cal-event-meta">Noch kein Account verknüpft.</p>
-            <button type="button" class="btn-primary" id="member-detail-invite-btn" style="width:100%; margin-top:10px;">Einladen</button>
+            ${readOnly ? '' : `<button type="button" class="btn-primary" id="member-detail-invite-btn" style="width:100%; margin-top:10px;">Einladen</button>`}
           </div>
         `;
       }
@@ -2794,22 +2813,23 @@
 
     return `
       <div class="card">
+        ${readOnly ? `<p class="empty-state" style="margin-top:0;">Nur Kassenwart oder Präsident können Mitglieder bearbeiten.</p>` : ''}
         <label for="member-first-name">Vorname</label>
-        <input type="text" id="member-first-name" placeholder="Vorname" value="${isEdit?escapeHtml(member.firstName):''}">
+        <input type="text" id="member-first-name" placeholder="Vorname" value="${isEdit?escapeHtml(member.firstName):''}"${disabledAttr}>
         <label for="member-last-name">Nachname</label>
-        <input type="text" id="member-last-name" placeholder="Nachname" value="${isEdit?escapeHtml(member.lastName):''}">
+        <input type="text" id="member-last-name" placeholder="Nachname" value="${isEdit?escapeHtml(member.lastName):''}"${disabledAttr}>
         <label for="member-nickname">Spitzname (optional)</label>
-        <input type="text" id="member-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt" value="${isEdit?escapeHtml(member.nickname||''):''}">
+        <input type="text" id="member-nickname" placeholder="Wird auf dem Sitzplan statt des Vornamens angezeigt" value="${isEdit?escapeHtml(member.nickname||''):''}"${disabledAttr}>
         <label for="member-email">E-Mail (optional)</label>
-        <input type="email" id="member-email" placeholder="name@beispiel.de" value="${isEdit?escapeHtml(member.email||''):''}">
+        <input type="email" id="member-email" placeholder="name@beispiel.de" value="${isEdit?escapeHtml(member.email||''):''}"${disabledAttr}>
         <label for="member-birthday">Geburtstag (optional)</label>
-        <input type="date" id="member-birthday" value="${isEdit?(member.birthday||''):''}">
+        <input type="date" id="member-birthday" value="${isEdit?(member.birthday||''):''}"${disabledAttr}>
         <label for="member-role">Rolle</label>
-        <select id="member-role">
+        <select id="member-role"${disabledAttr}>
           ${['Präsident','Kassenwart','Mitglied'].map(r=>`<option value="${r}" ${((isEdit?(member.role||'Mitglied'):'Mitglied')===r)?'selected':''}>${r}</option>`).join('')}
         </select>
         <p class="form-error" id="member-detail-error"></p>
-        <button type="button" class="btn-primary" id="save-member-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-member-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
       ${accountSectionHtml}
       ${statsSectionHtml}
@@ -3942,7 +3962,9 @@
     ` : '';
 
     const settingsAddBtnConfig = {
-      settings: { id: 'header-add-member-btn', label: 'Mitglied hinzufügen' },
+      // Nur Admin/Kassenwart/Präsident dürfen neue Mitglieder anlegen (siehe canManageMembers()) -
+      // für alle anderen wird der Button gar nicht erst gerendert, statt ihn nur zu deaktivieren.
+      settings: canManageMembers() ? { id: 'header-add-member-btn', label: 'Mitglied hinzufügen' } : null,
       finesManagement: { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' },
       gamesManagement: { id: 'header-add-game-btn', label: 'Spiel hinzufügen' },
       finance: { id: 'header-add-transaction-btn', label: 'Umsatz hinzufügen' },
@@ -4061,7 +4083,7 @@
       </div>
     ` : '';
 
-    const memberOverflowHtml = (state.view==='memberDetail' && state.currentMemberId) ? `
+    const memberOverflowHtml = (state.view==='memberDetail' && state.currentMemberId && canManageMembers()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-member-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -6529,6 +6551,13 @@
         if(!clubId) return; // renderNoClubAccessScreen() wurde bereits von resolveActiveClub gezeigt
         CURRENT_CLUB_ID = clubId;
         try{ CURRENT_CLUB_DATA = await getClub(); }catch(e){ CURRENT_CLUB_DATA = null; /* Fallback-Name wird verwendet */ }
+        // Rollen-Claim laden (siehe canManageMembers()) - steuert nur die UI-Anzeige, die
+        // eigentliche Durchsetzung übernehmen die Firestore Rules unabhängig davon. Ein gecachtes
+        // Token kann bis zu 1h alt sein; das ist für Rollenwechsel in einem Kegelclub unkritisch.
+        try{
+          const tokenResult = await user.getIdTokenResult();
+          state.currentUserRole = (tokenResult.claims && tokenResult.claims.role) || 'Mitglied';
+        }catch(e){ state.currentUserRole = 'Mitglied'; }
         applyClubBranding();
         init();
       }else{
