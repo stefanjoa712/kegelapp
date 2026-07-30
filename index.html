@@ -413,7 +413,6 @@
   .bulk-member-amount{flex:0 0 50%; width:50% !important; max-width:50%; margin:0 !important; box-sizing:border-box;}
   .bulk-quick-select-row{display:flex; gap:8px; margin-bottom:10px;}
   .bulk-quick-btn{flex:1; padding:8px 10px !important; font-size:13px !important;}
-  .schriftfuehrer-row{border-bottom:none; margin-top:10px;}
   .member-check-row:last-child{border-bottom:none;}
   .member-check-row input[type="checkbox"]{width:18px; height:18px; accent-color:var(--felt); flex-shrink:0;}
 
@@ -630,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.60';
+  const APP_VERSION = '1.61';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2972,10 +2971,6 @@
         <h2 class="section-title">Neuer Kegelabend</h2>
         <label for="date-input">Datum</label>
         <input type="date" id="date-input" value="${today}">
-        <label class="member-check-row schriftfuehrer-row">
-          <input type="checkbox" id="schriftfuehrer-checkbox" checked>
-          <span>Schriftführer auslosen</span>
-        </label>
       </div>
       <div class="card">
         <h3 class="section-title-small">Anwesende Mitglieder</h3>
@@ -2988,6 +2983,13 @@
           <input type="text" id="guest-name-input" placeholder="Name des Gasts">
           <button type="button" class="btn-icon-add" id="add-guest-btn" aria-label="Gast hinzufügen">+</button>
         </div>
+      </div>
+      <div class="card">
+        <h3 class="section-title-small">Schriftführer</h3>
+        <select id="schriftfuehrer-select">
+          <option value="standard">Standardplatz</option>
+          <option value="draw">Auslosen</option>
+        </select>
       </div>
       <div class="card" style="text-align:center;">
         <div class="seat-counter" id="seat-counter">0 / 12 Plätze belegt</div>
@@ -4838,6 +4840,30 @@
     if(btn) btn.disabled = (total<1 || total>12);
     const err = document.getElementById('form-error');
     if(err) err.textContent = '';
+    updateSchriftfuehrerOptions();
+  }
+
+  // Befüllt das Schriftführer-Dropdown mit den Namen der aktuell angehakten (anwesenden)
+  // Mitglieder - läuft bei jeder Checkbox-Änderung neu, damit die Liste stets aktuell ist.
+  // Eine bereits gewählte Person bleibt ausgewählt, solange sie weiterhin angehakt ist; wird sie
+  // abgehakt, fällt die Auswahl zurück auf "Standardplatz" statt auf einen ungültigen Namen zu zeigen.
+  function updateSchriftfuehrerOptions(){
+    const select = document.getElementById('schriftfuehrer-select');
+    if(!select) return;
+    const previousValue = select.value;
+    const checkedIds = Array.from(document.querySelectorAll('.member-checkbox:checked')).map(cb=>cb.dataset.id);
+    const presentMembers = state.members
+      .filter(m=>checkedIds.includes(m.id))
+      .slice()
+      .sort((a,b)=> displayName(a).localeCompare(displayName(b),'de'));
+    const nameOptionsHtml = presentMembers.map(m=>`<option value="name:${m.id}">${escapeHtml(displayName(m))}</option>`).join('');
+    select.innerHTML = `
+      <option value="standard">Standardplatz</option>
+      <option value="draw">Auslosen</option>
+      ${nameOptionsHtml}
+    `;
+    const stillValid = Array.from(select.options).some(o=>o.value===previousValue);
+    select.value = stillValid ? previousValue : 'standard';
   }
 
   function addGuest(){
@@ -5858,11 +5884,15 @@
     state.finesCatalog = finesCatalogAtCreation;
 
     const occupiedSeatIds = buildSeatPriorityOrder().slice(0, participants.length);
-    const schriftfuehrerCheckbox = document.getElementById('schriftfuehrer-checkbox');
-    const drawSchriftfuehrer = !!(schriftfuehrerCheckbox && schriftfuehrerCheckbox.checked);
+    const schriftfuehrerSelect = document.getElementById('schriftfuehrer-select');
+    const schriftfuehrerChoice = schriftfuehrerSelect ? schriftfuehrerSelect.value : 'standard';
+    const isStandardplatz = schriftfuehrerChoice === 'standard';
+    // Bei "Standardplatz" landet zwingend ein Mitglied (kein Gast) auf K1 und wird automatisch
+    // Schriftführer - bei "Auslosen" und einer konkreten Namenswahl bleibt die Sitzverlosung
+    // hingegen komplett normal/zufällig, der Schriftführer wird erst danach bestimmt.
 
     let shuffledParticipants;
-    if(!drawSchriftfuehrer && occupiedSeatIds.includes('kneipe-1')){
+    if(isStandardplatz && occupiedSeatIds.includes('kneipe-1')){
       // K1 wird automatisch Schriftführer - dort darf deshalb kein Gast landen.
       const members = participants.filter(p=>!p.isGuest);
       if(members.length>0){
@@ -5883,13 +5913,22 @@
     occupiedSeatIds.forEach((seatId, i)=>{ seatAssignment[seatId] = shuffledParticipants[i]; });
 
     let schriftfuehrerSeatId = null;
-    if(drawSchriftfuehrer){
+    if(isStandardplatz){
+      if(seatAssignment['kneipe-1'] && !seatAssignment['kneipe-1'].isGuest) schriftfuehrerSeatId = 'kneipe-1';
+    }else if(schriftfuehrerChoice==='draw'){
       const memberSeatIds = occupiedSeatIds.filter((seatId, i)=> !shuffledParticipants[i].isGuest);
       if(memberSeatIds.length>0){
         schriftfuehrerSeatId = memberSeatIds[Math.floor(Math.random()*memberSeatIds.length)];
       }
-    }else if(seatAssignment['kneipe-1'] && !seatAssignment['kneipe-1'].isGuest){
-      schriftfuehrerSeatId = 'kneipe-1';
+    }else if(schriftfuehrerChoice.startsWith('name:')){
+      // Konkrete Person gewählt: bleibt auf ihrem zufällig verlosten Platz, wird dort nur markiert.
+      const chosenMemberId = schriftfuehrerChoice.slice('name:'.length);
+      const chosenMember = state.members.find(m=>m.id===chosenMemberId);
+      if(chosenMember){
+        const chosenName = displayName(chosenMember);
+        const foundSeatId = occupiedSeatIds.find((seatId, i)=> !shuffledParticipants[i].isGuest && shuffledParticipants[i].name===chosenName);
+        if(foundSeatId) schriftfuehrerSeatId = foundSeatId;
+      }
     }
 
     const seating = SEATS.map(seat=>{
