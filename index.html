@@ -360,7 +360,6 @@
     border-radius:8px; background:#fff; color:var(--ink); width:100%;
     -webkit-appearance:none; appearance:none; box-sizing:border-box; margin:0 0 12px;
   }
-  #new-fine-name{margin-bottom:12px;}
 
   .form-error{color:var(--wine); font-size:13px; min-height:18px; margin:6px 0;}
 
@@ -369,6 +368,8 @@
   .member-row-full-main{flex:1; min-width:0;}
   .member-row-clickable{cursor:pointer;}
   .member-row-clickable:active{background:var(--bg);}
+  .row-clickable{cursor:pointer;}
+  .row-clickable:active{background:var(--bg);}
   .member-row-full:last-child{border-bottom:none;}
   .club-selection-row:active{background:var(--bg);}
   .member-row-full .member-row{border-bottom:none; padding:0 0 4px;}
@@ -629,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.54';
+  const APP_VERSION = '1.56';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -681,6 +682,7 @@
     // Token geladen ist (nie versehentlich zu viele Rechte in der kurzen Ladezeit anzeigen).
     currentUserRole: 'Mitglied',
     currentRecurringId: null,
+    currentFineId: null,
     currentMemberStats: {},
     eventDetailOrigin: 'calendar',
     currentEveningDetail:null,
@@ -1406,6 +1408,12 @@
     render();
   }
 
+  function goToFineDetail(fine){
+    state.currentFineId = fine ? fine.id : null;
+    state.view = 'fineDetail';
+    render();
+  }
+
   function goToSettingsMenu(){
     state.view = 'settingsMenu';
     render();
@@ -1542,6 +1550,7 @@
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
     else if(state.view==='memberDetail') goToSettings();
+    else if(state.view==='fineDetail') goToFinesManagement();
     else if(state.view==='recurringDetail') goToFinanceManagement();
     else if(state.view==='eventDetail') goBackFromEventDetail();
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
@@ -1689,7 +1698,7 @@
     return '';
   }
   function fineRowHtml(fine){
-    return `<div class="member-row draggable-row" data-id="${fine.id}">
+    return `<div class="member-row draggable-row row-clickable" data-id="${fine.id}">
       <span class="fine-row-info">
         <span class="drag-handle" aria-label="Verschieben">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
@@ -1699,8 +1708,7 @@
       </span>
       <span class="row-actions">
         <span class="fine-row-amount">${fmtEuro(fine.amount)}</span>
-        <button type="button" class="icon-btn edit-fine-btn" data-id="${fine.id}" aria-label="Bearbeiten">✎</button>
-        <button type="button" class="icon-btn delete-fine-btn" data-id="${fine.id}" aria-label="Löschen">✕</button>
+        <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </span>
     </div>`;
   }
@@ -1714,6 +1722,35 @@
           <h2 class="section-title">Strafen <span class="member-count">(${state.finesCatalog.length})</span></h2>
         </div>
         <div id="fines-list-container">${listHtml}</div>
+      </div>
+    `;
+  }
+
+  function viewFineDetail(){
+    const fine = state.finesCatalog.find(f=>f.id===state.currentFineId);
+    const isEdit = !!fine;
+    // Read-Only für Nutzer ohne Verwaltungsrechte (siehe canManageMembers()) - dieselbe
+    // Berechtigung wie Mitglieder- und Clubverwaltung.
+    const readOnly = !canManageMembers();
+    const disabledAttr = readOnly ? ' disabled' : '';
+    return `
+      <div class="card">
+        ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Präsident können Strafen bearbeiten.</p>` : ''}
+        <label for="fine-detail-name">Name</label>
+        <input type="text" id="fine-detail-name" placeholder="z. B. Handy klingelt" value="${isEdit?escapeHtml(fine.name):''}"${disabledAttr}>
+        <div id="fine-detail-amount-wrap">
+          <label for="fine-detail-amount">Betrag (€)</label>
+          <input type="number" id="fine-detail-amount" min="0" step="0.01" placeholder="0,50" value="${(isEdit && fine.type!=='runde')?fine.amount.toFixed(2):''}"${disabledAttr}>
+        </div>
+        <label for="fine-detail-type">Strafenart</label>
+        <select id="fine-detail-type"${disabledAttr}>
+          <option value="multiplier"${(!isEdit || fine.type==='multiplier')?' selected':''}>Multiplikator</option>
+          <option value="fremdstrafe"${(isEdit && fine.type==='fremdstrafe')?' selected':''}>Fremdstrafe</option>
+          <option value="pudel"${(isEdit && fine.type==='pudel')?' selected':''}>Pudel</option>
+          <option value="runde"${(isEdit && fine.type==='runde')?' selected':''}>Runde</option>
+        </select>
+        <p class="form-error" id="fine-detail-error"></p>
+        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-fine-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
     `;
   }
@@ -2273,7 +2310,7 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement';
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='fineDetail' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement';
     const isFinanceActive = state.view==='finance' || state.view==='arrearsDetail';
     const isCalendarActive = state.view==='calendar' || state.view==='eventDetail';
     const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isCalendarActive ? 'calendar' : (isTodayActive ? 'today' : 'overview')));
@@ -2340,6 +2377,7 @@
     if(state.view==='transactionDetail') return 'transactionDetail:'+(state.currentTransactionId||'new');
     if(state.view==='memberDetail') return 'memberDetail:'+(state.currentMemberId||'new');
     if(state.view==='recurringDetail') return 'recurringDetail:'+(state.currentRecurringId||'new');
+    if(state.view==='fineDetail') return 'fineDetail:'+(state.currentFineId||'new');
     if(state.view==='eventDetail') return 'eventDetail:'+(state.calendarEditingOccurrence ? state.calendarEditingOccurrence.seriesId+':'+state.calendarEditingOccurrence.occurrenceDate : 'new');
     return state.view;
   }
@@ -2359,6 +2397,7 @@
     if(sig.startsWith('transactionDetail:')) return '#umsatz';
     if(sig.startsWith('memberDetail:')) return '#mitglied';
     if(sig.startsWith('recurringDetail:')) return '#buchung';
+    if(sig.startsWith('fineDetail:')) return '#strafe';
     if(sig.startsWith('eventDetail:')) return '#termin';
     if(sig.startsWith('detail:')) return '#abend-'+sig.slice(7);
     return '#uebersicht';
@@ -2374,6 +2413,7 @@
     else if(state.view==='settings') body = viewSettings();
     else if(state.view==='memberDetail') body = viewMemberDetail();
     else if(state.view==='finesManagement') body = viewFinesManagement();
+    else if(state.view==='fineDetail') body = viewFineDetail();
     else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='recurringDetail') body = viewRecurringDetail();
@@ -2400,7 +2440,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-fine-overflow-menu','header-fine-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -2537,6 +2577,14 @@
         }
         state.currentRecurringId = recId==='new' ? null : recId;
         state.view = 'recurringDetail';
+        render();
+      }else if(sig.startsWith('fineDetail:')){
+        const fineId = sig.slice('fineDetail:'.length);
+        if(state.finesCatalog.length===0){
+          try{ state.finesCatalog = await getClubJSONOrThrow('fines-catalog', []); }catch(e){}
+        }
+        state.currentFineId = fineId==='new' ? null : fineId;
+        state.view = 'fineDetail';
         render();
       }else if(sig.startsWith('eventDetail:')){
         const rest = sig.slice('eventDetail:'.length);
@@ -3922,6 +3970,7 @@
     else if(state.view==='settings') title = 'Mitgliederverwaltung';
     else if(state.view==='memberDetail') title = state.currentMemberId ? 'Mitglied bearbeiten' : 'Neues Mitglied';
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
+    else if(state.view==='fineDetail') title = state.currentFineId ? 'Strafe bearbeiten' : 'Strafe hinzufügen';
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='recurringDetail') title = state.currentRecurringId ? 'Buchung bearbeiten' : 'Monatliche Buchung hinzufügen';
@@ -3970,7 +4019,7 @@
       // Nur Admin/Kassenwart/Präsident dürfen neue Mitglieder anlegen (siehe canManageMembers()) -
       // für alle anderen wird der Button gar nicht erst gerendert, statt ihn nur zu deaktivieren.
       settings: canManageMembers() ? { id: 'header-add-member-btn', label: 'Mitglied hinzufügen' } : null,
-      finesManagement: { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' },
+      finesManagement: canManageMembers() ? { id: 'header-add-fine-catalog-btn', label: 'Strafe hinzufügen' } : null,
       gamesManagement: { id: 'header-add-game-btn', label: 'Spiel hinzufügen' },
       finance: { id: 'header-add-transaction-btn', label: 'Umsatz hinzufügen' },
       calendar: { id: 'header-add-event-btn', label: 'Termin hinzufügen' },
@@ -4121,6 +4170,17 @@
       </div>
     ` : '';
 
+    const fineOverflowHtml = (state.view==='fineDetail' && state.currentFineId && canManageMembers()) ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-fine-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-fine-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-fine-btn">Strafe löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const tabsHtml = state.view==='detail' ? `
       <div class="tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
@@ -4137,7 +4197,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${calOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${fineOverflowHtml}${calOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -4197,6 +4257,7 @@
     else if(state.view==='settings') attachSettingsListeners();
     else if(state.view==='memberDetail') attachMemberDetailListeners();
     else if(state.view==='finesManagement') attachFinesManagementListeners();
+    else if(state.view==='fineDetail') attachFineDetailListeners();
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
     else if(state.view==='recurringDetail') attachRecurringDetailListeners();
@@ -4458,26 +4519,81 @@
   }
 
   function attachFinesManagementListeners(){
-    document.querySelectorAll('.edit-fine-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const f = state.finesCatalog.find(x=>x.id===b.dataset.id);
-        if(f) showFineFormModal(f);
-      });
-    });
-    document.querySelectorAll('.delete-fine-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const f = state.finesCatalog.find(x=>x.id===b.dataset.id);
-        if(f) showDeleteFineModal(f);
+    document.querySelectorAll('#fines-list-container .row-clickable[data-id]').forEach(row=>{
+      row.addEventListener('click', (e)=>{
+        // Klicks auf den Drag-Handle sollen nur sortieren, nicht zusätzlich navigieren.
+        if(e.target.closest('.drag-handle')) return;
+        const f = state.finesCatalog.find(x=>x.id===row.dataset.id);
+        if(f) goToFineDetail(f);
       });
     });
     const openAddFineBtn = document.getElementById('header-add-fine-catalog-btn');
-    if(openAddFineBtn) openAddFineBtn.addEventListener('click', ()=>showFineFormModal());
+    if(openAddFineBtn) openAddFineBtn.addEventListener('click', ()=>goToFineDetail(null));
     setupDragReorder('fines-list-container', async (newIdOrder)=>{
       const byId = {};
       state.finesCatalog.forEach(f=>{ byId[f.id]=f; });
       state.finesCatalog = newIdOrder.map(id=>byId[id]).filter(Boolean);
       await setClubJSON('fines-catalog', state.finesCatalog);
     });
+  }
+
+  function attachFineDetailListeners(){
+    const fine = state.finesCatalog.find(f=>f.id===state.currentFineId);
+    const isEdit = !!fine;
+
+    const overflowBtn = document.getElementById('header-fine-overflow-btn');
+    const overflowMenu = document.getElementById('header-fine-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
+    }
+
+    const typeEl = document.getElementById('fine-detail-type');
+    const amountWrap = document.getElementById('fine-detail-amount-wrap');
+    function toggleAmountField(){
+      amountWrap.style.display = typeEl.value==='runde' ? 'none' : '';
+    }
+    if(typeEl){
+      typeEl.addEventListener('change', toggleAmountField);
+      toggleAmountField();
+    }
+
+    const saveBtn = document.getElementById('save-fine-detail-btn');
+    if(saveBtn){
+      saveBtn.addEventListener('click', async ()=>{
+        const name = document.getElementById('fine-detail-name').value.trim();
+        const type = document.getElementById('fine-detail-type').value;
+        const errEl = document.getElementById('fine-detail-error');
+        if(!name){ if(errEl) errEl.textContent='Bitte einen Namen angeben.'; return; }
+        let amount = 0;
+        if(type!=='runde'){
+          const amountRaw = document.getElementById('fine-detail-amount').value.replace(',', '.');
+          amount = parseFloat(amountRaw);
+          if(isNaN(amount) || amount<0){ if(errEl) errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
+        }
+        saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+        const rounded = type==='runde' ? 0 : Math.round(amount*100)/100;
+        if(isEdit){
+          const f = state.finesCatalog.find(x=>x.id===fine.id);
+          if(f){ f.name=name; f.amount=rounded; f.type=type; }
+        }else{
+          state.finesCatalog.push({id:uid('f'), name, amount:rounded, type});
+        }
+        await setClubJSON('fines-catalog', state.finesCatalog);
+        goToFinesManagement();
+      });
+    }
+
+    const deleteBtn = document.getElementById('header-delete-fine-btn');
+    if(deleteBtn){
+      deleteBtn.addEventListener('click', ()=>{
+        const menu = document.getElementById('header-fine-overflow-menu');
+        if(menu) menu.hidden = true;
+        if(fine) showDeleteFineModal(fine);
+      });
+    }
   }
 
   function attachGamesManagementListeners(){
@@ -4862,65 +4978,7 @@
       state.finesCatalog = state.finesCatalog.filter(f=>f.id!==fine.id);
       await setClubJSON('fines-catalog', state.finesCatalog);
       closeGenericModal();
-      render();
-    });
-  }
-
-  function showFineFormModal(existingFine){
-    const isEdit = !!existingFine;
-    showModal(`
-      <h3>${isEdit ? 'Strafe bearbeiten' : 'Strafe hinzufügen'}</h3>
-      <label for="new-fine-name">Name</label>
-      <input type="text" id="new-fine-name" placeholder="z. B. Handy klingelt" value="${isEdit?escapeHtml(existingFine.name):''}">
-      <div id="new-fine-amount-wrap">
-        <label for="new-fine-amount">Betrag (€)</label>
-        <input type="number" id="new-fine-amount" min="0" step="0.01" placeholder="0,50" value="${(isEdit && existingFine.type!=='runde')?existingFine.amount.toFixed(2):''}">
-      </div>
-      <label for="new-fine-type">Strafenart</label>
-      <select id="new-fine-type">
-        <option value="multiplier"${(!isEdit || existingFine.type==='multiplier')?' selected':''}>Multiplikator</option>
-        <option value="fremdstrafe"${(isEdit && existingFine.type==='fremdstrafe')?' selected':''}>Fremdstrafe</option>
-        <option value="pudel"${(isEdit && existingFine.type==='pudel')?' selected':''}>Pudel</option>
-        <option value="runde"${(isEdit && existingFine.type==='runde')?' selected':''}>Runde</option>
-      </select>
-      <p class="form-error" id="fine-form-error"></p>
-      <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="add-fine-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
-        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
-      </div>
-    `);
-    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    document.getElementById('new-fine-name').focus();
-    const typeEl = document.getElementById('new-fine-type');
-    const amountWrap = document.getElementById('new-fine-amount-wrap');
-    function toggleAmountField(){
-      amountWrap.style.display = typeEl.value==='runde' ? 'none' : '';
-    }
-    typeEl.addEventListener('change', toggleAmountField);
-    toggleAmountField();
-    document.getElementById('add-fine-btn').addEventListener('click', async ()=>{
-      const name = document.getElementById('new-fine-name').value.trim();
-      const type = document.getElementById('new-fine-type').value;
-      const errEl = document.getElementById('fine-form-error');
-      if(!name){ if(errEl) errEl.textContent='Bitte einen Namen angeben.'; return; }
-      let amount = 0;
-      if(type!=='runde'){
-        const amountRaw = document.getElementById('new-fine-amount').value.replace(',', '.');
-        amount = parseFloat(amountRaw);
-        if(isNaN(amount) || amount<0){ if(errEl) errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
-      }
-      const submitBtn = document.getElementById('add-fine-btn');
-      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
-      const rounded = type==='runde' ? 0 : Math.round(amount*100)/100;
-      if(isEdit){
-        const f = state.finesCatalog.find(x=>x.id===existingFine.id);
-        if(f){ f.name=name; f.amount=rounded; f.type=type; }
-      }else{
-        state.finesCatalog.push({id:uid('f'), name, amount:rounded, type});
-      }
-      await setClubJSON('fines-catalog', state.finesCatalog);
-      closeGenericModal();
-      render();
+      goToFinesManagement();
     });
   }
 

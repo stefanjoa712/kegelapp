@@ -79,10 +79,20 @@ service cloud.firestore {
     // 'data'-Subcollection (clubs/{clubId}/data/{key}): generischer Key-Value-Speicher für
     // Strafen-/Spielekatalog, Finanzkonten, wiederkehrende Buchungen, Sparziele,
     // Anwesenheitsstatistik, Kalender-Feed-Token und den Abende-Index (siehe clubDocRef() in
-    // index.html). Wurde beim ursprünglichen Umbau übersehen, was zu Verbindungsfehlern in der
-    // Spiele-/Strafenverwaltung, Finanzübersicht u.a. führte - hier nachgetragen.
-    match /clubs/{clubId}/data/{document=**} {
-      allow read, write: if request.auth != null;
+    // index.html). Alle Keys liegen in derselben Subcollection, daher wird hier auf Dokument-ID-
+    // Ebene unterschieden statt auf Subcollection-Ebene: 'fines-catalog' (Strafenkatalog) ist
+    // schreibgeschützt wie die Mitglieder-/Clubverwaltung, alle übrigen Keys bleiben unverändert
+    // offen für jeden eingeloggten Nutzer.
+    // ACHTUNG (wie oben bei members): der generische {document=**}-Wildcard würde den Pfad
+    // data/fines-catalog per ODER-Verknüpfung wieder mit öffnen und die Einschränkung aushebeln -
+    // deshalb wird 'fines-catalog' hier explizit per string-Vergleich ausgenommen, statt den
+    // Wildcard einfach daneben zu stellen.
+    match /clubs/{clubId}/data/fines-catalog {
+      allow read: if request.auth != null;
+      allow write: if canManageMembers();
+    }
+    match /clubs/{clubId}/data/{key} {
+      allow read, write: if request.auth != null && key != 'fines-catalog';
     }
   }
 }
