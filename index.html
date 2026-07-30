@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.51';
+  const APP_VERSION = '1.52';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2813,7 +2813,6 @@
 
     return `
       <div class="card">
-        ${readOnly ? `<p class="empty-state" style="margin-top:0;">Nur Kassenwart oder Präsident können Mitglieder bearbeiten.</p>` : ''}
         <label for="member-first-name">Vorname</label>
         <input type="text" id="member-first-name" placeholder="Vorname" value="${isEdit?escapeHtml(member.firstName):''}"${disabledAttr}>
         <label for="member-last-name">Nachname</label>
@@ -2828,6 +2827,7 @@
         <select id="member-role"${disabledAttr}>
           ${['Präsident','Kassenwart','Mitglied'].map(r=>`<option value="${r}" ${((isEdit?(member.role||'Mitglied'):'Mitglied')===r)?'selected':''}>${r}</option>`).join('')}
         </select>
+        ${readOnly ? `<p class="hint" style="margin-top:-6px;">Nur Kassenwart oder Präsident können Mitglieder bearbeiten.</p>` : ''}
         <p class="form-error" id="member-detail-error"></p>
         ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-member-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
