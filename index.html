@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.64';
+  const APP_VERSION = '1.65';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3972,6 +3972,9 @@
     // bereits geschlossener Abend für ALLE gesperrt bleibt, während ein offener Abend nur für
     // Kassenwart/Admin/den benannten Schriftführer bearbeitbar ist.
     const canEditThisEvening = !isClosed && canEditEvening(state.currentEveningDetail);
+    // Der Overflow-Button selbst soll nur erscheinen, wenn mindestens einer seiner Menüpunkte
+    // tatsächlich sichtbar wäre - sonst öffnet er nur ein leeres Menü.
+    const hasEveningOverflowItems = canEditThisEvening || canManageFinances();
     const detailHeaderExtrasHtml = state.view==='detail' ? `
       ${canEditThisEvening ? `
       <button type="button" class="header-circle-btn" id="header-bulk-add-btn" aria-label="Strafe hinzufügen">
@@ -3980,6 +3983,7 @@
           <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
       </button>` : ''}
+      ${hasEveningOverflowItems ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -3993,6 +3997,7 @@
           ${canManageFinances() ? `<button type="button" class="header-overflow-item" id="header-overflow-delete-btn">Kegelabend löschen</button>` : ''}
         </div>
       </div>
+      ` : ''}
     ` : '';
 
     const settingsAddBtnConfig = {
