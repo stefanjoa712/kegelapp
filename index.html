@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.63';
+  const APP_VERSION = '1.64';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2747,6 +2747,19 @@
     return member ? displayName(member) : null;
   }
 
+  // Bearbeitungsrecht für einen KONKRETEN Kegelabend: Kassenwart/Admin dürfen immer, außerdem
+  // die Person, die für DIESEN Abend als Schriftführer benannt wurde (kann sich von Abend zu
+  // Abend unterscheiden, siehe Schriftführer-Dropdown beim Anlegen). Alle anderen Mitglieder
+  // sehen den Abend nur read-only - unabhängig davon greift für bereits abgeschlossene Abende
+  // weiterhin die bestehende detail.closed-Sperre für alle (auch Kassenwart/Schriftführer).
+  function canEditEvening(detail){
+    if(canManageFinances()) return true;
+    if(!detail) return false;
+    const myName = getCurrentMemberName();
+    if(!myName) return false;
+    return detail.seating.some(s=> s.isSchriftfuehrer && s.name===myName);
+  }
+
   function buildOwnArrearsCardHtml(){
     const user = auth.currentUser;
     if(!user || !user.email || user.email===ADMIN_EMAIL) return '';
@@ -3178,7 +3191,10 @@
     const detail = state.currentEveningDetail;
     const seatId = state.currentFineSeatId;
     const seat = detail.seating.find(s=>s.seatId===seatId);
-    const closed = !!detail.closed;
+    // "closed" steuert hier ob Bearbeitungs-Controls (+/-, Geldstrafe hinzufügen) angezeigt
+    // werden - für Nutzer ohne Bearbeitungsrecht (siehe canEditEvening()) wirkt der Abend also
+    // wie geschlossen, auch wenn er es formal nicht ist.
+    const closed = !!detail.closed || !canEditEvening(detail);
     const invalid = !!(seat && seat.invalid);
 
     if(invalid){
@@ -3952,20 +3968,24 @@
     else if(state.view==='personFineDetail') title = `Strafen von ${state.currentFineName || ''}`;
 
     const isClosed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
+    // Bearbeitungsrecht für DIESEN Abend (siehe canEditEvening()) - separat von isClosed, da ein
+    // bereits geschlossener Abend für ALLE gesperrt bleibt, während ein offener Abend nur für
+    // Kassenwart/Admin/den benannten Schriftführer bearbeitbar ist.
+    const canEditThisEvening = !isClosed && canEditEvening(state.currentEveningDetail);
     const detailHeaderExtrasHtml = state.view==='detail' ? `
-      ${isClosed ? '' : `
+      ${canEditThisEvening ? `
       <button type="button" class="header-circle-btn" id="header-bulk-add-btn" aria-label="Strafe hinzufügen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"/>
           <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
-      </button>`}
+      </button>` : ''}
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
         </button>
         <div class="header-overflow-menu" id="header-overflow-menu" hidden>
-          ${isClosed ? '' : `<button type="button" class="header-overflow-item neutral" id="header-add-attendee-btn">Mitglied/Gast hinzufügen</button>`}
+          ${canEditThisEvening ? `<button type="button" class="header-overflow-item neutral" id="header-add-attendee-btn">Mitglied/Gast hinzufügen</button>` : ''}
           ${canManageFinances() ? (isClosed
             ? `<button type="button" class="header-overflow-item neutral" id="header-overflow-reopen-btn">Kegelabend wieder öffnen</button>`
             : `<button type="button" class="header-overflow-item neutral" id="header-overflow-close-btn">Kegelabend abschließen</button>`
@@ -4021,8 +4041,12 @@
     const personWasAddedLater = !!(currentPersonSeat && currentPersonSeat.addedLater);
     const personIsGuest = !!(currentPersonSeat && currentPersonSeat.isGuest);
 
+    // Für diese Detailseite gilt dieselbe Bearbeitungsrecht-Logik wie oben (canEditThisEvening) -
+    // "isClosed" allein reicht hier nicht mehr aus, da ein offener Abend jetzt zusätzlich an die
+    // Rolle/den Schriftführer geknüpft ist.
+    const canEditThisPersonsEvening = !isClosed && canEditEvening(state.currentEveningDetail);
     const addFineBtnHtml = (state.view==='personFineDetail') ? `
-      ${(personIsInvalid || isClosed) ? '' : `
+      ${(personIsInvalid || !canEditThisPersonsEvening) ? '' : `
       <button type="button" class="header-circle-btn" id="header-add-fine-btn" aria-label="Geldstrafe hinzufügen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"/>
@@ -4036,7 +4060,7 @@
           <line x1="8.6" y1="10.6" x2="15.4" y2="6.4"/><line x1="8.6" y1="13.4" x2="15.4" y2="17.6"/>
         </svg>
       </button>` : ''}
-      ${!isClosed ? `
+      ${canEditThisPersonsEvening ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-person-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -4184,10 +4208,11 @@
       `;
     }
     if(state.eveningTab==='notizen'){
+      const notesReadOnly = detail.closed || !canEditEvening(detail);
       return `
         <div class="card">
           <h2 class="section-title">Notizen</h2>
-          <textarea id="evening-notes-textarea" class="notes-textarea${detail.closed?' notes-readonly':''}" placeholder="Notizen zum Kegelabend…"${detail.closed?' readonly':''}>${escapeHtml(detail.notes||'')}</textarea>
+          <textarea id="evening-notes-textarea" class="notes-textarea${notesReadOnly?' notes-readonly':''}" placeholder="Notizen zum Kegelabend…"${notesReadOnly?' readonly':''}>${escapeHtml(detail.notes||'')}</textarea>
         </div>
         ${buildDeleteModal(detail)}
       `;
@@ -6081,7 +6106,7 @@
   }
 
   function attachPersonFineDetailListeners(){
-    const closed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
+    const closed = !!(state.currentEveningDetail && state.currentEveningDetail.closed) || !canEditEvening(state.currentEveningDetail);
     if(!closed){
       document.querySelectorAll('.fine-detail-row:not(.fremdstrafe-charge-row)').forEach(row=>{
         row.addEventListener('click', (e)=>{
