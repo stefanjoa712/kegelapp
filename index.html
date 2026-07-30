@@ -630,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.58';
+  const APP_VERSION = '1.59';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1760,8 +1760,8 @@
           <option value="pudel"${(isEdit && fine.type==='pudel')?' selected':''}>Pudel</option>
           <option value="runde"${(isEdit && fine.type==='runde')?' selected':''}>Runde</option>
         </select>
-        <p class="form-error" id="fine-detail-error"></p>
-        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-fine-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
+        ${readOnly ? '' : `<p class="form-error" id="fine-detail-error"></p>
+        <button type="button" class="btn-primary" id="save-fine-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
     `;
   }
@@ -1812,8 +1812,8 @@
           <option value="group"${(!isEdit || game.type==='group')?' selected':''}>Gruppenspiel</option>
           <option value="single"${(isEdit && game.type==='single')?' selected':''}>Einzelspiel</option>
         </select>
-        <p class="form-error" id="game-detail-error"></p>
-        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-game-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
+        ${readOnly ? '' : `<p class="form-error" id="game-detail-error"></p>
+        <button type="button" class="btn-primary" id="save-game-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
     `;
   }
@@ -2925,8 +2925,8 @@
         <select id="member-role"${disabledAttr}>
           ${['Präsident','Kassenwart','Mitglied'].map(r=>`<option value="${r}" ${((isEdit?(member.role||'Mitglied'):'Mitglied')===r)?'selected':''}>${r}</option>`).join('')}
         </select>
-        <p class="form-error" id="member-detail-error"></p>
-        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-member-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
+        ${readOnly ? '' : `<p class="form-error" id="member-detail-error"></p>
+        <button type="button" class="btn-primary" id="save-member-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
       ${accountSectionHtml}
       ${statsSectionHtml}
