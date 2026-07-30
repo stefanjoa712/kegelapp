@@ -21,19 +21,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Prüft, ob sich etwas im functions/-Verzeichnis geändert hat - der Functions-Deploy läuft
+      # nur dann, damit nicht bei jedem reinen Hosting-Push unnötig ein Functions-Deploy mitläuft.
+      - name: Check for functions changes
+        id: functions-changed
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            functions:
+              - 'functions/**'
       - uses: actions/setup-node@v4
+        if: steps.functions-changed.outputs.functions == 'true'
         with:
           node-version: '22'
       - name: Install function dependencies
+        if: steps.functions-changed.outputs.functions == 'true'
         working-directory: functions
         run: npm install
       - name: Authenticate to Google Cloud
         id: auth
+        if: steps.functions-changed.outputs.functions == 'true'
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_FUNCTIONS_SERVICE_ACCOUNT }}'
           create_credentials_file: true
       - name: Deploy Cloud Functions
+        if: steps.functions-changed.outputs.functions == 'true'
         env:
           GOOGLE_APPLICATION_CREDENTIALS: '${{ steps.auth.outputs.credentials_file_path }}'
         run: npx firebase-tools deploy --only functions --project die-pudolfs --non-interactive --force
