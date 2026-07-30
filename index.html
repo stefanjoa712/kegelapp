@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.62';
+  const APP_VERSION = '1.63';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2987,9 +2987,10 @@
       <div class="card">
         <h3 class="section-title-small">Schriftführer</h3>
         <select id="schriftfuehrer-select">
-          <option value="standard">Standardplatz</option>
-          <option disabled>──────────</option>
-          <option value="draw">Auslosen</option>
+          <optgroup label="Zufällig">
+            <option value="standard">Standardplatz</option>
+            <option value="draw">Auslosen</option>
+          </optgroup>
         </select>
       </div>
       <div class="card" style="text-align:center;">
@@ -4858,13 +4859,13 @@
       .slice()
       .sort((a,b)=> displayName(a).localeCompare(displayName(b),'de'));
     const nameOptionsHtml = presentMembers.map(m=>`<option value="name:${m.id}">${escapeHtml(displayName(m))}</option>`).join('');
-    const nameSeparatorHtml = presentMembers.length>0 ? '<option disabled>──────────</option>' : '';
+    const membersGroupHtml = presentMembers.length>0 ? `<optgroup label="Mitglieder">${nameOptionsHtml}</optgroup>` : '';
     select.innerHTML = `
-      <option value="standard">Standardplatz</option>
-      <option disabled>──────────</option>
-      <option value="draw">Auslosen</option>
-      ${nameSeparatorHtml}
-      ${nameOptionsHtml}
+      <optgroup label="Zufällig">
+        <option value="standard">Standardplatz</option>
+        <option value="draw">Auslosen</option>
+      </optgroup>
+      ${membersGroupHtml}
     `;
     const stillValid = Array.from(select.options).some(o=>o.value===previousValue);
     select.value = stillValid ? previousValue : 'standard';
