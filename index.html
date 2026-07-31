@@ -493,6 +493,12 @@
   .adhoc-fine-row:last-child{border-bottom:none;}
   .muted{color:var(--muted); font-size:13px; margin:0;}
 
+  .round-entry-row{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 2px; border-bottom:1px dashed var(--line);}
+  .round-entry-row:last-child{border-bottom:none;}
+  .round-entry-row.given{color:var(--muted);}
+  .round-entry-name{flex:1; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .round-mark-given-btn{flex-shrink:0; padding:8px 14px !important; font-size:13px !important;}
+
   .hint{background:var(--tint); border:1px solid var(--brass); color:var(--ink); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:6px;}
 
   .seating-diagram{width:100%; height:auto; display:block; max-width:520px; margin:0 auto;}
@@ -661,7 +667,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.84';
+  const APP_VERSION = '1.0.85';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1101,26 +1107,29 @@
     if(!main) return null;
     main.finesBySeat = {};
     main.adHocFinesBySeat = {};
+    main.roundsGivenBySeat = {};
     for(const seatId of Object.keys(seatFines)){
       if(seatFines[seatId].finesBySeat) main.finesBySeat[seatId] = seatFines[seatId].finesBySeat;
       if(seatFines[seatId].adHocFinesBySeat) main.adHocFinesBySeat[seatId] = seatFines[seatId].adHocFinesBySeat;
+      if(seatFines[seatId].roundsGivenBySeat) main.roundsGivenBySeat[seatId] = seatFines[seatId].roundsGivenBySeat;
     }
     return main;
   }
 
-  // Speichert NUR das Hauptdokument (ohne finesBySeat/adHocFinesBySeat - die laufen separat über
-  // saveEveningSeatFines). detail darf die Felder enthalten, sie werden hier einfach ignoriert.
+  // Speichert NUR das Hauptdokument (ohne finesBySeat/adHocFinesBySeat/roundsGivenBySeat - die
+  // laufen separat über saveEveningSeatFines). detail darf die Felder enthalten, sie werden hier
+  // einfach ignoriert.
   async function saveEveningMainDoc(detail){
-    const { finesBySeat, adHocFinesBySeat, ...mainFields } = detail;
+    const { finesBySeat, adHocFinesBySeat, roundsGivenBySeat, ...mainFields } = detail;
     await withTimeout(setDoc(eveningDocRef(detail.id), { value: JSON.stringify(mainFields) }), STORAGE_TIMEOUT_MS);
   }
 
   // Speichert die Strafen für GENAU EINEN Sitzplatz eines Abends, transaktional (falls zwei
   // Personen gleichzeitig für denselben Sitzplatz mitzählen, wiederholt Firestore die Transaktion
   // automatisch statt eine der beiden Änderungen zu verlieren).
-  async function saveEveningSeatFines(eveningId, seatId, fines, adHocFines){
+  async function saveEveningSeatFines(eveningId, seatId, fines, adHocFines, roundsGiven){
     await withTimeout(runTransaction(db, async (tx)=>{
-      tx.set(eveningSeatDocRef(eveningId, seatId), { value: JSON.stringify({ finesBySeat: fines||{}, adHocFinesBySeat: adHocFines||[] }) });
+      tx.set(eveningSeatDocRef(eveningId, seatId), { value: JSON.stringify({ finesBySeat: fines||{}, adHocFinesBySeat: adHocFines||[], roundsGivenBySeat: roundsGiven||{} }) });
     }), STORAGE_TIMEOUT_MS);
   }
 
@@ -3325,6 +3334,106 @@
     return maxPudel>0 ? new Set(counts.filter(c=>c.count===maxPudel).map(c=>c.seatId)) : new Set();
   }
 
+  // Berechnet die einzelnen Runden-Einträge eines Abends aus finesBySeat: für jede Strafenart vom
+  // Typ 'runde' oder 'fremdstrafe_runde' (isFremdstrafeType-unabhängig - eine "Fremdstrafe + Runde"
+  // löst für den Verursacher trotzdem eine eigene, zu gebende Runde aus) und jeden besetzten
+  // Sitzplatz wird PRO GEZÄHLTER STRAFE ein eigener Eintrag erzeugt ("Max (Freibier)"). Jede
+  // Instanz wird über ihren Index (0, 1, 2, ...) innerhalb (seatId, fineId) identifiziert - der
+  // "gegeben"-Status kommt aus detail.roundsGivenBySeat[seatId][fineId], einer Liste genau dieser
+  // Indizes, die individuell markiert wurden (kein Zähler mehr: jede Zeile ist unabhängig
+  // abhakbar). Wird die zugrunde liegende Strafe reduziert, filtert computeRoundEntries
+  // automatisch die dann nicht mehr existierenden Indizes (>= neuer count) heraus; die
+  // eigentliche Bereinigung von roundsGivenBySeat passiert zusätzlich in adjustFineCount.
+  function computeRoundEntries(detail){
+    const catalog = detail.finesCatalogSnapshot || [];
+    const roundFines = catalog.filter(f=> f.type==='runde' || f.type==='fremdstrafe_runde');
+    if(roundFines.length===0) return [];
+    const bySeatId = {};
+    detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
+    const interleavedOrder = [];
+    for(let i=1;i<=6;i++){ interleavedOrder.push('saal-'+i, 'kneipe-'+i); }
+    const occupied = interleavedOrder.map(id=>bySeatId[id]).filter(s=>s && s.name);
+
+    const entries = [];
+    occupied.forEach(seat=>{
+      const seatEntries = (detail.finesBySeat && detail.finesBySeat[seat.seatId]) || {};
+      const givenMap = (detail.roundsGivenBySeat && detail.roundsGivenBySeat[seat.seatId]) || {};
+      roundFines.forEach(fine=>{
+        const count = seatEntries[fine.id] || 0;
+        if(count<=0) return;
+        const givenIndices = new Set(givenMap[fine.id] || []);
+        for(let i=0;i<count;i++){
+          entries.push({
+            seatId: seat.seatId,
+            fineId: fine.id,
+            name: seat.name,
+            fineName: fine.name,
+            given: givenIndices.has(i),
+            instanceIndex: i
+          });
+        }
+      });
+    });
+    return entries;
+  }
+
+  // Baut den Inhalt des "Runden"-Tabs: offene Runden oben mit "Gegeben"-Button, bereits gegebene
+  // Runden weiter unten in einem eigenen Bereich "Gegebene Runden" (nur noch informativ, ohne
+  // Aktions-Button). Runden können hier nur als gegeben markiert, nicht gelöscht werden -
+  // Löschen/Reduzieren läuft ausschließlich über die Strafen-Zähler auf der Personen-Detailseite.
+  function buildRoundsTab(detail){
+    const entries = computeRoundEntries(detail);
+    const closed = !!detail.closed || !canEditEvening(detail);
+    if(entries.length===0){
+      return `
+        <div class="card">
+          <h2 class="section-title">Runden</h2>
+          <p class="empty-state">Noch keine Runden für diesen Abend.</p>
+        </div>
+      `;
+    }
+    const openEntries = entries.filter(e=>!e.given);
+    const givenEntries = entries.filter(e=>e.given);
+    function openRowHtml(e){
+      return `
+        <div class="round-entry-row" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}">
+          <span class="round-entry-name">${escapeHtml(e.name)} (${escapeHtml(e.fineName)})</span>
+          ${closed ? '' : `<button type="button" class="btn-secondary round-mark-given-btn" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}">Gegeben</button>`}
+        </div>
+      `;
+    }
+    function givenRowHtml(e){
+      return `
+        <div class="round-entry-row given">
+          <span class="round-entry-name">${escapeHtml(e.name)} (${escapeHtml(e.fineName)})</span>
+        </div>
+      `;
+    }
+    return `
+      <div class="card">
+        <h2 class="section-title">Runden <span class="member-count">(${openEntries.length} offen)</span></h2>
+        ${openEntries.length===0 ? `<p class="empty-state">Alle Runden wurden gegeben.</p>` : openEntries.map(openRowHtml).join('')}
+      </div>
+      ${givenEntries.length>0 ? `
+      <div class="card">
+        <h2 class="section-title">Gegebene Runden <span class="member-count">(${givenEntries.length})</span></h2>
+        ${givenEntries.map(givenRowHtml).join('')}
+      </div>` : ''}
+    `;
+  }
+
+  // Markiert eine einzelne Runden-Instanz als gegeben. Jede Zeile ist unabhängig: der Index der
+  // angeklickten Instanz wird zur Liste in roundsGivenBySeat[seatId][fineId] hinzugefügt.
+  async function markRoundGiven(seatId, fineId, instanceIndex){
+    const detail = state.currentEveningDetail;
+    if(!detail.roundsGivenBySeat) detail.roundsGivenBySeat = {};
+    if(!detail.roundsGivenBySeat[seatId]) detail.roundsGivenBySeat[seatId] = {};
+    const current = detail.roundsGivenBySeat[seatId][fineId] || [];
+    if(!current.includes(instanceIndex)) detail.roundsGivenBySeat[seatId][fineId] = [...current, instanceIndex];
+    render();
+    await saveEveningSeatFinesAndIndex(detail, seatId);
+  }
+
   function buildFinesSummary(detail){
     const bySeatId = {};
     detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
@@ -3523,7 +3632,7 @@
   async function saveEveningSeatFinesAndIndex(detail, seatId){
     updateEveningIndexSummary(detail);
     await Promise.all([
-      saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId]),
+      saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId]),
       setClubJSON('evenings-index', state.eveningsIndex)
     ]);
   }
@@ -3535,7 +3644,7 @@
     updateEveningIndexSummary(detail);
     const uniqueSeatIds = [...new Set(seatIds)];
     await Promise.all([
-      ...uniqueSeatIds.map(seatId=> saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId])),
+      ...uniqueSeatIds.map(seatId=> saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId])),
       setClubJSON('evenings-index', state.eveningsIndex)
     ]);
   }
@@ -3546,7 +3655,18 @@
     if(!detail.finesBySeat) detail.finesBySeat = {};
     if(!detail.finesBySeat[seatId]) detail.finesBySeat[seatId] = {};
     const current = detail.finesBySeat[seatId][fineId] || 0;
-    detail.finesBySeat[seatId][fineId] = Math.max(0, current + delta);
+    const newCount = Math.max(0, current + delta);
+    detail.finesBySeat[seatId][fineId] = newCount;
+    // Wird eine Runden-Strafe (type 'runde' oder 'fremdstrafe_runde') reduziert, müssen aus der
+    // "gegeben"-Liste auf der Runden-Seite auch die Indizes entfernt werden, die es jetzt nicht
+    // mehr gibt (>= newCount) - sonst blieben Instanzen als "gegeben" markiert, die computeRoundEntries
+    // gar nicht mehr erzeugt.
+    const catalog = detail.finesCatalogSnapshot || state.finesCatalog;
+    const fine = catalog.find(f=>f.id===fineId);
+    const isRoundFine = fine && (fine.type==='runde' || fine.type==='fremdstrafe_runde');
+    if(isRoundFine && detail.roundsGivenBySeat && detail.roundsGivenBySeat[seatId] && detail.roundsGivenBySeat[seatId][fineId]){
+      detail.roundsGivenBySeat[seatId][fineId] = detail.roundsGivenBySeat[seatId][fineId].filter(i=>i<newCount);
+    }
     render();
     await saveEveningSeatFinesAndIndex(detail, seatId);
   }
@@ -3850,6 +3970,10 @@
     if(detail.adHocFinesBySeat && detail.adHocFinesBySeat[oldSeatId]){
       detail.adHocFinesBySeat[newSeatId] = detail.adHocFinesBySeat[oldSeatId];
       delete detail.adHocFinesBySeat[oldSeatId];
+    }
+    if(detail.roundsGivenBySeat && detail.roundsGivenBySeat[oldSeatId]){
+      detail.roundsGivenBySeat[newSeatId] = detail.roundsGivenBySeat[oldSeatId];
+      delete detail.roundsGivenBySeat[oldSeatId];
     }
     return newSeatId;
   }
@@ -4431,10 +4555,7 @@
     }
     if(state.eveningTab==='runden'){
       return `
-        <div class="card">
-          <h2 class="section-title">Runden</h2>
-          <p class="empty-state">Runden-Tracking folgt in Kürze.</p>
-        </div>
+        ${buildRoundsTab(detail)}
         ${buildDeleteModal(detail)}
       `;
     }
@@ -6292,6 +6413,13 @@
     if(tabNotizenBtn) tabNotizenBtn.addEventListener('click', ()=>{ state.eveningTab='notizen'; render(); });
     const tabRundenBtn = document.getElementById('tab-runden-btn');
     if(tabRundenBtn) tabRundenBtn.addEventListener('click', ()=>{ state.eveningTab='runden'; render(); });
+    document.querySelectorAll('.round-mark-given-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const { seatId, fineId } = btn.dataset;
+        const instanceIndex = parseInt(btn.dataset.instanceIndex, 10);
+        markRoundGiven(seatId, fineId, instanceIndex);
+      });
+    });
     const tabSpieleBtn = document.getElementById('tab-spiele-btn');
     if(tabSpieleBtn) tabSpieleBtn.addEventListener('click', ()=>{ state.eveningTab='spiele'; render(); });
     const notesTextarea = document.getElementById('evening-notes-textarea');
