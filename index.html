@@ -533,12 +533,20 @@
     display:flex; align-items:center; justify-content:center; padding:20px; z-index:1000;
   }
   .modal-card{
+    position:relative;
     background:var(--surface); border:2.5px solid var(--ink); border-radius:14px;
     padding:22px 20px; max-width:360px; width:100%; box-shadow:6px 6px 0 var(--ink);
     max-height:calc(100vh - 40px); overflow-y:auto; -webkit-overflow-scrolling:touch; box-sizing:border-box;
   }
   .modal-card h3{font-family:var(--font-display); font-size:19px; margin:0 0 10px; font-weight:700;}
   .modal-card p{margin:0 0 14px; font-size:14px; color:var(--ink-soft);}
+  .modal-loading-overlay{
+    position:absolute; inset:0; border-radius:11px;
+    background:rgba(255,255,255,0.9);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+    font-family:var(--font-mono); font-size:14px; color:var(--ink-soft); text-align:center; padding:20px;
+    z-index:10;
+  }
 </style>
 </head>
 <body>
@@ -653,7 +661,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.81';
+  const APP_VERSION = '1.0.82';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3657,10 +3665,12 @@
       //   verloren gehen bzw. der Abschluss mit veralteten Daten laufen.
       if(pendingNotesSave){ try{ await pendingNotesSave; }catch(e){} }
 
+      showModalLoadingOverlay('Abend wird abgeschlossen…');
       try{
         const closeEveningFn = httpsCallable(functions, 'closeEvening');
         await closeEveningFn({ clubId: CURRENT_CLUB_ID, eveningId: detail.id, skipNotificationEmail: !sendEmails });
       }catch(e){
+        hideModalLoadingOverlay();
         if(errEl) errEl.textContent = 'Abschließen fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
         btn.disabled = false; btn.textContent = 'Ja, abschließen';
         return;
@@ -3701,10 +3711,12 @@
       btn.disabled = true; btn.textContent = 'Öffnet…';
       const detail = state.currentEveningDetail;
 
+      showModalLoadingOverlay('Abend wird geöffnet…');
       try{
         const reopenEveningFn = httpsCallable(functions, 'reopenEvening');
         await reopenEveningFn({ clubId: CURRENT_CLUB_ID, eveningId: detail.id, skipNotificationEmail: !sendEmails });
       }catch(e){
+        hideModalLoadingOverlay();
         if(errEl) errEl.textContent = 'Wieder-Öffnen fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
         btn.disabled = false; btn.textContent = 'Öffnen';
         return;
@@ -5171,6 +5183,23 @@
       if(e.target.id==='generic-modal-backdrop') closeGenericModal();
     });
   }
+  // Blendet ein Overlay mit Spinner über die aktuell offene Modal-Card, damit während des
+  // Wartens auf eine Cloud Function (closeEvening/reopenEvening/deleteEvening) sichtbar ist,
+  // dass etwas passiert. hideModalLoadingOverlay() entfernt es wieder (z.B. im Fehlerfall).
+  function showModalLoadingOverlay(text){
+    const card = document.querySelector('.modal-card');
+    if(!card) return;
+    hideModalLoadingOverlay();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-loading-overlay';
+    overlay.id = 'modal-loading-overlay';
+    overlay.innerHTML = `<div class="loading-spinner"></div>${escapeHtml(text)}`;
+    card.appendChild(overlay);
+  }
+  function hideModalLoadingOverlay(){
+    const overlay = document.getElementById('modal-loading-overlay');
+    if(overlay) overlay.remove();
+  }
   function showDuplicateDateModal(date, existingId){
     showModal(`
       <h3>Abend bereits vorhanden</h3>
@@ -6338,10 +6367,12 @@
       const detail = state.currentEveningDetail;
       const id = detail.id;
 
+      showModalLoadingOverlay('Abend wird gelöscht…');
       try{
         const deleteEveningFn = httpsCallable(functions, 'deleteEvening');
         await deleteEveningFn({ clubId: CURRENT_CLUB_ID, eveningId: id });
       }catch(e){
+        hideModalLoadingOverlay();
         if(pwErrEl) pwErrEl.textContent = 'Löschen fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
         yesBtn.disabled = false; yesBtn.textContent = 'Löschen';
         return;
