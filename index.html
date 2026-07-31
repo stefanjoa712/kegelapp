@@ -630,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.70';
+  const APP_VERSION = '1.0.71';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1259,14 +1259,15 @@
   }
 
   // Liefert alle Mitglieder, die an einem bestimmten Tag (Monat+Tag) Geburtstag haben,
-  // jeweils mit Name und erreichtem Alter an diesem Datum.
+  // jeweils mit Name und erreichtem Alter an diesem Datum. Das Geburtsjahr selbst (0 Jahre) und
+  // Jahre davor (negatives Alter) werden nicht angezeigt - analog zu getAnniversaryOnDate().
   function getBirthdaysOnDate(dateStr){
     const [y, m, d] = dateStr.split('-').map(Number);
     const results = [];
     state.members.forEach(mem=>{
       if(!mem.birthday) return;
       const [by, bm, bd] = mem.birthday.split('-').map(Number);
-      if(bm===m && bd===d){
+      if(bm===m && bd===d && y>by){
         results.push({ name: displayName(mem), age: y - by });
       }
     });
@@ -1274,13 +1275,13 @@
   }
 
   // Liefert alle Tage (als Set von YYYY-MM-DD) in einem Monat, an denen mindestens ein Mitglied
-  // Geburtstag hat.
+  // Geburtstag hat (ab dem 1. Jahrestag, siehe getBirthdaysOnDate()).
   function getBirthdayDatesInMonth(year, month){
     const dateSet = new Set();
     state.members.forEach(mem=>{
       if(!mem.birthday) return;
-      const [, bm, bd] = mem.birthday.split('-').map(Number);
-      if(bm===month) dateSet.add(isoDate(year, month, bd));
+      const [by, bm, bd] = mem.birthday.split('-').map(Number);
+      if(bm===month && year>by) dateSet.add(isoDate(year, month, bd));
     });
     return dateSet;
   }
@@ -2244,7 +2245,7 @@
       return `
         <button type="button" class="cal-cell${isSelected?' selected':''}${isToday && !isSelected?' today':''}" data-date="${dateStr}">
           <span class="cal-cell-num">${day}</span>
-          ${hasBirthday ? '<span class="cal-cell-dot cal-cell-dot-birthday"></span>' : (hasAnniversary ? '<span class="cal-cell-dot cal-cell-dot-anniversary"></span>' : (hasEvent ? '<span class="cal-cell-dot"></span>' : ''))}
+          ${hasEvent ? '<span class="cal-cell-dot"></span>' : (hasAnniversary ? '<span class="cal-cell-dot cal-cell-dot-anniversary"></span>' : (hasBirthday ? '<span class="cal-cell-dot cal-cell-dot-birthday"></span>' : ''))}
         </button>
       `;
     }).join('');
