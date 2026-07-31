@@ -630,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.69';
+  const APP_VERSION = '1.0.70';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -771,6 +771,17 @@
     if(cacheResult!==undefined) return cacheResult;
     const snap = await withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS);
     return snap.exists() ? JSON.parse(snap.data().value) : fallback;
+  }
+  // Erzeugt einen onBackgroundUpdate-Callback für getClubJSON(OrThrow): schreibt den
+  // nachträglich vom Server eingetroffenen Wert in den angegebenen state-Key und rendert neu -
+  // nur falls sich die View seit dem Aufruf nicht geändert hat (sonst würde man z.B. mitten in
+  // einer anderen Ansicht landen, weil ein alter Ladevorgang spät aufgelöst hat).
+  function backgroundStateUpdate(stateKey, expectedView){
+    return function(serverResult){
+      if(state.view!==expectedView) return;
+      state[stateKey] = serverResult;
+      render();
+    };
   }
   async function setClubJSON(key, value){
     try{
@@ -1328,7 +1339,7 @@
     try{
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getAllMembers(),
-        getClubJSONOrThrow('evenings-index', []),
+        getClubJSONOrThrow('evenings-index', [], backgroundStateUpdate('eveningsIndex', 'main')),
         getAllArrears(),
         getAllCalendarEvents(),
         getAllOccurrenceEdits()
@@ -1471,9 +1482,9 @@
     renderLoading('Konten werden geladen…');
     try{
       const [accounts, recurring, pots] = await Promise.all([
-        getClubJSONOrThrow('finance-accounts', []),
-        getClubJSONOrThrow('finance-recurring', []),
-        getClubJSONOrThrow('finance-savings-pots', [])
+        getClubJSONOrThrow('finance-accounts', [], backgroundStateUpdate('financeAccounts', 'financeManagement')),
+        getClubJSONOrThrow('finance-recurring', [], backgroundStateUpdate('financeRecurring', 'financeManagement')),
+        getClubJSONOrThrow('finance-savings-pots', [], backgroundStateUpdate('financeSavingsPots', 'financeManagement'))
       ]);
       state.financeAccounts = accounts;
       state.financeRecurring = recurring;
@@ -1489,12 +1500,12 @@
     renderLoading('Finanzen werden geladen…');
     try{
       const [accounts, transactions, arrears, members, pots, recurring] = await Promise.all([
-        getClubJSONOrThrow('finance-accounts', []),
+        getClubJSONOrThrow('finance-accounts', [], backgroundStateUpdate('financeAccounts', 'finance')),
         getAllTransactions(),
         getAllArrears(),
         getAllMembers(),
-        getClubJSONOrThrow('finance-savings-pots', []),
-        getClubJSONOrThrow('finance-recurring', [])
+        getClubJSONOrThrow('finance-savings-pots', [], backgroundStateUpdate('financeSavingsPots', 'finance')),
+        getClubJSONOrThrow('finance-recurring', [], backgroundStateUpdate('financeRecurring', 'finance'))
       ]);
       state.financeAccounts = accounts;
       state.financeTransactions = transactions;
@@ -6652,7 +6663,7 @@
     try{
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getAllMembers(),
-        getClubJSONOrThrow('evenings-index', []),
+        getClubJSONOrThrow('evenings-index', [], backgroundStateUpdate('eveningsIndex', 'main')),
         getAllArrears(),
         getAllCalendarEvents(),
         getAllOccurrenceEdits()
