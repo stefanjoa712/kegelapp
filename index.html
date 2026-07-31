@@ -661,7 +661,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.83';
+  const APP_VERSION = '1.0.84';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -6366,10 +6366,11 @@
         return;
       }
 
-      // eveningsIndex wurde oben bereits lokal korrekt aktualisiert (Abend entfernt). Ein
-      // Refetch direkt nach dem Löschen würde hier oft den noch veralteten Firestore-Client-
+      // Den gelöschten Abend sofort lokal aus dem Index entfernen und als frisch markieren -
+      // ein Refetch direkt nach dem Löschen würde hier oft den noch veralteten Firestore-Client-
       // Cache liefern (Server-Push kommt erst mit etwas Verzögerung an) und den gelöschten
       // Abend fälschlich wieder anzeigen - siehe getClubJSONOrThrow-Cache-first-Strategie.
+      state.eveningsIndex = state.eveningsIndex.filter(e=>e.id!==id);
       markFetched('eveningsIndex');
       invalidate('financeArrears');
       try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){}
