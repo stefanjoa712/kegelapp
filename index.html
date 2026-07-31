@@ -104,24 +104,24 @@
      durchgehende Kapsel (container) mit einer gleitenden aktiven "Pille" darin - so wie
      iOS-Segmented-Controls und Fluent 2 es vorsehen. Eckradius folgt Fluents 4px-Raster:
      4px für die kleineren Segmente, 8px für den größeren Außen-Container.
-     Bleibt horizontal scrollbar (Peek-Effekt am Ende), da 5 Segmente auf schmalen iPhones
-     nicht gleichzeitig gut lesbar reinpassen - siehe Fluent-2-Guidance zu Segmented Controls. */
+     Die Segmente strecken sich gleichmäßig über die volle Breite (CSS-Grid mit
+     minmax(0,1fr)), aber nur bis zu einer Maximalbreite pro Segment - auf breiten
+     Bildschirmen wirken sie sonst unnötig lang. Reicht die Breite selbst mit
+     minimaler Segmentgröße nicht aus, fällt die Leiste automatisch auf horizontales
+     Scrollen zurück (Peek-Effekt am Ende), statt umzubrechen - siehe Fluent-2-Guidance
+     zu Segmented Controls. */
   .evening-tab-bar{
+    display:grid; grid-template-columns:repeat(5, minmax(0, 1fr));
     background:rgba(255,255,255,0.12); border-radius:8px; padding:3px;
-    gap:2px; flex-wrap:nowrap; overflow-x:auto; scroll-snap-type:x proximity;
+    gap:2px; overflow-x:auto; scroll-snap-type:x proximity;
     -webkit-overflow-scrolling:touch; scrollbar-width:none;
   }
   .evening-tab-bar::-webkit-scrollbar{display:none;}
   .evening-tab-bar .tab-btn{
-    flex:0 0 auto; white-space:nowrap; scroll-snap-align:start;
+    width:100%; max-width:100px; margin:0 auto; white-space:nowrap; scroll-snap-align:start;
     font-size:12px; padding:8px 9px; border-radius:4px; background:none;
   }
   .evening-tab-bar .tab-btn.active{background:var(--wood);}
-  .evening-tab-bar::after{
-    /* Spacer als letztes Kind sorgt dafür, dass der letzte echte Tab nie exakt am rechten
-       Rand abschließt, sondern immer sichtbar "weitergeht". */
-    content:''; flex:0 0 24px;
-  }
 
   .container{max-width:640px; margin:0 auto; padding:24px 16px 100px; transition:transform 0.25s ease;}
 
@@ -653,7 +653,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.79';
+  const APP_VERSION = '1.0.80';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
