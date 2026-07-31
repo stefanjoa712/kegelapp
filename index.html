@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.65';
+  const APP_VERSION = '1.0.66';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3061,6 +3061,10 @@
     if(totals.length===0) return 0;
     return roundUpToFullEuro(totals.reduce((a,b)=>a+b,0)/totals.length);
   }
+  function averageOfTotalsExact(totals){
+    if(totals.length===0) return 0;
+    return totals.reduce((a,b)=>a+b,0)/totals.length;
+  }
 
   // Für die Übersichtsliste: kompakte Kennzahlen eines Abends (anwesende/abwesende Mitglieder,
   // Gäste, Einnahme), werden im Index-Dokument gecacht, damit die Übersicht nicht für jeden
@@ -3198,15 +3202,25 @@
     const invalid = !!(seat && seat.invalid);
 
     if(invalid){
-      const dynamicAvg = seat.invalidAmount !== undefined
+      const isClosed = !!detail.closed;
+      const exactAvg = seat.invalidAmount !== undefined
+        ? seat.invalidAmount
+        : averageOfTotalsExact(validPresentMemberTotals(detail, seatId));
+      const roundedAvg = seat.invalidAmount !== undefined
         ? seat.invalidAmount
         : averageOfTotalsRounded(validPresentMemberTotals(detail, seatId));
+      const hintText = isClosed
+        ? 'Diese Person ist als <strong>invalide</strong> markiert. Es werden keine Strafen gepflegt. Der Durchschnitt der anderen Anwesenden wurde beim Abschließen des Abends fest hinterlegt.'
+        : 'Diese Person ist als <strong>invalide</strong> markiert. Es werden keine Strafen gepflegt. Beim Abschließen des Abends wird der Durchschnitt der anderen Anwesenden fest hinterlegt.';
+      const exactLabel = isClosed ? 'Durchschnitt (genau)' : 'Vorläufiger Durchschnitt (genau)';
+      const roundedLabel = isClosed ? 'Durchschnitt (gerundet)' : 'Vorläufiger Durchschnitt (gerundet)';
       return `
         <div class="card">
-          <p class="hint">Diese Person ist als <strong>invalide</strong> markiert. Es werden keine Strafen gepflegt. Beim Abschließen des Abends wird der Durchschnitt der anderen Anwesenden fest hinterlegt.</p>
+          <p class="hint">${hintText}</p>
         </div>
         <div class="card">
-          <div class="stat-total-raw"><span>Aktueller Durchschnitt (vorläufig)</span><span>${fmtEuro(dynamicAvg)}</span></div>
+          <div class="stat-total-raw"><span>${exactLabel}</span><span>${fmtEuro(exactAvg)}</span></div>
+          <div class="stat-total"><span>${roundedLabel}</span><span>${fmtEuro(roundedAvg)}</span></div>
         </div>
       `;
     }
