@@ -630,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.71';
+  const APP_VERSION = '1.0.72';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -700,7 +700,12 @@
     financeExpandedYears: new Set([String(new Date().getFullYear())]),
     eveningTab:'sitzplan',
     currentFineSeatId:null,
-    currentFineName:''
+    currentFineName:'',
+    // Zeitstempel (Date.now()) des letzten erfolgreichen Ladens pro Datentyp - Grundlage für
+    // isFresh()/invalidate() (siehe unten). Ermöglicht, bei Navigation zwischen Menüpunkten auf
+    // einen erneuten Ladescreen zu verzichten, wenn die Daten noch "frisch genug" sind, statt bei
+    // jedem Menüwechsel alles blind neu von Firestore zu laden.
+    _lastFetched:{}
   };
   let currentGuests = [];
 
@@ -783,9 +788,63 @@
       render();
     };
   }
+
+  // ---------- Stale-while-revalidate-Cache für Navigation zwischen Menüpunkten ----------
+  // Jede goTo*()-Funktion lädt bislang bei JEDEM Aufruf alle benötigten Daten neu von Firestore,
+  // auch wenn man Sekunden vorher genau diese Daten schon hatte (z.B. Übersicht -> Kalender ->
+  // zurück zur Übersicht). Das macht die App gefühlt langsam und erhöht bei vielen Requests auf
+  // schlechter Verbindung das Timeout-Risiko. FRESH_MS legt fest, wie lange ein einmal geladener
+  // Datentyp als "aktuell genug" gilt: innerhalb dieser Zeit wird beim erneuten Navigieren direkt
+  // der vorhandene state-Wert verwendet (kein Request, kein Ladescreen). markFetched() nach jedem
+  // erfolgreichen Laden setzen, invalidate() nach jedem Speichern/Löschen des jeweiligen
+  // Datentyps aufrufen (siehe saveMember/deleteMember/setClubJSON/makeClubEntityStore unten) -
+  // sonst würde man nach einer eigenen Änderung bis zu FRESH_MS lang den alten Stand sehen.
+  const FRESH_MS = 15000;
+  function isFresh(key){
+    const t = state._lastFetched[key];
+    return typeof t==='number' && (Date.now()-t)<FRESH_MS;
+  }
+  function markFetched(key){
+    state._lastFetched[key] = Date.now();
+  }
+  function invalidate(key){
+    delete state._lastFetched[key];
+  }
+  // Lädt einen Datentyp nur neu, wenn er nicht mehr "frisch" ist (siehe FRESH_MS oben) - sonst
+  // wird sofort der vorhandene state[stateKey]-Wert zurückgegeben, ohne Firestore-Request. Nach
+  // erfolgreichem Laden wird der Zeitstempel aktualisiert. fetchFn darf state[stateKey] NICHT
+  // selbst setzen - das übernimmt der Aufrufer, damit alle Werte eines Promise.all-Batches erst
+  // gemeinsam nach erfolgreichem Abschluss übernommen werden (kein Teil-Update bei Fehlern).
+  async function fetchIfStale(stateKey, fetchFn){
+    if(isFresh(stateKey)) return state[stateKey];
+    const result = await fetchFn();
+    markFetched(stateKey);
+    return result;
+  }
+  // Prüft, ob ALLE übergebenen Datentypen frisch sind - wenn ja, kann die aufrufende goTo*()-
+  // Funktion renderLoading() komplett überspringen und sofort mit dem vorhandenen state rendern,
+  // während im Hintergrund trotzdem abgeglichen wird (siehe Verwendung in goToMain/goToCalendar
+  // für Punkt B: Mitglieder gehören dort ohnehin nicht in den kritischen Ladepfad).
+  function allFresh(keys){
+    return keys.every(isFresh);
+  }
+  // Ordnet den Firestore-Dokumentnamen (kebab-case, siehe clubDocRef-Aufrufe) dem zugehörigen
+  // state-Feld (camelCase) zu - nötig, damit setClubJSON automatisch den richtigen Stale-Cache-
+  // Eintrag invalidieren kann, ohne dass jede Aufrufstelle das manuell tun muss.
+  const CLUB_JSON_STATE_KEY = {
+    'evenings-index':'eveningsIndex',
+    'fines-catalog':'finesCatalog',
+    'games-catalog':'gamesCatalog',
+    'finance-accounts':'financeAccounts',
+    'finance-recurring':'financeRecurring',
+    'finance-savings-pots':'financeSavingsPots'
+    // 'calendar-feed-token' bewusst nicht gemappt: wird nirgends über fetchIfStale/isFresh
+    // gecacht, braucht daher keine Invalidierung.
+  };
   async function setClubJSON(key, value){
     try{
       await withTimeout(setDoc(clubDocRef(key), { value: JSON.stringify(value) }), STORAGE_TIMEOUT_MS);
+      invalidate(CLUB_JSON_STATE_KEY[key] || key);
       return true;
     }catch(e){
       console.error('setClubJSON fehlgeschlagen für', key, e);
@@ -802,7 +861,7 @@
   // zwischenzeitlich jemand anders an GENAU DIESEM Dokument geschrieben hat - andere Einträge
   // sind davon nie betroffen, es geht also nichts durch einen kompletten Array-Überschrieb verloren.
   const INDEX_DOC_ID = '_index';
-  function makeClubEntityStore(collectionName){
+  function makeClubEntityStore(collectionName, cacheKey){
     function docRef(id){ return doc(db, 'clubs', CURRENT_CLUB_ID, collectionName, id); }
     function indexRef(){ return docRef(INDEX_DOC_ID); }
 
@@ -828,6 +887,7 @@
           tx.set(iRef, { value: JSON.stringify(index) });
         }
       }), STORAGE_TIMEOUT_MS);
+      if(cacheKey) invalidate(cacheKey);
     }
 
     async function remove(id){
@@ -839,6 +899,7 @@
         const newIndex = index.filter(existingId=>existingId!==id);
         tx.set(iRef, { value: JSON.stringify(newIndex) });
       }), STORAGE_TIMEOUT_MS);
+      if(cacheKey) invalidate(cacheKey);
     }
 
     return { getAll, save, remove };
@@ -885,6 +946,7 @@
         tx.set(indexRef, { value: JSON.stringify(index) });
       }
     }), STORAGE_TIMEOUT_MS);
+    invalidate('members');
   }
 
   // Löscht ein Mitglied: Dokument entfernen und ID transaktional aus dem Index streichen.
@@ -897,6 +959,7 @@
       const newIndex = index.filter(id=>id!==memberId);
       tx.set(indexRef, { value: JSON.stringify(newIndex) });
     }), STORAGE_TIMEOUT_MS);
+    invalidate('members');
   }
 
   // ---------- Kalender: Termine, Rückmeldungen und Serien-Ausnahmen ----------
@@ -908,9 +971,9 @@
   // gegenseitig überschreiben (kein Last-Write-Wins mehr). Der Kalender-Feed-Token bleibt als
   // einfacher Blob pro Club (siehe getClubJSON/setClubJSON oben) - ein einzelner Wert, der
   // praktisch nie parallel von mehreren Personen geschrieben wird.
-  const eventsStore = makeClubEntityStore('events');
-  const rsvpsStore = makeClubEntityStore('rsvps');
-  const occurrenceEditsStore = makeClubEntityStore('occurrence-edits');
+  const eventsStore = makeClubEntityStore('events', 'calendarEvents');
+  const rsvpsStore = makeClubEntityStore('rsvps', 'calendarRsvps');
+  const occurrenceEditsStore = makeClubEntityStore('occurrence-edits', 'calendarOccurrenceEdits');
 
   async function getAllCalendarEvents(){ return eventsStore.getAll(); }
   async function saveCalendarEvent(event){ return eventsStore.save(event); }
@@ -931,7 +994,7 @@
   // hätte hier dasselbe Last-Write-Wins-Risiko wie ursprünglich bei den Mitgliedern, wenn z.B.
   // fast gleichzeitig ein Abend abgeschlossen und eine Zahlung für ein anderes Mitglied erfasst
   // wird. dockId ist die Mitglieds-ID, wo auflösbar, sonst der Name (siehe resolveArrearsDocId).
-  const arrearsStore = makeClubEntityStore('arrears');
+  const arrearsStore = makeClubEntityStore('arrears', 'financeArrears');
   async function getAllArrears(){ return arrearsStore.getAll(); }
   // Speichert einen Rückstands-Eintrag - außer es handelt sich um einen Gast (Dokument-ID
   // beginnt mit 'guest-', siehe resolveArrearsDocId) UND der Betrag ist auf 0 gefallen: dann wird
@@ -957,7 +1020,7 @@
   // Überschrieb hätte hier dasselbe Last-Write-Wins-Risiko wie ursprünglich bei den Mitgliedern -
   // fällt eine manuelle Änderung zeitlich mit dem nächtlichen Lauf zusammen, könnte eine der
   // beiden Änderungen die andere überschreiben.
-  const transactionsStore = makeClubEntityStore('transactions');
+  const transactionsStore = makeClubEntityStore('transactions', 'financeTransactions');
   async function getAllTransactions(){ return transactionsStore.getAll(); }
   async function saveTransaction(tx){ return transactionsStore.save(tx); }
   async function deleteTransaction(id){ return transactionsStore.remove(id); }
@@ -1051,6 +1114,7 @@
   }
   async function saveClub(clubData){
     await withTimeout(setDoc(clubRef(), clubData, { merge: true }), STORAGE_TIMEOUT_MS);
+    invalidate('clubData');
   }
   // Listet die IDs ALLER existierenden Clubs auf, unabhängig von einem Claim - wird nur für den
   // Admin-Sonderfall in resolveActiveClub() gebraucht (Admin hat noch keinen Claim, soll aber aus
@@ -1336,16 +1400,19 @@
   // ---------- Navigation ----------
   async function goToMain(){
     state.view = 'main';
-    renderLoading('Übersicht wird geladen…');
+    // Punkt B: Mitglieder sind für die Übersicht nicht kritisch (nur für Geburtstage im Kalender-
+    // Widget relevant, siehe getBirthdayDatesInMonth) und ändern sich selten - sie werden daher
+    // NICHT im kritischen Ladepfad abgefragt, sondern mit dem vorhandenen state-Stand sofort
+    // gerendert und nur bei Bedarf im Hintergrund aktualisiert (kein Ladescreen dafür).
+    const keys = ['eveningsIndex','financeArrears','calendarEvents','calendarOccurrenceEdits'];
+    if(!allFresh(keys)) renderLoading('Übersicht wird geladen…');
     try{
-      const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
-        getAllMembers(),
-        getClubJSONOrThrow('evenings-index', [], backgroundStateUpdate('eveningsIndex', 'main')),
-        getAllArrears(),
-        getAllCalendarEvents(),
-        getAllOccurrenceEdits()
+      const [eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
+        fetchIfStale('eveningsIndex', ()=> getClubJSONOrThrow('evenings-index', [], backgroundStateUpdate('eveningsIndex', 'main'))),
+        fetchIfStale('financeArrears', getAllArrears),
+        fetchIfStale('calendarEvents', getAllCalendarEvents),
+        fetchIfStale('calendarOccurrenceEdits', getAllOccurrenceEdits)
       ]);
-      state.members = members;
       state.eveningsIndex = eveningsIndex;
       state.financeArrears = arrears;
       state.calendarEvents = calendarEvents;
@@ -1354,6 +1421,13 @@
       state.view = 'main';
       render();
       backfillEveningSummaries();
+      if(!isFresh('members')){
+        getAllMembers().then(members=>{
+          markFetched('members');
+          state.members = members;
+          if(state.view==='main') render();
+        }).catch(e=> console.error('Mitglieder-Hintergrundabgleich fehlgeschlagen', e));
+      }
     }catch(e){
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToMain);
     }
@@ -1382,9 +1456,9 @@
   }
   async function goToSettings(){
     state.view = 'settings';
-    renderLoading('Mitglieder werden geladen…');
+    if(!isFresh('members')) renderLoading('Mitglieder werden geladen…');
     try{
-      state.members = await getAllMembers();
+      state.members = await fetchIfStale('members', getAllMembers);
       state.view = 'settings';
       render();
     }catch(e){
@@ -1442,9 +1516,12 @@
   }
   async function goToClubManagement(){
     state.view = 'clubManagement';
-    renderLoading('Clubdaten werden geladen…');
+    if(!isFresh('clubData')) renderLoading('Clubdaten werden geladen…');
     try{
-      CURRENT_CLUB_DATA = await getClub();
+      if(!isFresh('clubData')){
+        CURRENT_CLUB_DATA = await getClub();
+        markFetched('clubData');
+      }
       state.view = 'clubManagement';
       render();
     }catch(e){
@@ -1458,9 +1535,9 @@
   }
   async function goToFinesManagement(){
     state.view = 'finesManagement';
-    renderLoading('Strafen werden geladen…');
+    if(!isFresh('finesCatalog')) renderLoading('Strafen werden geladen…');
     try{
-      state.finesCatalog = await getClubJSONOrThrow('fines-catalog', []);
+      state.finesCatalog = await fetchIfStale('finesCatalog', ()=> getClubJSONOrThrow('fines-catalog', []));
       state.view = 'finesManagement';
       render();
     }catch(e){
@@ -1469,9 +1546,9 @@
   }
   async function goToGamesManagement(){
     state.view = 'gamesManagement';
-    renderLoading('Spiele werden geladen…');
+    if(!isFresh('gamesCatalog')) renderLoading('Spiele werden geladen…');
     try{
-      state.gamesCatalog = await getClubJSONOrThrow('games-catalog', []);
+      state.gamesCatalog = await fetchIfStale('gamesCatalog', ()=> getClubJSONOrThrow('games-catalog', []));
       state.view = 'gamesManagement';
       render();
     }catch(e){
@@ -1480,12 +1557,13 @@
   }
   async function goToFinanceManagement(){
     state.view = 'financeManagement';
-    renderLoading('Konten werden geladen…');
+    const keys = ['financeAccounts','financeRecurring','financeSavingsPots'];
+    if(!allFresh(keys)) renderLoading('Konten werden geladen…');
     try{
       const [accounts, recurring, pots] = await Promise.all([
-        getClubJSONOrThrow('finance-accounts', [], backgroundStateUpdate('financeAccounts', 'financeManagement')),
-        getClubJSONOrThrow('finance-recurring', [], backgroundStateUpdate('financeRecurring', 'financeManagement')),
-        getClubJSONOrThrow('finance-savings-pots', [], backgroundStateUpdate('financeSavingsPots', 'financeManagement'))
+        fetchIfStale('financeAccounts', ()=> getClubJSONOrThrow('finance-accounts', [], backgroundStateUpdate('financeAccounts', 'financeManagement'))),
+        fetchIfStale('financeRecurring', ()=> getClubJSONOrThrow('finance-recurring', [], backgroundStateUpdate('financeRecurring', 'financeManagement'))),
+        fetchIfStale('financeSavingsPots', ()=> getClubJSONOrThrow('finance-savings-pots', [], backgroundStateUpdate('financeSavingsPots', 'financeManagement')))
       ]);
       state.financeAccounts = accounts;
       state.financeRecurring = recurring;
@@ -1498,15 +1576,16 @@
   }
   async function goToFinance(){
     state.view = 'finance';
-    renderLoading('Finanzen werden geladen…');
+    const keys = ['financeAccounts','financeTransactions','financeArrears','members','financeSavingsPots','financeRecurring'];
+    if(!allFresh(keys)) renderLoading('Finanzen werden geladen…');
     try{
       const [accounts, transactions, arrears, members, pots, recurring] = await Promise.all([
-        getClubJSONOrThrow('finance-accounts', [], backgroundStateUpdate('financeAccounts', 'finance')),
-        getAllTransactions(),
-        getAllArrears(),
-        getAllMembers(),
-        getClubJSONOrThrow('finance-savings-pots', [], backgroundStateUpdate('financeSavingsPots', 'finance')),
-        getClubJSONOrThrow('finance-recurring', [], backgroundStateUpdate('financeRecurring', 'finance'))
+        fetchIfStale('financeAccounts', ()=> getClubJSONOrThrow('finance-accounts', [], backgroundStateUpdate('financeAccounts', 'finance'))),
+        fetchIfStale('financeTransactions', getAllTransactions),
+        fetchIfStale('financeArrears', getAllArrears),
+        fetchIfStale('members', getAllMembers),
+        fetchIfStale('financeSavingsPots', ()=> getClubJSONOrThrow('finance-savings-pots', [], backgroundStateUpdate('financeSavingsPots', 'finance'))),
+        fetchIfStale('financeRecurring', ()=> getClubJSONOrThrow('finance-recurring', [], backgroundStateUpdate('financeRecurring', 'finance')))
       ]);
       state.financeAccounts = accounts;
       state.financeTransactions = transactions;
@@ -1527,32 +1606,41 @@
   }
   async function goToCalendar(){
     state.view = 'calendar';
-    renderLoading('Kalender wird geladen…');
+    // Punkt B: Mitglieder nur für Geburtstage relevant, ändern sich selten - nicht im
+    // kritischen Ladepfad (siehe goToMain für dasselbe Muster und Begründung).
+    const keys = ['calendarEvents','calendarOccurrenceEdits','calendarRsvps'];
+    if(!allFresh(keys)) renderLoading('Kalender wird geladen…');
     try{
-      const [events, edits, rsvps, members] = await Promise.all([
-        getAllCalendarEvents(),
-        getAllOccurrenceEdits(),
-        getAllCalendarRsvps(),
-        getAllMembers()
+      const [events, edits, rsvps] = await Promise.all([
+        fetchIfStale('calendarEvents', getAllCalendarEvents),
+        fetchIfStale('calendarOccurrenceEdits', getAllOccurrenceEdits),
+        fetchIfStale('calendarRsvps', getAllCalendarRsvps)
       ]);
       state.calendarEvents = events;
       state.calendarOccurrenceEdits = edits;
       state.calendarRsvps = rsvps;
-      state.members = members;
       state.view = 'calendar';
       render();
+      if(!isFresh('members')){
+        getAllMembers().then(members=>{
+          markFetched('members');
+          state.members = members;
+          if(state.view==='calendar') render();
+        }).catch(e=> console.error('Mitglieder-Hintergrundabgleich fehlgeschlagen', e));
+      }
     }catch(e){
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToCalendar);
     }
   }
   async function goToEventManagement(){
     state.view = 'eventManagement';
-    renderLoading('Terminverwaltung wird geladen…');
+    const keys = ['calendarEvents','calendarOccurrenceEdits','members'];
+    if(!allFresh(keys)) renderLoading('Terminverwaltung wird geladen…');
     try{
       const [events, edits, members] = await Promise.all([
-        getAllCalendarEvents(),
-        getAllOccurrenceEdits(),
-        getAllMembers()
+        fetchIfStale('calendarEvents', getAllCalendarEvents),
+        fetchIfStale('calendarOccurrenceEdits', getAllOccurrenceEdits),
+        fetchIfStale('members', getAllMembers)
       ]);
       state.calendarEvents = events;
       state.calendarOccurrenceEdits = edits;
@@ -2583,6 +2671,9 @@
             state.financeAccounts = accounts;
             state.financeTransactions = transactions;
             state.financeArrears = arrears;
+            markFetched('financeAccounts');
+            markFetched('financeTransactions');
+            markFetched('financeArrears');
           }catch(e){}
         }
         state.currentArrearsName = name;
@@ -2598,6 +2689,8 @@
             ]);
             state.financeAccounts = accounts;
             state.financeTransactions = transactions;
+            markFetched('financeAccounts');
+            markFetched('financeTransactions');
           }catch(e){}
         }
         state.currentTransactionId = txId==='new' ? null : txId;
@@ -2606,7 +2699,7 @@
       }else if(sig.startsWith('memberDetail:')){
         const memberId = sig.slice('memberDetail:'.length);
         if(state.members.length===0){
-          try{ state.members = await getAllMembers(); }catch(e){}
+          try{ state.members = await getAllMembers(); markFetched('members'); }catch(e){}
         }
         if(memberId==='new'){
           state.currentMemberId = null;
@@ -2637,6 +2730,9 @@
             state.financeAccounts = accounts;
             state.financeRecurring = recurring;
             state.financeSavingsPots = pots;
+            markFetched('financeAccounts');
+            markFetched('financeRecurring');
+            markFetched('financeSavingsPots');
           }catch(e){}
         }
         state.currentRecurringId = recId==='new' ? null : recId;
@@ -2645,7 +2741,7 @@
       }else if(sig.startsWith('fineDetail:')){
         const fineId = sig.slice('fineDetail:'.length);
         if(state.finesCatalog.length===0){
-          try{ state.finesCatalog = await getClubJSONOrThrow('fines-catalog', []); }catch(e){}
+          try{ state.finesCatalog = await getClubJSONOrThrow('fines-catalog', []); markFetched('finesCatalog'); }catch(e){}
         }
         state.currentFineId = fineId==='new' ? null : fineId;
         state.view = 'fineDetail';
@@ -2653,7 +2749,7 @@
       }else if(sig.startsWith('gameDetail:')){
         const gameId = sig.slice('gameDetail:'.length);
         if(state.gamesCatalog.length===0){
-          try{ state.gamesCatalog = await getClubJSONOrThrow('games-catalog', []); }catch(e){}
+          try{ state.gamesCatalog = await getClubJSONOrThrow('games-catalog', []); markFetched('gamesCatalog'); }catch(e){}
         }
         state.currentGameId = gameId==='new' ? null : gameId;
         state.view = 'gameDetail';
@@ -2672,6 +2768,10 @@
             state.calendarOccurrenceEdits = edits;
             state.calendarRsvps = rsvps;
             state.members = members;
+            markFetched('calendarEvents');
+            markFetched('calendarOccurrenceEdits');
+            markFetched('calendarRsvps');
+            markFetched('members');
           }catch(e){}
         }
         if(rest==='new'){
@@ -3526,8 +3626,8 @@
       closeGenericModal();
       try{
         state.currentEveningDetail = await getEveningDetail(detail.id);
-        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); }catch(e){}
-        try{ state.financeArrears = await getAllArrears(); }catch(e){}
+        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){}
+        try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){}
       }catch(e){ /* Detailansicht rendert notfalls mit dem letzten bekannten Stand weiter */ }
       render();
     });
@@ -3567,8 +3667,8 @@
       closeGenericModal();
       try{
         state.currentEveningDetail = await getEveningDetail(detail.id);
-        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); }catch(e){}
-        try{ state.financeArrears = await getAllArrears(); }catch(e){}
+        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){}
+        try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){}
       }catch(e){ /* Detailansicht rendert notfalls mit dem letzten bekannten Stand weiter */ }
       render();
     });
@@ -4368,6 +4468,7 @@
         await saveClub(clubUpdate);
         CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), name, foundedOn };
         if(paypalName){ CURRENT_CLUB_DATA.paypalName = paypalName; } else { delete CURRENT_CLUB_DATA.paypalName; }
+        markFetched('clubData');
         applyClubBranding();
         render();
       }catch(e){
@@ -4425,7 +4526,7 @@
       nextEventCard.addEventListener('click', async ()=>{
         const occurrence = findOccurrenceByIds(nextEventCard.dataset.seriesId, nextEventCard.dataset.occurrenceDate);
         if(!occurrence) return;
-        try{ state.calendarRsvps = await getAllCalendarRsvps(); }catch(e){}
+        try{ state.calendarRsvps = await getAllCalendarRsvps(); markFetched('calendarRsvps'); }catch(e){}
         goToEventDetail(occurrence, 'main');
       });
     }
@@ -5243,7 +5344,7 @@
     if(!seriesId || !occurrenceDate) return;
     const occurrence = findOccurrenceByIds(seriesId, occurrenceDate);
     if(!occurrence) return;
-    try{ state.calendarRsvps = await getAllCalendarRsvps(); }catch(e){}
+    try{ state.calendarRsvps = await getAllCalendarRsvps(); markFetched('calendarRsvps'); }catch(e){}
     goToEventDetail(occurrence, 'main');
   }
 
@@ -5962,6 +6063,7 @@
     if(btn){ btn.disabled = true; btn.textContent = 'Wird geprüft…'; }
 
     state.eveningsIndex = await getClubJSON('evenings-index', state.eveningsIndex);
+    markFetched('eveningsIndex');
     const existing = state.eveningsIndex.find(e=>e.date===date);
     if(existing){
       if(btn){ btn.disabled = false; btn.textContent = originalBtnText; }
@@ -5975,6 +6077,7 @@
     // in der Strafenverwaltung dürfen diesen Abend nicht mehr beeinflussen.
     const finesCatalogAtCreation = await getClubJSON('fines-catalog', state.finesCatalog);
     state.finesCatalog = finesCatalogAtCreation;
+    markFetched('finesCatalog');
 
     const occupiedSeatIds = buildSeatPriorityOrder().slice(0, participants.length);
     const schriftfuehrerSelect = document.getElementById('schriftfuehrer-select');
@@ -6159,8 +6262,10 @@
       }
 
       state.eveningsIndex = state.eveningsIndex.filter(e=>e.id!==id);
-      try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); }catch(e){}
-      try{ state.financeArrears = await getAllArrears(); }catch(e){}
+      invalidate('eveningsIndex');
+      invalidate('financeArrears');
+      try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){}
+      try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){}
       state.confirmDeleteEveningId = null;
       goToMain();
     });
@@ -6333,8 +6438,11 @@
           ]);
           state.members = members;
           state.eveningsIndex = eveningsIndex;
+          markFetched('members');
+          markFetched('eveningsIndex');
         }else if(state.view==='settings'){
           state.members = await getAllMembers();
+          markFetched('members');
         }else if(state.view==='detail' && state.currentEveningDetail){
           const fresh = await getEveningDetail(state.currentEveningDetail.id);
           if(fresh) state.currentEveningDetail = fresh;
@@ -6674,6 +6782,11 @@
       state.financeArrears = arrears;
       state.calendarEvents = calendarEvents;
       state.calendarOccurrenceEdits = calendarOccurrenceEdits;
+      markFetched('members');
+      markFetched('eveningsIndex');
+      markFetched('financeArrears');
+      markFetched('calendarEvents');
+      markFetched('calendarOccurrenceEdits');
       state.view = 'main';
       render();
       applyEventDeepLinkFromUrl();
@@ -6719,8 +6832,14 @@
         document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div>Wird geprüft…</div>`;
         const clubId = await resolveActiveClub(user);
         if(!clubId) return; // renderNoClubAccessScreen() wurde bereits von resolveActiveClub gezeigt
+        // Stale-Cache (siehe isFresh()/fetchIfStale() oben) ist rein zeitbasiert und kennt keinen
+        // Club-Bezug - bei jedem Club-Kontextwechsel (Login, Logout, Wechsel des ausgewählten
+        // Clubs) muss er daher komplett verworfen werden. Sonst könnte z.B. nach einem Logout und
+        // erneutem Login mit einem ANDEREN Club ein noch nicht abgelaufener Zeitstempel fälschlich
+        // Daten des vorherigen Clubs als "frisch genug" für den neuen Club durchgehen lassen.
+        state._lastFetched = {};
         CURRENT_CLUB_ID = clubId;
-        try{ CURRENT_CLUB_DATA = await getClub(); }catch(e){ CURRENT_CLUB_DATA = null; /* Fallback-Name wird verwendet */ }
+        try{ CURRENT_CLUB_DATA = await getClub(); markFetched('clubData'); }catch(e){ CURRENT_CLUB_DATA = null; /* Fallback-Name wird verwendet */ }
         // Rollen-Claim laden (siehe canManageMembers()) - steuert nur die UI-Anzeige, die
         // eigentliche Durchsetzung übernehmen die Firestore Rules unabhängig davon. Ein gecachtes
         // Token kann bis zu 1h alt sein; das ist für Rollenwechsel in einem Kegelclub unkritisch.
@@ -6731,6 +6850,7 @@
         applyClubBranding();
         init();
       }else{
+        state._lastFetched = {};
         CURRENT_CLUB_ID = null;
         CURRENT_CLUB_DATA = null;
         renderLoginScreen();
