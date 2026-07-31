@@ -661,7 +661,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.82';
+  const APP_VERSION = '1.0.83';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2045,7 +2045,8 @@
 
   // Löscht den kompletten Club unwiderruflich (alle Daten + Auth-Zugänge der Mitglieder, siehe
   // Cloud Function deleteClub). Erfordert die Eingabe des App-weiten Lösch-Kennworts als zweite
-  // Bestätigung, analog zum Löschen eines Kegelabends (buildDeleteModal/DELETE_PASSWORD oben).
+  // Bestätigung (DELETE_PASSWORD oben). Beim Löschen eines einzelnen Kegelabends genügt seit
+  // v1.0.83 die reine Ja/Nein-Bestätigung, ohne Kennwortabfrage.
   function showDeleteClubModal(){
     const name = clubDisplayName();
     showModal(`
@@ -4132,8 +4133,6 @@
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
           <h3 id="delete-modal-title">Kegelabend löschen</h3>
           <p>Diesen Abend wirklich löschen? Das kann nicht rückgängig gemacht werden.</p>
-          <label for="delete-password-input">Kennwort</label>
-          <input type="password" id="delete-password-input" placeholder="Kennwort" autocomplete="off">
           <p class="form-error" id="delete-password-error"></p>
           <div class="confirm-row-buttons">
             <button type="button" class="btn-danger" id="confirm-delete-evening-yes">Ja, löschen</button>
@@ -6349,20 +6348,9 @@
     if(bulkAddBtn) bulkAddBtn.addEventListener('click', showBulkAddFineModal);
     const backdrop = document.getElementById('delete-modal-backdrop');
     if(backdrop) backdrop.addEventListener('click', e=>{ if(e.target===backdrop){ state.confirmDeleteEveningId=null; render(); } });
-    const pwInput = document.getElementById('delete-password-input');
-    if(pwInput){
-      pwInput.focus();
-      pwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const yb=document.getElementById('confirm-delete-evening-yes'); if(yb) yb.click(); } });
-    }
     const yesBtn = document.getElementById('confirm-delete-evening-yes');
     if(yesBtn) yesBtn.addEventListener('click', async ()=>{
-      const pwInputEl = document.getElementById('delete-password-input');
       const pwErrEl = document.getElementById('delete-password-error');
-      const entered = pwInputEl ? pwInputEl.value : '';
-      if(entered !== DELETE_PASSWORD){
-        if(pwErrEl) pwErrEl.textContent = 'Falsches Kennwort.';
-        return;
-      }
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
       const detail = state.currentEveningDetail;
       const id = detail.id;
