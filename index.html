@@ -100,6 +100,22 @@
   }
   .tab-btn.active{background:var(--wood); color:#fff;}
 
+  /* Kegelabend-Tabs (5 Stück): horizontal scrollbar statt gleichmäßig verteilt, damit auf
+     schmalen iPhones (SE/Mini) jeder Tab lesbar bleibt. Der letzte Tab wird bewusst nur zum
+     Teil angeschnitten dargestellt (Peek-Effekt, wie z.B. bei Spotify), damit auf den ersten
+     Blick erkennbar ist, dass sich die Leiste noch weiter wischen lässt. */
+  .evening-tab-bar{
+    flex-wrap:nowrap; overflow-x:auto; scroll-snap-type:x proximity;
+    -webkit-overflow-scrolling:touch; scrollbar-width:none;
+  }
+  .evening-tab-bar::-webkit-scrollbar{display:none;}
+  .evening-tab-bar .tab-btn{flex:0 0 auto; white-space:nowrap; scroll-snap-align:start;}
+  .evening-tab-bar::after{
+    /* Spacer als letztes Kind sorgt dafür, dass der letzte echte Tab nie exakt am rechten
+       Rand abschließt, sondern immer sichtbar "weitergeht". */
+    content:''; flex:0 0 24px;
+  }
+
   .container{max-width:640px; margin:0 auto; padding:24px 16px 100px; transition:transform 0.25s ease;}
 
   .login-screen{
@@ -630,7 +646,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.76';
+  const APP_VERSION = '1.0.77';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4362,9 +4378,11 @@
     ` : '';
 
     const tabsHtml = state.view==='detail' ? `
-      <div class="tab-bar">
+      <div class="tab-bar evening-tab-bar">
         <button type="button" class="tab-btn${state.eveningTab==='sitzplan'?' active':''}" id="tab-sitzplan-btn">Sitzplan</button>
         <button type="button" class="tab-btn${state.eveningTab==='strafen'?' active':''}" id="tab-strafen-btn">Strafen</button>
+        <button type="button" class="tab-btn${state.eveningTab==='runden'?' active':''}" id="tab-runden-btn">Runden</button>
+        <button type="button" class="tab-btn${state.eveningTab==='spiele'?' active':''}" id="tab-spiele-btn">Spiele</button>
         <button type="button" class="tab-btn${state.eveningTab==='notizen'?' active':''}" id="tab-notizen-btn">Notizen</button>
       </div>
     ` : '';
@@ -4389,6 +4407,24 @@
       return `
         ${state.justCreated ? `<p class="hint">Die Sitzordnung wurde zufällig ausgelost und gespeichert. Sie kann nicht mehr geändert werden.</p>` : ''}
         ${buildFinesSummary(detail)}
+        ${buildDeleteModal(detail)}
+      `;
+    }
+    if(state.eveningTab==='runden'){
+      return `
+        <div class="card">
+          <h2 class="section-title">Runden</h2>
+          <p class="empty-state">Runden-Tracking folgt in Kürze.</p>
+        </div>
+        ${buildDeleteModal(detail)}
+      `;
+    }
+    if(state.eveningTab==='spiele'){
+      return `
+        <div class="card">
+          <h2 class="section-title">Spiele</h2>
+          <p class="empty-state">Spiele-Verwaltung für den Abend folgt in Kürze.</p>
+        </div>
         ${buildDeleteModal(detail)}
       `;
     }
@@ -6205,6 +6241,10 @@
     document.querySelectorAll('[data-member-name]').forEach(el=>{
       el.addEventListener('click', ()=>{ goToPersonFineDetail(el.dataset.seatId, el.dataset.memberName); });
     });
+    // Aktiven Tab in der scrollbaren Leiste sichtbar halten (z.B. falls "Spiele" als letzter,
+    // nur teilweise angeschnittener Tab aktiv ist).
+    const activeTabBtn = document.querySelector('.evening-tab-bar .tab-btn.active');
+    if(activeTabBtn) activeTabBtn.scrollIntoView({block:'nearest', inline:'nearest'});
     const tabSitzplanBtn = document.getElementById('tab-sitzplan-btn');
     if(tabSitzplanBtn) tabSitzplanBtn.addEventListener('click', ()=>{ state.eveningTab='sitzplan'; render(); });
     const tabStrafenBtn = document.getElementById('tab-strafen-btn');
@@ -6214,6 +6254,10 @@
     });
     const tabNotizenBtn = document.getElementById('tab-notizen-btn');
     if(tabNotizenBtn) tabNotizenBtn.addEventListener('click', ()=>{ state.eveningTab='notizen'; render(); });
+    const tabRundenBtn = document.getElementById('tab-runden-btn');
+    if(tabRundenBtn) tabRundenBtn.addEventListener('click', ()=>{ state.eveningTab='runden'; render(); });
+    const tabSpieleBtn = document.getElementById('tab-spiele-btn');
+    if(tabSpieleBtn) tabSpieleBtn.addEventListener('click', ()=>{ state.eveningTab='spiele'; render(); });
     const notesTextarea = document.getElementById('evening-notes-textarea');
     if(notesTextarea && !notesTextarea.readOnly){
       let saveTimer = null;
