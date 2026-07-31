@@ -630,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.73';
+  const APP_VERSION = '1.0.74';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1789,15 +1789,21 @@
   function fineTypeLabel(type){
     if(type==='multiplier') return 'Multiplikator';
     if(type==='fremdstrafe') return 'Fremdstrafe';
+    if(type==='fremdstrafe_runde') return 'Fremdstrafe + Runde';
     if(type==='pudel') return 'Pudel';
     if(type==='runde') return 'Runde';
     return type;
+  }
+  // Prüft, ob eine Strafenart sich wie eine Fremdstrafe verhält (andere Anwesende zahlen statt
+  // des Verursachers). Umfasst 'fremdstrafe' und die kombinierte Art 'fremdstrafe_runde'.
+  function isFremdstrafeType(type){
+    return type==='fremdstrafe' || type==='fremdstrafe_runde';
   }
   function fineTypeIconSvg(type){
     if(type==='multiplier'){
       return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
     }
-    if(type==='fremdstrafe'){
+    if(type==='fremdstrafe' || type==='fremdstrafe_runde'){
       return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`;
     }
     if(type==='pudel'){
@@ -1827,15 +1833,26 @@
     </div>`;
   }
   function viewFinesManagement(){
-    const listHtml = state.finesCatalog.length===0
+    const strafenList = state.finesCatalog.filter(f=>f.type!=='runde');
+    const rundenList = state.finesCatalog.filter(f=>f.type==='runde');
+    const strafenHtml = strafenList.length===0
       ? `<p class="empty-state">Noch keine Strafen angelegt. Füge oben rechts die erste hinzu.</p>`
-      : state.finesCatalog.map(fineRowHtml).join('');
+      : strafenList.map(fineRowHtml).join('');
+    const rundenHtml = rundenList.length===0
+      ? `<p class="empty-state">Noch keine Runden angelegt.</p>`
+      : rundenList.map(fineRowHtml).join('');
     return `
       <div class="card">
         <div class="settings-header-row">
-          <h2 class="section-title">Strafen <span class="member-count">(${state.finesCatalog.length})</span></h2>
+          <h2 class="section-title">Strafen <span class="member-count">(${strafenList.length})</span></h2>
         </div>
-        <div id="fines-list-container">${listHtml}</div>
+        <div id="fines-list-container">${strafenHtml}</div>
+      </div>
+      <div class="card">
+        <div class="settings-header-row">
+          <h2 class="section-title">Runden <span class="member-count">(${rundenList.length})</span></h2>
+        </div>
+        <div id="runden-list-container">${rundenHtml}</div>
       </div>
     `;
   }
@@ -1860,6 +1877,7 @@
         <select id="fine-detail-type"${disabledAttr}>
           <option value="multiplier"${(!isEdit || fine.type==='multiplier')?' selected':''}>Multiplikator</option>
           <option value="fremdstrafe"${(isEdit && fine.type==='fremdstrafe')?' selected':''}>Fremdstrafe</option>
+          <option value="fremdstrafe_runde"${(isEdit && fine.type==='fremdstrafe_runde')?' selected':''}>Fremdstrafe + Runde</option>
           <option value="pudel"${(isEdit && fine.type==='pudel')?' selected':''}>Pudel</option>
           <option value="runde"${(isEdit && fine.type==='runde')?' selected':''}>Runde</option>
         </select>
@@ -3176,7 +3194,7 @@
     const catalog = detail.finesCatalogSnapshot || [];
     let total = 0;
     catalog.forEach(f=>{
-      if(f.type==='fremdstrafe') return;
+      if(isFremdstrafeType(f.type)) return;
       if(f.type==='runde') return; // Runden haben keinen Euro-Betrag
       const count = entries[f.id] || 0;
       total += count * f.amount;
@@ -3184,8 +3202,9 @@
     const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
     adHocList.forEach(a=>{ total += a.amount; });
 
-    // Fremdstrafen: wer sie auslöst zahlt selbst nichts, stattdessen zahlen alle anderen Anwesenden.
-    const fremdstrafeFines = catalog.filter(f=>f.type==='fremdstrafe');
+    // Fremdstrafen (inkl. "Fremdstrafe + Runde"): wer sie auslöst zahlt selbst nichts,
+    // stattdessen zahlen alle anderen Anwesenden.
+    const fremdstrafeFines = catalog.filter(f=>isFremdstrafeType(f.type));
     if(fremdstrafeFines.length>0){
       const otherPresentSeats = detail.seating.filter(s=>s.name && s.seatId!==seatId);
       fremdstrafeFines.forEach(f=>{
@@ -3384,7 +3403,7 @@
     function fineDetailRowHtml(f, entries, closed){
       const count = entries[f.id] || 0;
       const result = count * f.amount;
-      const isFremd = f.type==='fremdstrafe';
+      const isFremd = isFremdstrafeType(f.type);
       const isRunde = f.type==='runde';
       const resultDisplay = isFremd ? '' : isRunde ? 'Runde' : fmtEuro(result);
       return `
@@ -3406,7 +3425,7 @@
 
     const otherPresentSeats = detail.seating.filter(s=>s.name && s.seatId!==seatId);
     const fremdstrafeChargeRows = [];
-    catalog.filter(f=>f.type==='fremdstrafe').forEach(f=>{
+    catalog.filter(f=>isFremdstrafeType(f.type)).forEach(f=>{
       otherPresentSeats.forEach(s=>{
         const otherEntries = (detail.finesBySeat && detail.finesBySeat[s.seatId]) || {};
         const count = otherEntries[f.id] || 0;
@@ -3864,7 +3883,7 @@
   async function showBulkAddFineModal(){
     const detail = state.currentEveningDetail;
     try{ state.gamesCatalog = await getClubJSON('games-catalog', state.gamesCatalog); }catch(e){}
-    const catalog = (detail.finesCatalogSnapshot || []).filter(f=>f.type!=='fremdstrafe');
+    const catalog = (detail.finesCatalogSnapshot || []).filter(f=>!isFremdstrafeType(f.type));
     const games = state.gamesCatalog;
     if(catalog.length===0 && games.length===0){
       showModal(`
@@ -4680,7 +4699,7 @@
   }
 
   function attachFinesManagementListeners(){
-    document.querySelectorAll('#fines-list-container .row-clickable[data-id]').forEach(row=>{
+    document.querySelectorAll('#fines-list-container .row-clickable[data-id], #runden-list-container .row-clickable[data-id]').forEach(row=>{
       row.addEventListener('click', (e)=>{
         // Klicks auf den Drag-Handle sollen nur sortieren, nicht zusätzlich navigieren.
         if(e.target.closest('.drag-handle')) return;
@@ -4690,10 +4709,22 @@
     });
     const openAddFineBtn = document.getElementById('header-add-fine-catalog-btn');
     if(openAddFineBtn) openAddFineBtn.addEventListener('click', ()=>goToFineDetail(null));
-    setupDragReorder('fines-list-container', async (newIdOrder)=>{
+    // Reorder wirkt jeweils nur innerhalb seiner Box (Strafen bzw. Runden); Einträge aus der
+    // anderen Box werden dabei unverändert an ihrer bisherigen Position im Katalog belassen.
+    function reorderWithinSubset(newIdOrder){
       const byId = {};
       state.finesCatalog.forEach(f=>{ byId[f.id]=f; });
-      state.finesCatalog = newIdOrder.map(id=>byId[id]).filter(Boolean);
+      const idSet = new Set(newIdOrder);
+      const reorderedSubset = newIdOrder.map(id=>byId[id]).filter(Boolean);
+      let cursor = 0;
+      state.finesCatalog = state.finesCatalog.map(f=> idSet.has(f.id) ? reorderedSubset[cursor++] : f);
+    }
+    setupDragReorder('fines-list-container', async (newIdOrder)=>{
+      reorderWithinSubset(newIdOrder);
+      await setClubJSON('fines-catalog', state.finesCatalog);
+    });
+    setupDragReorder('runden-list-container', async (newIdOrder)=>{
+      reorderWithinSubset(newIdOrder);
       await setClubJSON('fines-catalog', state.finesCatalog);
     });
   }

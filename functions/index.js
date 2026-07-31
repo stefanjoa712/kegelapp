@@ -47,6 +47,12 @@ function roundUpToFullEuro(amount) {
   return Math.ceil(cents / 100);
 }
 
+// Prüft, ob eine Strafenart sich wie eine Fremdstrafe verhält (andere Anwesende zahlen statt
+// des Verursachers). Umfasst 'fremdstrafe' und die kombinierte Art 'fremdstrafe_runde'.
+function isFremdstrafeType(type) {
+  return type === 'fremdstrafe' || type === 'fremdstrafe_runde';
+}
+
 // Gesamtbetrag für einen Sitzplatz - inkl. Geldstrafen und umgelegter Fremdstrafen anderer.
 function fineTotalForSeat(detail, seatId) {
   const seat = detail.seating.find(s => s.seatId === seatId);
@@ -63,7 +69,7 @@ function fineTotalForSeat(detail, seatId) {
   let total = 0;
 
   catalog.forEach(f => {
-    if (f.type === 'fremdstrafe') return;
+    if (isFremdstrafeType(f.type)) return;
     if (f.type === 'runde') return; // Runden haben keinen Euro-Betrag
     const count = entries[f.id] || 0;
     total += count * f.amount;
@@ -72,7 +78,7 @@ function fineTotalForSeat(detail, seatId) {
   const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
   adHocList.forEach(a => { total += a.amount; });
 
-  const fremdstrafeFines = catalog.filter(f => f.type === 'fremdstrafe');
+  const fremdstrafeFines = catalog.filter(f => isFremdstrafeType(f.type));
   if (fremdstrafeFines.length > 0) {
     const otherPresentSeats = detail.seating.filter(s => s.name && s.seatId !== seatId);
     fremdstrafeFines.forEach(f => {
@@ -93,7 +99,7 @@ function buildCatalogLines(detail, seatId) {
   const catalog = detail.finesCatalogSnapshot || [];
   const lines = [];
   catalog.forEach(f => {
-    if (f.type === 'fremdstrafe') return;
+    if (isFremdstrafeType(f.type)) return;
     if (f.type === 'runde') return; // Runden haben keinen Euro-Betrag
     const count = entries[f.id] || 0;
     if (count > 0) lines.push({ label: `${f.name} (${count}×)`, amount: count * f.amount });
@@ -105,7 +111,7 @@ function buildFremdstrafeChargeLines(detail, seatId) {
   const catalog = detail.finesCatalogSnapshot || [];
   const otherPresentSeats = detail.seating.filter(s => s.name && s.seatId !== seatId);
   const lines = [];
-  catalog.filter(f => f.type === 'fremdstrafe').forEach(f => {
+  catalog.filter(f => isFremdstrafeType(f.type)).forEach(f => {
     otherPresentSeats.forEach(s => {
       const otherEntries = (detail.finesBySeat && detail.finesBySeat[s.seatId]) || {};
       const count = otherEntries[f.id] || 0;
