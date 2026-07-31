@@ -295,6 +295,7 @@
   .cal-cell-dot{width:5px; height:5px; border-radius:50%; background:var(--wood); position:absolute; bottom:5px;}
   .cal-cell.selected .cal-cell-dot{background:#fff;}
   .cal-cell-dot-birthday{background:var(--muted);}
+  .cal-cell-dot-anniversary{background:var(--brass-light);}
   .cal-birthday-icon{font-size:14px; opacity:0.65; filter:grayscale(0.4);}
   .cal-event-row{padding:12px 0; border-bottom:1px dashed var(--line); cursor:pointer; display:flex; align-items:center; gap:10px;}
   .cal-event-main{flex:1; min-width:0;}
@@ -629,7 +630,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.67';
+  const APP_VERSION = '1.0.68';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1270,6 +1271,31 @@
       const [, bm, bd] = mem.birthday.split('-').map(Number);
       if(bm===month) dateSet.add(isoDate(year, month, bd));
     });
+    return dateSet;
+  }
+
+  // Vereins-Jubiläum: jährlich wiederkehrender Jahrestag des Gründungsdatums (CURRENT_CLUB_DATA.
+  // foundedOn, siehe Club-Stammdaten) - analog zu member.birthday/getBirthdaysOnDate(). Das
+  // Gründungsjahr selbst (0 Jahre) wird bewusst nicht angezeigt, erst ab dem 1. Jahrestag.
+  function getAnniversaryOnDate(dateStr){
+    const foundedOn = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.foundedOn;
+    if(!foundedOn) return null;
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const [fy, fm, fd] = foundedOn.split('-').map(Number);
+    if(fm!==m || fd!==d) return null;
+    const years = y - fy;
+    if(years<=0) return null;
+    return { years };
+  }
+
+  // Liefert den Tag (als YYYY-MM-DD) in einem Monat, an dem das Vereins-Jubiläum liegt - analog
+  // zu getBirthdayDatesInMonth(). Da es nur einen Club gibt, höchstens ein Tag pro Monat.
+  function getAnniversaryDatesInMonth(year, month){
+    const dateSet = new Set();
+    const foundedOn = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.foundedOn;
+    if(!foundedOn) return dateSet;
+    const [fy, fm, fd] = foundedOn.split('-').map(Number);
+    if(fm===month && year>fy) dateSet.add(isoDate(year, month, fd));
     return dateSet;
   }
   function escapeHtml(str){
@@ -2188,6 +2214,7 @@
     const month = state.calendarViewMonth;
     const eventDates = getEventDatesInMonth(year, month);
     const birthdayDates = getBirthdayDatesInMonth(year, month);
+    const anniversaryDates = getAnniversaryDatesInMonth(year, month);
     const daysInMonth = new Date(year, month, 0).getDate();
     const firstWeekday = (new Date(year, month-1, 1).getDay()+6)%7; // 0=Montag
 
@@ -2202,10 +2229,11 @@
       const isToday = dateStr===todayISO();
       const hasEvent = eventDates.has(dateStr);
       const hasBirthday = birthdayDates.has(dateStr);
+      const hasAnniversary = anniversaryDates.has(dateStr);
       return `
         <button type="button" class="cal-cell${isSelected?' selected':''}${isToday && !isSelected?' today':''}" data-date="${dateStr}">
           <span class="cal-cell-num">${day}</span>
-          ${hasBirthday ? '<span class="cal-cell-dot cal-cell-dot-birthday"></span>' : (hasEvent ? '<span class="cal-cell-dot"></span>' : '')}
+          ${hasBirthday ? '<span class="cal-cell-dot cal-cell-dot-birthday"></span>' : (hasAnniversary ? '<span class="cal-cell-dot cal-cell-dot-anniversary"></span>' : (hasEvent ? '<span class="cal-cell-dot"></span>' : ''))}
         </button>
       `;
     }).join('');
@@ -2221,10 +2249,21 @@
       </div>
     `).join('');
 
+    const selectedAnniversary = getAnniversaryOnDate(state.calendarSelectedDate);
+    const anniversaryHtml = selectedAnniversary ? `
+      <div class="cal-event-row">
+        <span class="cal-event-own-status cal-birthday-icon" title="Jubiläum">🏆</span>
+        <div class="cal-event-main">
+          <div class="cal-event-title">Jubiläum</div>
+          <div class="cal-event-meta">${escapeHtml(clubDisplayName())} besteht seit ${selectedAnniversary.years} Jahren</div>
+        </div>
+      </div>
+    ` : '';
+
     const selectedEvents = getEventsOnDate(state.calendarSelectedDate);
-    const eventsHtml = (selectedEvents.length===0 && selectedBirthdays.length===0)
+    const eventsHtml = (selectedEvents.length===0 && selectedBirthdays.length===0 && !selectedAnniversary)
       ? `<p class="empty-state">Keine Termine an diesem Tag.</p>`
-      : birthdaysHtml + selectedEvents.map(ev=>{
+      : birthdaysHtml + anniversaryHtml + selectedEvents.map(ev=>{
         const groups = categorizeRsvps(ev.seriesId, ev.occurrenceDate);
         const currentName = getCurrentMemberName();
         const ownStatus = currentName ? getRsvpStatusFor(ev.seriesId, ev.occurrenceDate, currentName) : null;
