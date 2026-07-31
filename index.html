@@ -629,7 +629,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.66';
+  const APP_VERSION = '1.0.67';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3485,29 +3485,20 @@
   function showReopenEveningModal(){
     showModal(`
       <h3>Kegelabend wieder öffnen</h3>
-      <p>Zum Wiederöffnen ist das gleiche Kennwort wie beim Löschen erforderlich.</p>
-      <label for="reopen-password-input">Kennwort</label>
-      <input type="password" id="reopen-password-input" placeholder="Kennwort" autocomplete="off">
-      <p class="form-error" id="reopen-password-error"></p>
+      <p>Der Abend wird wieder bearbeitbar. Bereits verbuchte Strafen und Rückstände aus diesem Abend werden zurückgerechnet und die Anwesenheitsstatistik entsprechend korrigiert. Invalide markierte Personen verlieren ihren fest hinterlegten Durchschnittsbetrag.</p>
       <label class="member-check-row" style="cursor:pointer;">
         <input type="checkbox" id="reopen-send-emails-checkbox" checked>
         <span>Korrektur-Mails an Mitglieder senden</span>
       </label>
+      <p class="form-error" id="reopen-password-error"></p>
       <div class="confirm-row-buttons">
         <button type="button" class="btn-primary" id="confirm-reopen-yes">Öffnen</button>
         <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
       </div>
     `);
     document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    const pwInput = document.getElementById('reopen-password-input');
-    if(pwInput){
-      pwInput.focus();
-      pwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); document.getElementById('confirm-reopen-yes').click(); } });
-    }
     document.getElementById('confirm-reopen-yes').addEventListener('click', async ()=>{
-      const entered = pwInput ? pwInput.value : '';
       const errEl = document.getElementById('reopen-password-error');
-      if(entered !== DELETE_PASSWORD){ if(errEl) errEl.textContent='Falsches Kennwort.'; return; }
       const sendEmails = document.getElementById('reopen-send-emails-checkbox').checked;
       const btn = document.getElementById('confirm-reopen-yes');
       btn.disabled = true; btn.textContent = 'Öffnet…';
