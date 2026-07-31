@@ -262,6 +262,29 @@ async function saveClubEntity(clubRef, collectionName, entry) {
   });
 }
 
+// Pflegt den 'arrears/_index' innerhalb eines bereits vorhandenen Batches mit, wenn Einträge
+// gesetzt oder gelöscht werden - arrears folgt demselben "Einzeldokument pro Eintrag + Index"-
+// Muster wie members/events/etc. (siehe loadClubEntityCollection), die Schreibpfade in
+// closeEvening/reopenEvening/deleteEvening haben den Index bisher nicht gepflegt, sodass der
+// Client (makeClubEntityStore('arrears').getAll(), liest NUR über den Index) neu angelegte
+// Einträge nie zu sehen bekam, obwohl das Dokument selbst korrekt in Firestore stand.
+async function applyArrearsIndexUpdates(clubRef, batch, setIds, deleteIds) {
+  if (setIds.length === 0 && deleteIds.length === 0) return;
+  const indexRef = clubRef.collection('arrears').doc('_index');
+  const indexSnap = await indexRef.get();
+  let index = indexSnap.exists ? JSON.parse(indexSnap.data().value || '[]') : [];
+  let changed = false;
+  setIds.forEach(id => {
+    if (!index.includes(id)) { index.push(id); changed = true; }
+  });
+  if (deleteIds.length > 0) {
+    const before = index.length;
+    index = index.filter(id => !deleteIds.includes(id));
+    if (index.length !== before) changed = true;
+  }
+  if (changed) batch.set(indexRef, { value: JSON.stringify(index) });
+}
+
 async function loadMembers(clubId) {
   const indexSnap = await db.collection('clubs').doc(clubId).collection('members').doc('_index').get();
   if (!indexSnap.exists) { logger.warn(`Kein Mitglieder-Index gefunden für Club ${clubId}.`); return null; }
@@ -625,6 +648,7 @@ exports.closeEvening = onCall({}, async (request) => {
   touchedArrearsEntries.forEach(entry => {
     batch.set(clubRef.collection('arrears').doc(entry.id), { value: JSON.stringify(entry) });
   });
+  await applyArrearsIndexUpdates(clubRef, batch, touchedArrearsEntries.map(e => e.id), []);
   await batch.commit();
 
   // Anwesenheitsstatistik aktualisieren (attendance-stats unter clubs/{clubId}/data) - separat vom
@@ -742,6 +766,8 @@ exports.reopenEvening = onCall({}, async (request) => {
   const batch = db.batch();
   batch.set(eveningRef, { value: JSON.stringify(mainFields) });
   batch.set(dataRef, { value: JSON.stringify(eveningsIndex) });
+  const arrearsSetIds = [];
+  const arrearsDeleteIds = [];
   touchedArrearsEntries.forEach(entry => {
     const isGuest = entry.id && entry.id.startsWith('guest-');
     const entryRef = clubRef.collection('arrears').doc(entry.id);
@@ -749,10 +775,13 @@ exports.reopenEvening = onCall({}, async (request) => {
     // amount:0 gespeichert - identisch zu saveArrearsEntry() im Client.
     if (isGuest && Math.round((entry.amount || 0) * 100) === 0) {
       batch.delete(entryRef);
+      arrearsDeleteIds.push(entry.id);
     } else {
       batch.set(entryRef, { value: JSON.stringify(entry) });
+      arrearsSetIds.push(entry.id);
     }
   });
+  await applyArrearsIndexUpdates(clubRef, batch, arrearsSetIds, arrearsDeleteIds);
   await batch.commit();
 
   try {
@@ -822,15 +851,20 @@ exports.deleteEvening = onCall({}, async (request) => {
   seatsSnap.forEach(seatDoc => { batch.delete(seatDoc.ref); });
   batch.delete(eveningRef);
   batch.set(dataRef, { value: JSON.stringify(eveningsIndex) });
+  const arrearsSetIds = [];
+  const arrearsDeleteIds = [];
   touchedArrearsEntries.forEach(entry => {
     const isGuest = entry.id && entry.id.startsWith('guest-');
     const entryRef = clubRef.collection('arrears').doc(entry.id);
     if (isGuest && Math.round((entry.amount || 0) * 100) === 0) {
       batch.delete(entryRef);
+      arrearsDeleteIds.push(entry.id);
     } else {
       batch.set(entryRef, { value: JSON.stringify(entry) });
+      arrearsSetIds.push(entry.id);
     }
   });
+  await applyArrearsIndexUpdates(clubRef, batch, arrearsSetIds, arrearsDeleteIds);
   await batch.commit();
 
   if (wasClosed) {
