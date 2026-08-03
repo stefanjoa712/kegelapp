@@ -723,7 +723,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.94';
+  const APP_VERSION = '1.0.95';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -817,7 +817,7 @@
   // (abgelaufener Free-Zeitraum, subscription.accessBlocked - siehe readOnlyBannerHtml() und
   // firestore.rules/clubAccessBlocked()). Wird an den wenigen zentralen Schreibstellen der App
   // aufgerufen (setClubJSON, makeClubEntityStore.save/remove, evening-Writes) - NICHT aber in
-  // saveClub() selbst, da Kassenwart/Präsident weiterhin auf "Pro" wechseln können müssen.
+  // saveClub() selbst, da Kassenwart/Präsident weiterhin auf "Premium" wechseln können müssen.
   // Rein clientseitiges UX (schnelle, verständliche Fehlermeldung statt eines rohen Firestore-
   // Permission-Fehlers) - die eigentliche Durchsetzung übernehmen unabhängig davon die
   // Firestore Rules.
@@ -2143,7 +2143,7 @@
     const sub = subscription || {};
     const isPro = sub.plan==='pro';
     const badgeClass = isPro ? 'plan-pro' : 'plan-free';
-    const badgeLabel = isPro ? 'Pro' : 'Free';
+    const badgeLabel = isPro ? 'Premium' : 'Kostenlose Testversion';
     let detailHtml = '';
     if(sub.freeUntil){
       const expired = sub.freeUntil < todayISO();
@@ -2206,14 +2206,14 @@
     return `
       <div class="sub-readonly-banner">
         ${ICON_INFO_SMALL}
-        <span>Der kostenlose Testzeitraum ist abgelaufen. Die App kann nur noch gelesen, nicht mehr bearbeitet werden. Wechsle in der Clubverwaltung auf "Pro", um wieder vollen Zugriff zu erhalten.</span>
+        <span>Der kostenlose Testzeitraum ist abgelaufen. Die App kann nur noch gelesen, nicht mehr bearbeitet werden. Wechsle in der Clubverwaltung auf "Premium", um wieder vollen Zugriff zu erhalten.</span>
       </div>
     `;
   }
 
   // Plan-Auswahlseite ("Abonnement anpassen"): zeigt Free und Pro nebeneinander als Karten,
   // aktuell aktiver Plan ist hervorgehoben (dickerer Rahmen + "Aktuell"-Tag). Reine
-  // Auswahl-UI ohne Speicherfunktion - ein Wechsel auf "Pro" erfordert eine Zahlungsabwicklung,
+  // Auswahl-UI ohne Speicherfunktion - ein Wechsel auf "Premium" erfordert eine Zahlungsabwicklung,
   // die noch nicht implementiert ist (siehe Stripe-Planung); die Radiobuttons sind daher aktuell
   // rein informativ und lösen (noch) kein Speichern aus. Free ist zusätzlich nie anwählbar,
   // weil das Ablaufdatum nicht editierbar sein soll (siehe Anforderung) - ein "Downgrade" auf
@@ -2228,12 +2228,12 @@
     const freeExpired = sub.freeUntil && sub.freeUntil < todayISO();
 
     return `
-      <p class="hint" style="margin-top:0;">Die Bezahlfunktion für "Pro" folgt in Kürze. Diese Seite zeigt schon einmal, wie die Auswahl aussehen wird.</p>
+      <p class="hint" style="margin-top:0;">Die Bezahlfunktion für "Premium" folgt in Kürze. Diese Seite zeigt schon einmal, wie die Auswahl aussehen wird.</p>
       <div class="plan-picker-grid">
         <label class="plan-picker-card${isFree?' selected':''}">
           <input type="radio" name="plan-choice" value="free"${isFree?' checked':''} disabled>
           <div class="plan-picker-head">
-            <span class="plan-picker-name">Free</span>
+            <span class="plan-picker-name">Kostenlose Testversion</span>
             ${isFree ? `<span class="plan-picker-current-tag">Aktuell</span>` : ''}
           </div>
           <div class="plan-picker-price">0 €<span class="unit">/ Monat</span></div>
@@ -2247,12 +2247,12 @@
         <label class="plan-picker-card${isPro?' selected':''}" id="plan-picker-pro">
           <input type="radio" name="plan-choice" value="pro"${isPro?' checked':''}>
           <div class="plan-picker-head">
-            <span class="plan-picker-name">Pro</span>
+            <span class="plan-picker-name">Premium</span>
             ${isPro ? `<span class="plan-picker-current-tag">Aktuell</span>` : ''}
           </div>
           <div class="plan-picker-price">${priceStr} €<span class="unit">/ Monat</span></div>
           <ul class="plan-picker-features">
-            <li>${ICON_CHECK_SMALL}Alles aus Free, dauerhaft</li>
+            <li>${ICON_CHECK_SMALL}Alles aus der kostenlosen Testversion, dauerhaft</li>
             <li>${ICON_CHECK_SMALL}Kein Ablaufdatum, kein Read-Only-Risiko</li>
             <li>${ICON_CHECK_SMALL}Unterstützt die Weiterentwicklung der App</li>
           </ul>
@@ -2297,12 +2297,14 @@
         return;
       }
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
+      showModalLoadingOverlay('Club wird gelöscht…');
       try{
         const deleteClubFn = httpsCallable(functions, 'deleteClub');
         await deleteClubFn({ clubId: CURRENT_CLUB_ID });
         closeGenericModal();
         await logout();
       }catch(e){
+        hideModalLoadingOverlay();
         if(pwErrEl) pwErrEl.textContent = 'Löschen fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
         yesBtn.disabled = false; yesBtn.textContent = 'Ja, endgültig löschen';
       }
@@ -4865,7 +4867,7 @@
   // übersteuert. Rein clientseitiges UX (verhindert unnötige, dann ohnehin von den Firestore
   // Rules abgelehnte Schreibversuche) - die eigentliche Durchsetzung bleibt serverseitig.
   // Ausnahme: clubManagement/subscriptionPlans bleiben unangetastet, da dort weiterhin auf
-  // "Pro" gewechselt werden können muss (siehe clubAccessBlocked() in firestore.rules).
+  // "Premium" gewechselt werden können muss (siehe clubAccessBlocked() in firestore.rules).
   function applyReadOnlyLockToView(){
     if(state.view==='clubManagement' || state.view==='subscriptionPlans') return;
     const accessBlocked = !!(CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.subscription && CURRENT_CLUB_DATA.subscription.accessBlocked);
