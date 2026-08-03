@@ -375,6 +375,11 @@
   .year-evenings .evening-row{padding-left:10px;}
 
   label{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-soft); display:block; margin-bottom:6px;}
+  .field-label-row{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .field-label-row label{margin-bottom:0;}
+  .info-icon-btn{display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; padding:0; margin-bottom:6px; border:none; background:none; color:var(--ink-soft); cursor:pointer; flex-shrink:0;}
+  .info-icon-btn svg{width:18px; height:18px;}
+  .info-icon-btn:hover{color:var(--ink);}
   input[type="text"], input[type="date"], input[type="password"], input[type="email"]{
     font-family:var(--font-body); font-size:15px; padding:10px 12px; border:1px solid var(--line);
     border-radius:8px; background:#fff; color:var(--ink); width:100%;
@@ -723,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.98';
+  const APP_VERSION = '1.0.101';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -792,6 +797,19 @@
     return seats;
   }
   function SEATS(){ return buildSeats(); }
+
+  // Standard-Sitzplatz, dessen Inhaber bei der Auslosungsoption "Standardplatz" automatisch
+  // Schriftführer wird (siehe #clubverwaltung, Abschnitt "Sitzplan", und createEvening()).
+  // Fällt auf 'kneipe-1' zurück (historischer Default, entspricht "Rechts 1" bei den
+  // Standard-Seitenbezeichnungen), falls der Club noch keinen eigenen Wert gespeichert hat, oder
+  // falls der gespeicherte Wert keiner der aktuell gültigen 12 seatIds entspricht (z.B. nach
+  // versehentlicher Dateninkonsistenz).
+  const DEFAULT_STANDARD_SCHRIFTFUEHRER_SEAT_ID = 'kneipe-1';
+  function getStandardSchriftfuehrerSeatId(){
+    const stored = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.standardSchriftfuehrerSeatId;
+    const validIds = buildSeats().map(s=>s.id);
+    return (stored && validIds.includes(stored)) ? stored : DEFAULT_STANDARD_SCHRIFTFUEHRER_SEAT_ID;
+  }
 
   // ---------- Zustand ----------
   // Ausstehender Notizen-Speichervorgang (800ms Debounce, siehe Notizen-Textarea-Handler weiter
@@ -2228,6 +2246,10 @@
     const readOnly = !canManageMembers();
     const disabledAttr = readOnly ? ' disabled' : '';
     const sideNames = getSeatingSideNames();
+    const standardSeatId = getStandardSchriftfuehrerSeatId();
+    const standardSeatOptionsHtml = buildSeats().map(seat=>
+      `<option value="${seat.id}"${seat.id===standardSeatId?' selected':''}>${escapeHtml(seat.label)}</option>`
+    ).join('');
     return `
       <div class="card">
         <h2 class="section-title">Abonnement</h2>
@@ -2242,6 +2264,19 @@
         <input type="date" id="club-founded" value="${club.foundedOn || ''}"${disabledAttr}>
       </div>
       <div class="card">
+        <h2 class="section-title">Sitzplan</h2>
+        <label for="club-seating-left">Bezeichnung linke Seite</label>
+        <input type="text" id="club-seating-left" placeholder="z. B. Links" value="${escapeHtml(sideNames.left)}"${disabledAttr}>
+        <label for="club-seating-right">Bezeichnung rechte Seite</label>
+        <input type="text" id="club-seating-right" placeholder="z. B. Rechts" value="${escapeHtml(sideNames.right)}"${disabledAttr}>
+        <p class="hint">Die Kürzel auf dem Sitzplan (z. B. „L1") leiten sich automatisch aus den Anfangsbuchstaben der Bezeichnungen ab.</p>
+        <div class="field-label-row">
+          <label for="club-standard-seat">Standardplatz Schriftführer</label>
+          <button type="button" class="info-icon-btn" id="standard-seat-info-btn" aria-label="Erklärung anzeigen">${ICON_INFO_SMALL}</button>
+        </div>
+        <select id="club-standard-seat"${disabledAttr}>${standardSeatOptionsHtml}</select>
+      </div>
+      <div class="card">
         <h2 class="section-title">Finanzen</h2>
         <label for="club-paypal">PayPal.Me-Name</label>
         <input type="text" id="club-paypal" placeholder="z. B. diepudolfs (aus paypal.com/paypalme/diepudolfs)" value="${escapeHtml(club.paypalName || '')}"${disabledAttr}>
@@ -2250,14 +2285,6 @@
         <label for="club-account-holder">Kontoinhaber</label>
         <input type="text" id="club-account-holder" placeholder="z. B. Die Pudolfs e.V." value="${escapeHtml(club.accountHolder || '')}"${disabledAttr}>
         <p class="hint">Sind IBAN und Kontoinhaber hinterlegt, bekommen Gäste auf ihrer Strafenseite zusätzlich zum PayPal-Button einen QR-Code für die Überweisung per Banking-App.</p>
-      </div>
-      <div class="card">
-        <h2 class="section-title">Sitzplan</h2>
-        <label for="club-seating-left">Bezeichnung linke Seite</label>
-        <input type="text" id="club-seating-left" placeholder="z. B. Links" value="${escapeHtml(sideNames.left)}"${disabledAttr}>
-        <label for="club-seating-right">Bezeichnung rechte Seite</label>
-        <input type="text" id="club-seating-right" placeholder="z. B. Rechts" value="${escapeHtml(sideNames.right)}"${disabledAttr}>
-        <p class="hint">Die Kürzel auf dem Sitzplan (z. B. „L1") leiten sich automatisch aus den Anfangsbuchstaben der Bezeichnungen ab.</p>
       </div>
       <p class="form-error" id="club-form-error"></p>
       ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-club-btn" disabled>Speichern</button>`}
@@ -4980,12 +5007,27 @@
     const manageSubBtn = document.getElementById('manage-subscription-btn');
     if(manageSubBtn) manageSubBtn.addEventListener('click', goToSubscriptionPlans);
 
+    // Info-Popup für den Standardplatz Schriftführer - vor dem readOnly-Return angehängt,
+    // damit die Erklärung auch für Nutzer ohne Bearbeitungsrechte verfügbar bleibt.
+    const standardSeatInfoBtn = document.getElementById('standard-seat-info-btn');
+    if(standardSeatInfoBtn) standardSeatInfoBtn.addEventListener('click', ()=>{
+      showModal(`
+        <h3>Standardplatz Schriftführer</h3>
+        <p>Bei der Option „Standardplatz" beim Auslosen eines Kegelabends wird automatisch die Person auf diesem Platz Schriftführer.</p>
+        <p>Ist dieser Platz beim jeweiligen Abend nicht besetzt (z. B. weil weniger Personen anwesend sind), wird stattdessen zufällig ein Mitglied als Schriftführer ausgelost.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    });
+
     const saveBtn = document.getElementById('save-club-btn');
     if(!saveBtn) return;
 
     // Änderungs-Erkennung: Speichern-Button ist nur aktiv, wenn sich mind. ein Feld
     // gegenüber dem geladenen Stand unterscheidet.
-    const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder','club-seating-left','club-seating-right'];
+    const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder','club-seating-left','club-seating-right','club-standard-seat'];
     const initialClubValues = {};
     clubFieldIds.forEach(id=>{ const el = document.getElementById(id); if(el) initialClubValues[id] = el.value; });
     const updateSaveBtnState = ()=>{
@@ -5009,6 +5051,7 @@
       const accountHolder = document.getElementById('club-account-holder').value.trim();
       const seatingLeft = document.getElementById('club-seating-left').value.trim() || DEFAULT_SEATING_SIDE_NAMES.left;
       const seatingRight = document.getElementById('club-seating-right').value.trim() || DEFAULT_SEATING_SIDE_NAMES.right;
+      const standardSeatId = document.getElementById('club-standard-seat').value;
 
       if(!name){ errEl.textContent = 'Bitte einen Clubnamen angeben.'; return; }
       if(!foundedOn){ errEl.textContent = 'Bitte ein Gründungsdatum angeben.'; return; }
@@ -5042,6 +5085,7 @@
           accountHolder: accountHolder ? accountHolder : deleteField(),
           seatingSideNames: { left: seatingLeft, right: seatingRight },
           seatingShortLabels,
+          standardSchriftfuehrerSeatId: standardSeatId,
         };
         await saveClub(clubUpdate);
         CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), name, foundedOn };
@@ -5050,6 +5094,7 @@
         if(accountHolder){ CURRENT_CLUB_DATA.accountHolder = accountHolder; } else { delete CURRENT_CLUB_DATA.accountHolder; }
         CURRENT_CLUB_DATA.seatingSideNames = { left: seatingLeft, right: seatingRight };
         CURRENT_CLUB_DATA.seatingShortLabels = seatingShortLabels;
+        CURRENT_CLUB_DATA.standardSchriftfuehrerSeatId = standardSeatId;
         markFetched('clubData');
         applyClubBranding();
         render();
@@ -6711,19 +6756,22 @@
     const schriftfuehrerSelect = document.getElementById('schriftfuehrer-select');
     const schriftfuehrerChoice = schriftfuehrerSelect ? schriftfuehrerSelect.value : 'standard';
     const isStandardplatz = schriftfuehrerChoice === 'standard';
-    // Bei "Standardplatz" landet zwingend ein Mitglied (kein Gast) auf K1 und wird automatisch
-    // Schriftführer - bei "Auslosen" und einer konkreten Namenswahl bleibt die Sitzverlosung
-    // hingegen komplett normal/zufällig, der Schriftführer wird erst danach bestimmt.
+    // Der Standardplatz ist in der Clubverwaltung konfigurierbar (siehe
+    // getStandardSchriftfuehrerSeatId(), Default 'kneipe-1'). Bei "Standardplatz" landet zwingend
+    // ein Mitglied (kein Gast) auf diesem Platz und wird automatisch Schriftführer - bei
+    // "Auslosen" und einer konkreten Namenswahl bleibt die Sitzverlosung hingegen komplett
+    // normal/zufällig, der Schriftführer wird erst danach bestimmt.
+    const standardSeatId = getStandardSchriftfuehrerSeatId();
 
     let shuffledParticipants;
-    if(isStandardplatz && occupiedSeatIds.includes('kneipe-1')){
-      // K1 wird automatisch Schriftführer - dort darf deshalb kein Gast landen.
+    if(isStandardplatz && occupiedSeatIds.includes(standardSeatId)){
+      // Der Standardplatz wird automatisch Schriftführer - dort darf deshalb kein Gast landen.
       const members = participants.filter(p=>!p.isGuest);
       if(members.length>0){
         const forcedMember = members[Math.floor(Math.random()*members.length)];
         const rest = shuffle(participants.filter(p=>p!==forcedMember));
-        const otherSeatIds = occupiedSeatIds.filter(id=>id!=='kneipe-1');
-        const tempAssignment = { 'kneipe-1': forcedMember };
+        const otherSeatIds = occupiedSeatIds.filter(id=>id!==standardSeatId);
+        const tempAssignment = { [standardSeatId]: forcedMember };
         otherSeatIds.forEach((seatId, i)=>{ tempAssignment[seatId] = rest[i]; });
         shuffledParticipants = occupiedSeatIds.map(id=>tempAssignment[id]);
       }else{
@@ -6738,7 +6786,18 @@
 
     let schriftfuehrerSeatId = null;
     if(isStandardplatz){
-      if(seatAssignment['kneipe-1'] && !seatAssignment['kneipe-1'].isGuest) schriftfuehrerSeatId = 'kneipe-1';
+      if(seatAssignment[standardSeatId] && !seatAssignment[standardSeatId].isGuest){
+        schriftfuehrerSeatId = standardSeatId;
+      }else{
+        // Standardplatz existiert bei diesem Abend nicht (weniger Teilnehmer als der
+        // Standardplatz-Index erfordert) - in diesem Fall wird stattdessen wie bei "Auslosen"
+        // zufällig ein Mitglied (kein Gast) unter allen besetzten Plätzen bestimmt (siehe auch
+        // Hinweis im Info-Popup "Standardplatz Schriftführer" in der Clubverwaltung).
+        const memberSeatIds = occupiedSeatIds.filter((seatId, i)=> !shuffledParticipants[i].isGuest);
+        if(memberSeatIds.length>0){
+          schriftfuehrerSeatId = memberSeatIds[Math.floor(Math.random()*memberSeatIds.length)];
+        }
+      }
     }else if(schriftfuehrerChoice==='draw'){
       const memberSeatIds = occupiedSeatIds.filter((seatId, i)=> !shuffledParticipants[i].isGuest);
       if(memberSeatIds.length>0){
