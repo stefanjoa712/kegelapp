@@ -719,11 +719,11 @@
   // ---------- Konstante Daten ----------
   // Kennwort, das vor dem Löschen eines Kegelabends abgefragt wird (kein echter Sicherheitsmechanismus,
   // nur eine Hürde gegen versehentliches Löschen - jeder mit Blick in den Quellcode könnte es finden).
-  const DELETE_PASSWORD = 'KEGEL-2957';
+  const DELETE_CONFIRM_WORD = 'LÖSCHEN';
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.93';
+  const APP_VERSION = '1.0.94';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2264,16 +2264,17 @@
   }
 
   // Löscht den kompletten Club unwiderruflich (alle Daten + Auth-Zugänge der Mitglieder, siehe
-  // Cloud Function deleteClub). Erfordert die Eingabe des App-weiten Lösch-Kennworts als zweite
-  // Bestätigung (DELETE_PASSWORD oben). Beim Löschen eines einzelnen Kegelabends genügt seit
-  // v1.0.83 die reine Ja/Nein-Bestätigung, ohne Kennwortabfrage.
+  // Cloud Function deleteClub). Erfordert die Eingabe des Worts "LÖSCHEN" (DELETE_CONFIRM_WORD
+  // oben) als zweite Bestätigung - höhere Hürde als bei anderen Löschaktionen, weil hier
+  // unwiderruflich ALLE Daten des Clubs verloren gehen. Beim Löschen eines einzelnen
+  // Kegelabends genügt seit v1.0.83 die reine Ja/Nein-Bestätigung, ohne Texteingabe.
   function showDeleteClubModal(){
     const name = clubDisplayName();
     showModal(`
       <h3>Club löschen</h3>
       <p><strong>${escapeHtml(name)}</strong> und alle zugehörigen Daten (Mitglieder, Kegelabende, Finanzen, Termine, ...) werden unwiderruflich gelöscht. Das kann nicht rückgängig gemacht werden.</p>
-      <label for="delete-club-password-input">Kennwort</label>
-      <input type="password" id="delete-club-password-input" placeholder="Kennwort" autocomplete="off">
+      <label for="delete-club-confirm-input">Schreibe LÖSCHEN in das Feld, wenn du den Club wirklich löschen möchtest.</label>
+      <input type="text" id="delete-club-confirm-input" placeholder="LÖSCHEN" autocomplete="off" autocapitalize="characters">
       <p class="form-error" id="delete-club-password-error"></p>
       <div class="confirm-row-buttons">
         <button type="button" class="btn-danger" id="confirm-delete-club-yes">Ja, endgültig löschen</button>
@@ -2281,18 +2282,18 @@
       </div>
     `);
     document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    const pwInput = document.getElementById('delete-club-password-input');
-    if(pwInput){
-      pwInput.focus();
-      pwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const yb=document.getElementById('confirm-delete-club-yes'); if(yb) yb.click(); } });
+    const confirmInput = document.getElementById('delete-club-confirm-input');
+    if(confirmInput){
+      confirmInput.focus();
+      confirmInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const yb=document.getElementById('confirm-delete-club-yes'); if(yb) yb.click(); } });
     }
     document.getElementById('confirm-delete-club-yes').addEventListener('click', async ()=>{
       const yesBtn = document.getElementById('confirm-delete-club-yes');
-      const pwInputEl = document.getElementById('delete-club-password-input');
+      const confirmInputEl = document.getElementById('delete-club-confirm-input');
       const pwErrEl = document.getElementById('delete-club-password-error');
-      const entered = pwInputEl ? pwInputEl.value : '';
-      if(entered !== DELETE_PASSWORD){
-        if(pwErrEl) pwErrEl.textContent = 'Falsches Kennwort.';
+      const entered = confirmInputEl ? confirmInputEl.value.trim() : '';
+      if(entered !== DELETE_CONFIRM_WORD){
+        if(pwErrEl) pwErrEl.textContent = `Bitte gib genau "${DELETE_CONFIRM_WORD}" ein.`;
         return;
       }
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
