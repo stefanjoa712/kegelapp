@@ -728,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.103';
+  const APP_VERSION = '1.0.104';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3647,6 +3647,13 @@
     state.eveningsIndex = state.eveningsIndex.filter(e=>e.id!==eveningId);
     if(state.eveningsIndex.length===before) return; // war ohnehin nicht (mehr) im Index
     markFetched('eveningsIndex');
+    // Die Bereinigung von state.eveningsIndex oben passiert VOR dem render() im aufrufenden
+    // openEveningDetail()/goToTodayEvening() (dort wird sofort nach dem Setzen von
+    // state.mainError gerendert, ohne auf diese async-Funktion zu warten) - ohne dieses zweite
+    // render() blieb der bereinigte Eintrag in der bereits angezeigten Liste unverändert stehen,
+    // bis der Nutzer durch irgendeine andere Aktion einen weiteren Render-Zyklus auslöste (z.B.
+    // durch einen zweiten Klick auf den Abend).
+    if(state.view==='main') render();
     try{
       await setClubJSON('evenings-index', state.eveningsIndex);
     }catch(e){
