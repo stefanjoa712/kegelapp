@@ -630,7 +630,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, collection, getDoc, getDocs, getDocFromCache, setDoc, deleteDoc, deleteField, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, collection, getDoc, getDocs, getDocFromCache, getDocFromServer, setDoc, deleteDoc, deleteField, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
     setPersistence, browserLocalPersistence, browserSessionPersistence,
@@ -728,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.101';
+  const APP_VERSION = '1.0.106';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -912,7 +912,14 @@
     }catch(e){
       cacheResult = undefined;
     }
-    withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
+    // WICHTIG: getDocFromServer() statt getDoc() für den Hintergrundabgleich - getDoc() kann bei
+    // aktivem persistentLocalCache je nach SDK-interner Einschätzung den lokalen Cache bedienen,
+    // statt garantiert zum Server zu gehen. Das führte dazu, dass z.B. nach dem Löschen eines
+    // Kegelabends über eine Cloud Function (die am Client komplett vorbeischreibt) der stale
+    // Cache-Stand dauerhaft bestehen blieb, weil auch der vermeintliche "Server-Abgleich" nur
+    // denselben veralteten Cache-Wert zurücklieferte. getDocFromServer() erzwingt einen echten
+    // Server-Roundtrip und schließt diese Cache-Falle aus.
+    withTimeout(getDocFromServer(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
       const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
       if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
         onBackgroundUpdate(serverResult);
@@ -937,7 +944,9 @@
     }catch(e){
       cacheResult = undefined;
     }
-    withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
+    // Siehe Kommentar in getClubJSON() oben - getDocFromServer() statt getDoc(), um den
+    // Hintergrundabgleich verlässlich gegen den echten Serverstand laufen zu lassen.
+    withTimeout(getDocFromServer(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
       const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
       if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
         onBackgroundUpdate(serverResult);
@@ -965,9 +974,16 @@
   // erneuten Versuch mehr. Mit dem state-Update losgelöst vom render() wird der korrekte Stand
   // jetzt in jedem Fall übernommen, sobald er eintrifft - nur die sofortige Neu-Darstellung
   // bleibt der ursprünglich erwarteten View vorbehalten.
+  // Zeitstempel des letzten Hintergrund-Serverabgleichs für eveningsIndex (siehe
+  // backgroundStateUpdate() unten und init(), das damit eine Race Condition vermeidet: ohne
+  // diesen Zeitstempel konnte init() einen bereits vom Hintergrundabgleich korrigierten
+  // state.eveningsIndex-Wert direkt danach wieder mit seinem eigenen, unter Umständen
+  // veralteten Rückgabewert überschreiben).
+  let lastEveningsIndexBackgroundSyncAt = 0;
   function backgroundStateUpdate(stateKey, expectedView){
     return function(serverResult){
       state[stateKey] = serverResult;
+      if(stateKey==='eveningsIndex') lastEveningsIndexBackgroundSyncAt = Date.now();
       if(state.view===expectedView) render();
     };
   }
@@ -1599,13 +1615,20 @@
     const keys = ['eveningsIndex','financeArrears','calendarEvents','calendarOccurrenceEdits'];
     if(!allFresh(keys)) renderLoading('Übersicht wird geladen…');
     try{
+      // Siehe ausführlicher Kommentar in init(): eveningsIndexFetchStartedAt +
+      // lastEveningsIndexBackgroundSyncAt verhindern, dass die Zuweisung unten einen
+      // zwischenzeitlich vom Hintergrundabgleich bereits korrigierten state.eveningsIndex-Wert
+      // wieder mit dem (unter Umständen veralteten) Rückgabewert dieses Promise.all überschreibt.
+      const eveningsIndexFetchStartedAt = Date.now();
       const [eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         fetchIfStale('eveningsIndex', ()=> getClubJSONOrThrow('evenings-index', [], backgroundStateUpdate('eveningsIndex', 'main'))),
         fetchIfStale('financeArrears', getAllArrears),
         fetchIfStale('calendarEvents', getAllCalendarEvents),
         fetchIfStale('calendarOccurrenceEdits', getAllOccurrenceEdits)
       ]);
-      state.eveningsIndex = eveningsIndex;
+      if(lastEveningsIndexBackgroundSyncAt < eveningsIndexFetchStartedAt){
+        state.eveningsIndex = eveningsIndex;
+      }
       state.financeArrears = arrears;
       state.calendarEvents = calendarEvents;
       state.calendarOccurrenceEdits = calendarOccurrenceEdits;
@@ -1634,6 +1657,7 @@
         state.mainError = 'Konnte diesen Abend nicht laden.';
         state.view = 'main';
         render();
+        removeOrphanedEveningIndexEntry(eve.id);
         return;
       }
       state.currentEveningDetail = detail;
@@ -3619,23 +3643,117 @@
     const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
     if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)};
   }
+
+  // Holt den GARANTIERT aktuellen Serverstand von evenings-index (nie aus dem lokalen Cache),
+  // mit state.eveningsIndex als Fallback, falls das Dokument (noch) nicht existiert.
+  async function getEveningsIndexFromServer(){
+    try{
+      const snap = await withTimeout(getDocFromServer(clubDocRef('evenings-index')), STORAGE_TIMEOUT_MS);
+      return snap.exists() ? JSON.parse(snap.data().value) : [];
+    }catch(e){
+      console.error('Konnte evenings-index nicht vom Server laden, nutze lokalen Stand als Fallback', e);
+      return state.eveningsIndex;
+    }
+  }
+
+  // ZENTRALER Schreib-Helper für ALLE Änderungen an evenings-index (anlegen, löschen,
+  // Kennzahlen aktualisieren, Karteileichen entfernen).
+  //
+  // WICHTIG: mutatorFn bekommt NICHT state.eveningsIndex, sondern den frisch vom Server
+  // geholten Stand übergeben, und das Ergebnis wird sowohl zurückgeschrieben als auch in
+  // state.eveningsIndex übernommen. Vorher bauten alle Schreibstellen direkt auf
+  // state.eveningsIndex auf - war dieser lokale Stand durch den Firestore-Client-Cache
+  // (persistentLocalCache, siehe initializeFirestore()) veraltet (z.B. weil ein Kegelabend
+  // gerade per deleteEvening-Cloud-Function gelöscht wurde, was am Client komplett vorbeischreibt
+  // und den Cache nicht invalidiert), wurde dieser veraltete Stand bei JEDEM weiteren Schreiben
+  // erneut zementiert - ein bereits korrekt gelöschter Abend konnte so durch das bloße Anlegen
+  // eines NEUEN Abends (dessen newIndex auf dem stale state.eveningsIndex aufbaute) versehentlich
+  // wiederhergestellt werden. Indem jede Schreiboperation zwingend zuerst den echten Serverstand
+  // holt und NUR darauf ihre eigene, lokal bekannte Änderung anwendet, kann kein stale Zustand
+  // mehr über einen Schreibvorgang "zurückgeholt" werden.
+  //
+  // mutatorFn(serverIndex) muss den NEUEN Index-Array zurückgeben (reiner Funktionsstil, kein
+  // In-Place-Mutieren von serverIndex nötig, aber unschädlich).
+  async function updateEveningsIndex(mutatorFn){
+    const serverIndex = await getEveningsIndexFromServer();
+    const newIndex = mutatorFn(serverIndex);
+    await setClubJSON('evenings-index', newIndex);
+    state.eveningsIndex = newIndex;
+    return newIndex;
+  }
+
+  // Entfernt einen Index-Eintrag, dessen zugehöriges Hauptdokument in Firestore nicht mehr
+  // existiert (getEveningDetail() liefert null), aus state.eveningsIndex und speichert den
+  // bereinigten Index zurück. Wird aufgerufen, wenn der Versuch, einen Abend zu öffnen
+  // (openEveningDetail(), goToTodayEvening()), fehlschlägt, weil das Dokument fehlt - das ist der
+  // zuverlässigste Zeitpunkt für diese Selbstheilung, weil zu diesem Zeitpunkt zweifelsfrei
+  // feststeht, dass der Eintrag verwaist ist (nicht bloß ein Cache-Timing-Problem). Ein solcher
+  // Karteileichen-Eintrag kann z.B. entstehen, wenn ein früherer Löschvorgang
+  // (deleteEvening Cloud Function) durch eine Race Condition mit einem gleichzeitigen Schreiben
+  // auf evenings-index (anderes Gerät/Tab, oder ein noch nicht abgeschlossener vorheriger
+  // Speichervorgang) überschrieben wurde. Ohne diese Bereinigung blieb ein solcher Eintrag für
+  // immer in evenings-index bestehen, auch nach Reload, weil sonst kein Mechanismus
+  // evenings-index gegen die tatsächlich existierenden evenings-Dokumente abgleicht.
+  async function removeOrphanedEveningIndexEntry(eveningId){
+    // Sofortiges lokales Update für unmittelbare Anzeige, BEVOR der Server-Roundtrip
+    // abgeschlossen ist (siehe render()-Aufruf unten) - der maßgebliche, dauerhaft gespeicherte
+    // Stand kommt aber aus updateEveningsIndex(), das zwingend gegen den frischen Serverstand
+    // arbeitet (siehe dortiger Kommentar).
+    const before = state.eveningsIndex.length;
+    state.eveningsIndex = state.eveningsIndex.filter(e=>e.id!==eveningId);
+    if(state.eveningsIndex.length===before) return; // war ohnehin nicht (mehr) im Index
+    markFetched('eveningsIndex');
+    if(state.view==='main') render();
+    try{
+      await updateEveningsIndex(serverIndex=> serverIndex.filter(e=>e.id!==eveningId));
+    }catch(e){
+      console.error('Konnte verwaisten evenings-index-Eintrag nicht zurückspeichern', e);
+    }
+  }
   // Holt für Abende, deren Index-Eintrag noch keine Kennzahlen enthält (ältere Einträge vor
   // Einführung dieses Felds), einmalig das Detail-Dokument nach und cacht die Kennzahlen im Index.
+  //
+  // SELBSTHEILUNG verwaister Index-Einträge: existiert zu einem Index-Eintrag KEIN
+  // Hauptdokument mehr (getEveningDetail() liefert null), wird der Eintrag hier automatisch aus
+  // state.eveningsIndex entfernt und der bereinigte Index zurückgespeichert. Das kann passieren,
+  // wenn eine frühere Löschung (deleteEvening Cloud Function) durch eine Race Condition den
+  // Index-Eintrag stehen ließ (z.B. gleichzeitige Schreibvorgänge auf evenings-index von einem
+  // anderen Gerät/Tab) oder ein noch stärker veralteter Client-Cache-Stand aus dem Delete-Zeitpunkt
+  // erneut gespeichert wurde, bevor der Löschvorgang serverseitig durchgeschlagen war. Ohne diese
+  // Bereinigung blieb ein solcher Karteileichen-Eintrag für immer bestehen (auch nach Reload),
+  // weil es sonst keinen weiteren Mechanismus gibt, der evenings-index gegen die tatsächlich
+  // existierenden evenings-Dokumente abgleicht.
   async function backfillEveningSummaries(){
     const missing = state.eveningsIndex.filter(e=> e.income===undefined);
     if(missing.length===0) return;
     try{
       const details = await Promise.all(missing.map(e=> getEveningDetail(e.id)));
-      let changed = false;
+      const orphanedIds = new Set();
+      const summaryById = {};
       details.forEach((detail, i)=>{
-        if(!detail) return;
-        const idx = state.eveningsIndex.findIndex(x=>x.id===missing[i].id);
-        if(idx>=0){ state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)}; changed = true; }
+        if(!detail){ orphanedIds.add(missing[i].id); return; }
+        summaryById[missing[i].id] = computeEveningSummaryFields(detail);
       });
-      if(changed){
-        await setClubJSON('evenings-index', state.eveningsIndex);
-        if(state.view==='main') render();
-      }
+      if(Object.keys(summaryById).length===0 && orphanedIds.size===0) return;
+
+      // Sofortiges lokales Update für unmittelbare Anzeige, bevor der Server-Roundtrip
+      // abgeschlossen ist (siehe render()-Aufruf unten).
+      state.eveningsIndex = state.eveningsIndex
+        .filter(e=> !orphanedIds.has(e.id))
+        .map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e);
+      if(orphanedIds.size>0) console.warn('Verwaiste evenings-index-Einträge ohne Hauptdokument entfernt:', [...orphanedIds]);
+      if(state.view==='main') render();
+
+      // Der maßgebliche, dauerhaft gespeicherte Stand kommt aus updateEveningsIndex(), das
+      // zwingend gegen den frischen Serverstand arbeitet (siehe dortiger Kommentar) - wichtig,
+      // weil backfillEveningSummaries() im Hintergrund ohne await läuft (siehe Aufrufstellen in
+      // goToMain()/init()) und daher etwas dauern kann, während zwischenzeitlich z.B. ein
+      // Abend gelöscht wurde.
+      await updateEveningsIndex(serverIndex=> serverIndex
+        .filter(e=> !orphanedIds.has(e.id))
+        .map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e)
+      );
+      if(state.view==='main') render();
     }catch(e){ console.error('Backfill der Abend-Kennzahlen fehlgeschlagen', e); }
   }
 
@@ -3950,9 +4068,10 @@
   // etwas ändern (Katalog-Strafe hoch/runter zählen, Geldstrafe hinzufügen/bearbeiten/löschen).
   async function saveEveningSeatFinesAndIndex(detail, seatId){
     updateEveningIndexSummary(detail);
+    const summary = computeEveningSummaryFields(detail);
     await Promise.all([
       saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId]),
-      setClubJSON('evenings-index', state.eveningsIndex)
+      updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
     ]);
   }
 
@@ -3961,10 +4080,11 @@
   // Transaktion, unterschiedliche Sitzplätze können sich also weiterhin nicht kollidieren.
   async function saveEveningSeatsFinesAndIndex(detail, seatIds){
     updateEveningIndexSummary(detail);
+    const summary = computeEveningSummaryFields(detail);
     const uniqueSeatIds = [...new Set(seatIds)];
     await Promise.all([
       ...uniqueSeatIds.map(seatId=> saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId])),
-      setClubJSON('evenings-index', state.eveningsIndex)
+      updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
     ]);
   }
 
@@ -4193,9 +4313,10 @@
         delete seat.invalidAmount; // wird erst beim Abschließen fest eingetragen
       }
       updateEveningIndexSummary(detail);
+      const summary = computeEveningSummaryFields(detail);
       await Promise.all([
         saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex)
+        updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
       ]);
       closeGenericModal();
       render();
@@ -4223,9 +4344,10 @@
         delete seat.invalidAmount;
       }
       updateEveningIndexSummary(detail);
+      const summary = computeEveningSummaryFields(detail);
       await Promise.all([
         saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex)
+        updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
       ]);
       closeGenericModal();
       render();
@@ -4354,9 +4476,10 @@
       const seat = detail.seating.find(s=>s.seatId===seatId);
       if(seat){ seat.name = name; seat.isGuest = isGuest; seat.addedLater = true; }
       updateEveningIndexSummary(detail);
+      const summary = computeEveningSummaryFields(detail);
       await Promise.all([
         saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex)
+        updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
       ]);
       closeGenericModal();
       render();
@@ -5196,6 +5319,7 @@
         state.mainError = 'Konnte diesen Abend nicht laden.';
         state.view = 'main';
         render();
+        removeOrphanedEveningIndexEntry(id);
         return;
       }
       state.currentEveningDetail = detail;
@@ -6825,12 +6949,11 @@
 
     const id = uid('e');
     const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation };
-    const newIndex = [...state.eveningsIndex, {id, date, ...computeEveningSummaryFields(detail)}];
+    const newIndexEntry = {id, date, ...computeEveningSummaryFields(detail)};
     await Promise.all([
       saveEveningMainDoc(detail),
-      setClubJSON('evenings-index', newIndex)
+      updateEveningsIndex(serverIndex=> [...serverIndex, newIndexEntry])
     ]);
-    state.eveningsIndex = newIndex;
 
     state.currentEveningDetail = detail;
     state.justCreated = true;
@@ -7466,6 +7589,20 @@
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
     try{
+      // WICHTIG: eveningsIndex wird hier bewusst NICHT aus dem Promise.all-Ergebnis in
+      // state.eveningsIndex übernommen (siehe unten). getClubJSONOrThrow() startet parallel zu
+      // seinem eigenen Rückgabewert einen Hintergrund-Serverabgleich (onBackgroundUpdate,
+      // hier backgroundStateUpdate('eveningsIndex','main')), der state.eveningsIndex bereits
+      // während dieses Promise.all noch läuft mit dem korrekten Serverstand überschreiben kann
+      // (z.B. wenn der Server schneller antwortet als die anderen Requests in diesem Promise.all).
+      // Eine anschließende, bedingungslose Zuweisung state.eveningsIndex = eveningsIndex hätte
+      // diesen bereits korrigierten Wert wieder mit dem ursprünglichen (unter Umständen
+      // veralteten Cache-)Rückgabewert überschrieben - das führte dazu, dass ein kurz zuvor
+      // gelöschter Kegelabend nach einem Reload trotz bereits korrekt bereinigter Datenbank
+      // weiterhin angezeigt wurde. Stattdessen wird hier ein Platzhalter-Marker verglichen:
+      // nur falls der Hintergrundabgleich zwischenzeitlich NICHT bereits zugeschlagen hat, wird
+      // der Promise.all-Rückgabewert übernommen.
+      const eveningsIndexFetchStartedAt = Date.now();
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getAllMembers(),
         getClubJSONOrThrow('evenings-index', [], backgroundStateUpdate('eveningsIndex', 'main')),
@@ -7474,7 +7611,11 @@
         getAllOccurrenceEdits()
       ]);
       state.members = members;
-      state.eveningsIndex = eveningsIndex;
+      // Nur übernehmen, wenn seit Start dieses Ladevorgangs noch KEIN Hintergrundabgleich für
+      // eveningsIndex stattgefunden hat (siehe Kommentar oben und markEveningsIndexBackgroundSync()).
+      if(lastEveningsIndexBackgroundSyncAt < eveningsIndexFetchStartedAt){
+        state.eveningsIndex = eveningsIndex;
+      }
       state.financeArrears = arrears;
       state.calendarEvents = calendarEvents;
       state.calendarOccurrenceEdits = calendarOccurrenceEdits;
