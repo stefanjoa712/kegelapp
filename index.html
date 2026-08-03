@@ -87,6 +87,7 @@
   }
   .header-overflow-menu[hidden]{display:none;}
   .header-overflow-item{display:block; width:100%; text-align:left; background:none; border:none; padding:13px 16px; font-family:var(--font-body); font-weight:700; font-size:14px; color:var(--wine); cursor:pointer; border-top:1px solid var(--line); white-space:nowrap;}
+  .header-overflow-item:disabled{color:var(--muted); cursor:not-allowed; opacity:0.6;}
   .header-overflow-item:first-child{border-top:none;}
   .header-overflow-item.neutral{color:var(--ink);}
   .header-overflow-item:hover{background:var(--bg);}
@@ -243,6 +244,7 @@
   }
   .btn-secondary:hover{background:var(--bg);}
   .btn-secondary:active{transform:translate(2px,2px); box-shadow:0 0 0 var(--ink);}
+  .btn-secondary:disabled{opacity:0.45; cursor:not-allowed; box-shadow:none;}
 
   .btn-danger{
     background:var(--surface); color:var(--wine); border:2px solid var(--wine); padding:10px 18px;
@@ -328,6 +330,7 @@
   .cal-event-meta{font-size:13px; color:var(--muted); margin-top:2px;}
   .rsvp-btn-row{display:flex; gap:8px;}
   .rsvp-btn{flex:1; padding:11px 6px; border-radius:8px; border:2px solid var(--line); background:#fff; color:var(--ink); font-weight:700; font-size:13px; cursor:pointer;}
+  .rsvp-btn:disabled{opacity:0.5; cursor:not-allowed;}
   .rsvp-btn.active.accepted{background:#1a7a3c; border-color:#1a7a3c; color:#fff;}
   .rsvp-btn.active.tentative{background:#b8860b; border-color:#b8860b; color:#fff;}
   .rsvp-btn.active.declined{background:var(--wine); border-color:var(--wine); color:#fff;}
@@ -553,6 +556,59 @@
     font-family:var(--font-mono); font-size:14px; color:var(--ink-soft); text-align:center; padding:20px;
     z-index:10;
   }
+
+  /* ---------- Abonnement-Anzeige (Clubverwaltung) und Plan-Auswahlseite ----------
+     Orientiert an gängigen Subscription-UIs großer Apps (App Store, Spotify): ein farbiges
+     Plan-Badge (Pill) für den Namen, große Zahl für den Preis, Haken-Liste für den Funktions-
+     umfang, aktuell aktiver Plan optisch hervorgehoben (dickerer Rahmen + Badge "Aktuell"). */
+  .sub-status-row{display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;}
+  .sub-status-main{display:flex; flex-direction:column; gap:8px; min-width:0;}
+  .sub-plan-badge{
+    display:inline-flex; align-items:center; gap:6px; align-self:flex-start;
+    font-family:var(--font-display); font-weight:700; font-size:13px; letter-spacing:0.02em;
+    padding:5px 12px; border-radius:999px; border:1.5px solid transparent;
+  }
+  .sub-plan-badge.plan-free{background:var(--bg); color:var(--ink-soft); border-color:var(--line);}
+  .sub-plan-badge.plan-pro{background:var(--wood); color:#fff;}
+  .sub-plan-badge-dot{width:7px; height:7px; border-radius:50%; background:currentColor; flex-shrink:0;}
+  .sub-detail-text{font-size:14px; color:var(--ink-soft); margin:0;}
+  .sub-detail-text strong{color:var(--ink); font-weight:700;}
+  .sub-price-text{font-family:var(--font-display); font-size:22px; font-weight:700; color:var(--ink);}
+  .sub-price-text .unit{font-family:var(--font-body); font-size:13px; font-weight:600; color:var(--muted); margin-left:2px;}
+  .sub-manage-btn{
+    background:var(--surface); color:var(--ink); border:2px solid var(--ink); padding:9px 16px;
+    font-weight:800; font-size:14px; border-radius:9px; cursor:pointer; white-space:nowrap;
+    box-shadow:3px 3px 0 var(--ink); transition:transform .08s ease, box-shadow .08s ease;
+  }
+  .sub-manage-btn:hover{background:var(--bg);}
+  .sub-manage-btn:active{transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink);}
+  .sub-readonly-banner{
+    display:flex; align-items:flex-start; gap:10px; background:var(--wine); color:#fff;
+    padding:12px 14px; border-radius:10px; font-size:13.5px; font-weight:600; margin-bottom:16px;
+    line-height:1.4;
+  }
+  .sub-readonly-banner svg{width:20px; height:20px; flex-shrink:0; margin-top:1px;}
+
+  .plan-picker-grid{display:flex; flex-direction:column; gap:14px;}
+  .plan-picker-card{
+    position:relative; background:var(--surface); border:2px solid var(--line); border-radius:14px;
+    padding:20px; cursor:pointer; transition:border-color .12s ease, box-shadow .12s ease;
+  }
+  .plan-picker-card:hover{border-color:var(--wood);}
+  .plan-picker-card.selected{border-color:var(--ink); box-shadow:4px 4px 0 var(--ink);}
+  .plan-picker-card input[type="radio"]{position:absolute; opacity:0; pointer-events:none;}
+  .plan-picker-head{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;}
+  .plan-picker-name{font-family:var(--font-display); font-size:18px; font-weight:700;}
+  .plan-picker-current-tag{
+    font-size:11px; font-weight:800; letter-spacing:0.04em; color:var(--wood); background:var(--tint);
+    border:1px solid var(--brass); padding:3px 9px; border-radius:999px; text-transform:uppercase;
+  }
+  .plan-picker-price{font-family:var(--font-display); font-size:26px; font-weight:700; margin:2px 0 10px;}
+  .plan-picker-price .unit{font-family:var(--font-body); font-size:13px; font-weight:600; color:var(--muted); margin-left:3px;}
+  .plan-picker-features{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px;}
+  .plan-picker-features li{display:flex; align-items:flex-start; gap:8px; font-size:14px; color:var(--ink-soft);}
+  .plan-picker-features li svg{width:17px; height:17px; color:var(--felt); flex-shrink:0; margin-top:1px;}
+  .plan-picker-free-until{font-size:13px; color:var(--muted); margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);}
 </style>
 </head>
 <body>
@@ -667,7 +723,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.92';
+  const APP_VERSION = '1.0.93';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -755,6 +811,20 @@
       promise,
       new Promise((_, reject)=> setTimeout(()=> reject(new Error('Zeitüberschreitung')), ms))
     ]);
+  }
+
+  // Zentraler Schreibschutz: wirft einen Fehler, wenn der Club im Read-Only-Modus ist
+  // (abgelaufener Free-Zeitraum, subscription.accessBlocked - siehe readOnlyBannerHtml() und
+  // firestore.rules/clubAccessBlocked()). Wird an den wenigen zentralen Schreibstellen der App
+  // aufgerufen (setClubJSON, makeClubEntityStore.save/remove, evening-Writes) - NICHT aber in
+  // saveClub() selbst, da Kassenwart/Präsident weiterhin auf "Pro" wechseln können müssen.
+  // Rein clientseitiges UX (schnelle, verständliche Fehlermeldung statt eines rohen Firestore-
+  // Permission-Fehlers) - die eigentliche Durchsetzung übernehmen unabhängig davon die
+  // Firestore Rules.
+  function assertNotAccessBlocked(){
+    if(CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.subscription && CURRENT_CLUB_DATA.subscription.accessBlocked){
+      throw new Error('Der kostenlose Testzeitraum ist abgelaufen. Die App kann nur noch gelesen werden.');
+    }
   }
 
   // ---------- Club-gebundene Varianten von getJSON/getJSONOrThrow/setJSON ----------
@@ -879,6 +949,7 @@
     // gecacht, braucht daher keine Invalidierung.
   };
   async function setClubJSON(key, value){
+    assertNotAccessBlocked();
     try{
       await withTimeout(setDoc(clubDocRef(key), { value: JSON.stringify(value) }), STORAGE_TIMEOUT_MS);
       invalidate(CLUB_JSON_STATE_KEY[key] || key);
@@ -914,6 +985,7 @@
     }
 
     async function save(entry){
+      assertNotAccessBlocked();
       await withTimeout(runTransaction(db, async (tx)=>{
         const iRef = indexRef();
         const indexSnap = await tx.get(iRef);
@@ -928,6 +1000,7 @@
     }
 
     async function remove(id){
+      assertNotAccessBlocked();
       await withTimeout(runTransaction(db, async (tx)=>{
         const iRef = indexRef();
         const indexSnap = await tx.get(iRef);
@@ -1120,6 +1193,7 @@
   // laufen separat über saveEveningSeatFines). detail darf die Felder enthalten, sie werden hier
   // einfach ignoriert.
   async function saveEveningMainDoc(detail){
+    assertNotAccessBlocked();
     const { finesBySeat, adHocFinesBySeat, roundsGivenBySeat, ...mainFields } = detail;
     await withTimeout(setDoc(eveningDocRef(detail.id), { value: JSON.stringify(mainFields) }), STORAGE_TIMEOUT_MS);
   }
@@ -1128,6 +1202,7 @@
   // Personen gleichzeitig für denselben Sitzplatz mitzählen, wiederholt Firestore die Transaktion
   // automatisch statt eine der beiden Änderungen zu verlieren).
   async function saveEveningSeatFines(eveningId, seatId, fines, adHocFines, roundsGiven){
+    assertNotAccessBlocked();
     await withTimeout(runTransaction(db, async (tx)=>{
       tx.set(eveningSeatDocRef(eveningId, seatId), { value: JSON.stringify({ finesBySeat: fines||{}, adHocFinesBySeat: adHocFines||[], roundsGivenBySeat: roundsGiven||{} }) });
     }), STORAGE_TIMEOUT_MS);
@@ -1137,6 +1212,7 @@
   // nachträglich hinzugefügte Person die Seite wechselt) - liest den alten Stand, schreibt ihn
   // unter der neuen seatId, löscht das alte Dokument.
   async function moveEveningSeatFines(eveningId, oldSeatId, newSeatId){
+    assertNotAccessBlocked();
     const oldSnap = await withTimeout(getDoc(eveningSeatDocRef(eveningId, oldSeatId)), STORAGE_TIMEOUT_MS);
     if(!oldSnap.exists()) return;
     await withTimeout(setDoc(eveningSeatDocRef(eveningId, newSeatId), oldSnap.data()), STORAGE_TIMEOUT_MS);
@@ -1568,6 +1644,15 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToClubManagement);
     }
   }
+  // Öffnet die Plan-Auswahlseite ("Abonnement anpassen") - nutzt dieselben Club-Stammdaten wie
+  // die Clubverwaltung (CURRENT_CLUB_DATA), lädt daher nichts zusätzlich nach. Zugriff ist an
+  // dieselbe Berechtigung wie die Clubverwaltung geknüpft (siehe canManageMembers()) - wird
+  // beim Öffnen NICHT erneut geprüft, weil der Button in der Clubverwaltung ohnehin nur
+  // Nutzern mit dieser Berechtigung angezeigt wird.
+  function goToSubscriptionPlans(){
+    state.view = 'subscriptionPlans';
+    render();
+  }
   function goToRecurringDetail(existingRecurring){
     state.currentRecurringId = existingRecurring ? existingRecurring.id : null;
     state.view = 'recurringDetail';
@@ -1699,6 +1784,7 @@
 
   function goBackFromHeader(){
     if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
+    else if(state.view==='subscriptionPlans') goToClubManagement();
     else if(state.view==='memberDetail') goToSettings();
     else if(state.view==='fineDetail') goToFinesManagement();
     else if(state.view==='gameDetail') goToGamesManagement();
@@ -2030,24 +2116,51 @@
     `;
   }
 
-  // Formatiert das Abo eines Clubs für die Anzeige in der Clubverwaltung. Reine Anzeige/Tracking -
-  // KEINE Sperrlogik, kein Einfluss auf Funktionsumfang. Konfiguration erfolgt manuell über die
-  // Datenbank (subscription-Feld im Club-Dokument, siehe clubs/<clubId>):
-  //   subscription.plan: 'free' | 'pro' (weitere Pläne später denkbar)
+  // Plan-Katalog: Anzeigename, Preis und Funktionsumfang je Plan. Bewusst zentral gehalten - wird
+  // sowohl für die kompakte Statusanzeige in der Clubverwaltung als auch für die volle
+  // Plan-Auswahlseite (viewSubscriptionPlans()) verwendet, damit Preise/Features nur an einer
+  // Stelle gepflegt werden müssen. PRO_PRICE_EUR ist der einzige Preis-Punkt (siehe Stripe-
+  // Planung) - bei Einführung weiterer Tarife hier ergänzen.
+  const PRO_PRICE_EUR = 4.99;
+
+  // Icon für Haken-Listen (Funktionsumfang je Plan) - dezentes Checkmark-Icon, angelehnt an
+  // gängige Subscription-Seiten (App Store, Spotify: Preis groß, Haken-Liste darunter).
+  const ICON_CHECK_SMALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
+  const ICON_INFO_SMALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>`;
+
+  // Formatiert das Abo eines Clubs für die kompakte Statusanzeige in der Clubverwaltung (Plan-
+  // Badge + Zusatztext, farblich je Plan unterschieden). Reine Anzeige/Tracking - KEINE
+  // Sperrlogik im Client; die eigentliche Durchsetzung (Read-Only nach Ablauf) läuft über
+  // Firestore Rules gegen subscription.accessBlocked (siehe firestore.rules,
+  // updateSubscriptionAccessStatus in functions/index.js). Konfiguration/Zuweisung des Plans
+  // erfolgt über die neue Plan-Auswahlseite (viewSubscriptionPlans()); freeUntil bleibt bewusst
+  // nicht editierbar (siehe dort).
+  //   subscription.plan: 'free' | 'pro'
   //   subscription.priceEUR: Preis/Monat, nur relevant wenn plan !== 'free'
-  //   subscription.freeUntil: ISO-Datum (YYYY-MM-DD), optionaler Free-Zeitraum. Liegt dieses
-  //     Datum in der Zukunft, hat Vorrang vor der Plan-Anzeige (auch wenn plan schon 'pro' ist -
-  //     z. B. während einer Testphase eines kostenpflichtigen Plans).
-  function formatSubscriptionLabel(subscription){
+  //   subscription.freeUntil: ISO-Datum (YYYY-MM-DD), Ende des Free-Zeitraums
+  //   subscription.accessBlocked: von der Cloud Function vorberechnet, s.o.
+  function renderSubscriptionStatusCard(subscription){
     const sub = subscription || {};
-    if(sub.freeUntil && sub.freeUntil >= todayISO()){
-      return `"Free" bis zum ${formatDateShortDE(sub.freeUntil)}`;
+    const isPro = sub.plan==='pro';
+    const badgeClass = isPro ? 'plan-pro' : 'plan-free';
+    const badgeLabel = isPro ? 'Pro' : 'Free';
+    let detailHtml = '';
+    if(sub.freeUntil){
+      const expired = sub.freeUntil < todayISO();
+      detailHtml = `<p class="sub-detail-text">${expired ? 'Testzeitraum abgelaufen am' : 'Läuft bis zum'} <strong>${formatDateShortDE(sub.freeUntil)}</strong></p>`;
+    } else if(isPro){
+      const price = (typeof sub.priceEUR==='number') ? sub.priceEUR.toFixed(2).replace('.',',') : PRO_PRICE_EUR.toFixed(2).replace('.',',');
+      detailHtml = `<p class="sub-price-text">${price} €<span class="unit">/ Monat</span></p>`;
     }
-    if(sub.plan==='pro'){
-      const price = (typeof sub.priceEUR==='number') ? sub.priceEUR.toFixed(2).replace('.',',') : '?';
-      return `Pro (${price} € / Monat)`;
-    }
-    return 'Free';
+    return `
+      <div class="sub-status-row">
+        <div class="sub-status-main">
+          <span class="sub-plan-badge ${badgeClass}"><span class="sub-plan-badge-dot"></span>${badgeLabel}</span>
+          ${detailHtml}
+        </div>
+        <button type="button" class="sub-manage-btn" id="manage-subscription-btn">Abonnement anpassen</button>
+      </div>
+    `;
   }
 
   function viewClubManagement(){
@@ -2059,7 +2172,7 @@
     return `
       <div class="card">
         <h2 class="section-title">Abonnement</h2>
-        <p class="hint" style="margin-top:0;">${formatSubscriptionLabel(club.subscription)}</p>
+        ${renderSubscriptionStatusCard(club.subscription)}
       </div>
       <div class="card">
         <h2 class="section-title">Allgemein</h2>
@@ -2081,6 +2194,72 @@
       </div>
       <p class="form-error" id="club-form-error"></p>
       ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-club-btn" disabled>Speichern</button>`}
+    `;
+  }
+
+  // Banner, der auf JEDER Seite oben angezeigt wird, sobald der Club im Read-Only-Modus ist
+  // (abgelaufener Free-Zeitraum, subscription.accessBlocked). Rein informativ/UX - die
+  // eigentliche Durchsetzung übernehmen die Firestore Rules unabhängig davon (siehe
+  // firestore.rules, clubAccessBlocked()); dieser Banner erklärt dem Nutzer nur, warum
+  // Schreibvorgänge fehlschlagen, statt ihn mit einer unerklärten Fehlermeldung zurückzulassen.
+  function readOnlyBannerHtml(){
+    return `
+      <div class="sub-readonly-banner">
+        ${ICON_INFO_SMALL}
+        <span>Der kostenlose Testzeitraum ist abgelaufen. Die App kann nur noch gelesen, nicht mehr bearbeitet werden. Wechsle in der Clubverwaltung auf "Pro", um wieder vollen Zugriff zu erhalten.</span>
+      </div>
+    `;
+  }
+
+  // Plan-Auswahlseite ("Abonnement anpassen"): zeigt Free und Pro nebeneinander als Karten,
+  // aktuell aktiver Plan ist hervorgehoben (dickerer Rahmen + "Aktuell"-Tag). Reine
+  // Auswahl-UI ohne Speicherfunktion - ein Wechsel auf "Pro" erfordert eine Zahlungsabwicklung,
+  // die noch nicht implementiert ist (siehe Stripe-Planung); die Radiobuttons sind daher aktuell
+  // rein informativ und lösen (noch) kein Speichern aus. Free ist zusätzlich nie anwählbar,
+  // weil das Ablaufdatum nicht editierbar sein soll (siehe Anforderung) - ein "Downgrade" auf
+  // Free ist ohnehin kein Vorgang, der ohne Zahlungslogik sinnvoll manuell auslösbar wäre.
+  function viewSubscriptionPlans(){
+    const club = CURRENT_CLUB_DATA || {};
+    const sub = club.subscription || {};
+    const isPro = sub.plan==='pro';
+    const isFree = !isPro;
+    const price = (typeof sub.priceEUR==='number') ? sub.priceEUR : PRO_PRICE_EUR;
+    const priceStr = price.toFixed(2).replace('.',',');
+    const freeExpired = sub.freeUntil && sub.freeUntil < todayISO();
+
+    return `
+      <p class="hint" style="margin-top:0;">Die Bezahlfunktion für "Pro" folgt in Kürze. Diese Seite zeigt schon einmal, wie die Auswahl aussehen wird.</p>
+      <div class="plan-picker-grid">
+        <label class="plan-picker-card${isFree?' selected':''}">
+          <input type="radio" name="plan-choice" value="free"${isFree?' checked':''} disabled>
+          <div class="plan-picker-head">
+            <span class="plan-picker-name">Free</span>
+            ${isFree ? `<span class="plan-picker-current-tag">Aktuell</span>` : ''}
+          </div>
+          <div class="plan-picker-price">0 €<span class="unit">/ Monat</span></div>
+          <ul class="plan-picker-features">
+            <li>${ICON_CHECK_SMALL}Voller Funktionsumfang während des Testzeitraums</li>
+            <li>${ICON_CHECK_SMALL}Beliebig viele Kegelabende &amp; Mitglieder</li>
+            <li>${ICON_CHECK_SMALL}Finanzverwaltung &amp; Strafenkatalog</li>
+          </ul>
+          ${sub.freeUntil ? `<p class="plan-picker-free-until">${freeExpired ? 'Abgelaufen am' : 'Läuft bis zum'} ${formatDateShortDE(sub.freeUntil)} · Ablaufdatum ist nicht veränderbar</p>` : ''}
+        </label>
+        <label class="plan-picker-card${isPro?' selected':''}" id="plan-picker-pro">
+          <input type="radio" name="plan-choice" value="pro"${isPro?' checked':''}>
+          <div class="plan-picker-head">
+            <span class="plan-picker-name">Pro</span>
+            ${isPro ? `<span class="plan-picker-current-tag">Aktuell</span>` : ''}
+          </div>
+          <div class="plan-picker-price">${priceStr} €<span class="unit">/ Monat</span></div>
+          <ul class="plan-picker-features">
+            <li>${ICON_CHECK_SMALL}Alles aus Free, dauerhaft</li>
+            <li>${ICON_CHECK_SMALL}Kein Ablaufdatum, kein Read-Only-Risiko</li>
+            <li>${ICON_CHECK_SMALL}Unterstützt die Weiterentwicklung der App</li>
+          </ul>
+        </label>
+      </div>
+      <p class="form-error" id="subscription-plans-error"></p>
+      <button type="button" class="btn-primary" id="subscription-plans-continue-btn" disabled>Zahlung folgt in Kürze</button>
     `;
   }
 
@@ -2553,7 +2732,7 @@
   function bottomNavHtml(){
     const todayEve = todayEvening();
     const isTodayActive = !!(state.view==='detail' && state.currentEveningDetail && todayEve && state.currentEveningDetail.id===todayEve.id);
-    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='fineDetail' || state.view==='gamesManagement' || state.view==='gameDetail' || state.view==='financeManagement' || state.view==='eventManagement';
+    const isSettingsActive = state.view==='settingsMenu' || state.view==='settings' || state.view==='clubManagement' || state.view==='subscriptionPlans' || state.view==='finesManagement' || state.view==='fineDetail' || state.view==='gamesManagement' || state.view==='gameDetail' || state.view==='financeManagement' || state.view==='eventManagement';
     const isFinanceActive = state.view==='finance' || state.view==='arrearsDetail';
     const isCalendarActive = state.view==='calendar' || state.view==='eventDetail';
     const activeTab = isSettingsActive ? 'settings' : (isFinanceActive ? 'finance' : (isCalendarActive ? 'calendar' : (isTodayActive ? 'today' : 'overview')));
@@ -2628,6 +2807,7 @@
   function hashFor(sig){
     if(sig==='settingsMenu') return '#einstellungen';
     if(sig==='clubManagement') return '#clubverwaltung';
+    if(sig==='subscriptionPlans') return '#abonnement';
     if(sig==='settings') return '#mitglieder';
     if(sig==='finesManagement') return '#strafen';
     if(sig==='gamesManagement') return '#spiele';
@@ -2655,6 +2835,7 @@
     if(state.view==='main') body = viewMain();
     else if(state.view==='settingsMenu') body = viewSettingsMenu();
     else if(state.view==='clubManagement') body = viewClubManagement();
+    else if(state.view==='subscriptionPlans') body = viewSubscriptionPlans();
     else if(state.view==='settings') body = viewSettings();
     else if(state.view==='memberDetail') body = viewMemberDetail();
     else if(state.view==='finesManagement') body = viewFinesManagement();
@@ -2672,7 +2853,14 @@
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
     else if(state.view==='personFineDetail') body = viewPersonFineDetail();
-    app.innerHTML = headerHtml() + `<main class="container">${body}</main>` + bottomNavHtml();
+    // Read-Only-Banner (abgelaufener Free-Zeitraum) wird zentral hier vorangestellt, statt in
+    // jeder viewXyz()-Funktion einzeln - so ist er auf jeder Seite sichtbar, unabhängig davon,
+    // welche Aktion der Nutzer als Nächstes versucht. Ausnahme: auf der Abo-Seite selbst
+    // (subscriptionPlans) wird er weggelassen, da diese Seite bereits erklärt, was zu tun ist,
+    // und der Banner dort nur redundant wäre.
+    const accessBlocked = !!(CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.subscription && CURRENT_CLUB_DATA.subscription.accessBlocked);
+    const bannerHtml = (accessBlocked && state.view!=='subscriptionPlans') ? readOnlyBannerHtml() : '';
+    app.innerHTML = headerHtml() + `<main class="container">${bannerHtml}${body}</main>` + bottomNavHtml();
     attachListeners();
 
     const sig = historySignature();
@@ -2703,6 +2891,8 @@
         goToSettingsMenu();
       }else if(sig==='clubManagement'){
         await goToClubManagement();
+      }else if(sig==='subscriptionPlans'){
+        goToSubscriptionPlans();
       }else if(sig==='settings'){
         await goToSettings();
       }else if(sig==='finesManagement'){
@@ -4313,6 +4503,7 @@
     let title = '';
     if(state.view==='settingsMenu') title = 'Einstellungen';
     else if(state.view==='clubManagement') title = 'Clubverwaltung';
+    else if(state.view==='subscriptionPlans') title = 'Abonnement anpassen';
     else if(state.view==='settings') title = 'Mitgliederverwaltung';
     else if(state.view==='memberDetail') title = state.currentMemberId ? 'Mitglied bearbeiten' : 'Neues Mitglied';
     else if(state.view==='finesManagement') title = 'Strafenverwaltung';
@@ -4643,6 +4834,7 @@
     if(state.view==='main') attachMainListeners();
     else if(state.view==='settingsMenu') attachSettingsMenuListeners();
     else if(state.view==='clubManagement') attachClubManagementListeners();
+    else if(state.view==='subscriptionPlans') attachSubscriptionPlansListeners();
     else if(state.view==='settings') attachSettingsListeners();
     else if(state.view==='memberDetail') attachMemberDetailListeners();
     else if(state.view==='finesManagement') attachFinesManagementListeners();
@@ -4660,6 +4852,41 @@
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
     else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
+
+    applyReadOnlyLockToView();
+  }
+
+  // Deaktiviert nach jedem Render alle schreibenden Bedienelemente, wenn der Club im Read-Only-
+  // Modus ist (abgelaufener Free-Zeitraum, subscription.accessBlocked - siehe readOnlyBannerHtml()
+  // und firestore.rules/clubAccessBlocked()). Läuft bewusst NACH allen view-spezifischen
+  // attachXyzListeners()-Aufrufen: deren eigene disabled-Logik (z.B. "Speichern nur bei
+  // Änderung aktiv") bleibt für den Normalfall unangetastet, wird im Blocked-Fall aber
+  // übersteuert. Rein clientseitiges UX (verhindert unnötige, dann ohnehin von den Firestore
+  // Rules abgelehnte Schreibversuche) - die eigentliche Durchsetzung bleibt serverseitig.
+  // Ausnahme: clubManagement/subscriptionPlans bleiben unangetastet, da dort weiterhin auf
+  // "Pro" gewechselt werden können muss (siehe clubAccessBlocked() in firestore.rules).
+  function applyReadOnlyLockToView(){
+    if(state.view==='clubManagement' || state.view==='subscriptionPlans') return;
+    const accessBlocked = !!(CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.subscription && CURRENT_CLUB_DATA.subscription.accessBlocked);
+    if(!accessBlocked) return;
+    document.querySelectorAll('#app .btn-primary').forEach(btn=>{ btn.disabled = true; });
+    document.querySelectorAll('#app input, #app select, #app textarea').forEach(el=>{ el.disabled = true; });
+    // Einzelne .btn-secondary-Elemente, die direkt schreiben (z.B. "Gegeben"-Markierung bei
+    // Runden) - NICHT pauschal alle .btn-secondary, da darunter auch reine "Abbrechen"/
+    // "Schließen"-Buttons in Modals sind, die weiterhin bedienbar bleiben müssen.
+    document.querySelectorAll('#app .round-mark-given-btn').forEach(btn=>{ btn.disabled = true; });
+    // RSVP-Buttons (Zusage/Absage/Vielleicht zu Terminen) schreiben direkt über rsvpsStore.save(),
+    // sind aber weder .btn-primary noch <input> - eigene Klasse, daher separat behandelt.
+    document.querySelectorAll('#app .rsvp-btn').forEach(btn=>{ btn.disabled = true; });
+    // Header-Overflow-Menü-Einträge (Löschen, Abschließen, Seite wechseln, ...) schreiben direkt
+    // beim Klick, ohne über ein Formular mit .btn-primary zu laufen - pauschal gesperrt BIS AUF
+    // zwei Ausnahmen: "Kalender abonnieren" schreibt nichts (reiner Link/Token-Abruf) und "Club
+    // löschen" muss auch bei abgelaufenem Free-Zeitraum möglich bleiben, sonst gäbe es aus einem
+    // blockierten Club keinen Ausweg mehr außer dem Wechsel auf Pro.
+    document.querySelectorAll('#app .header-overflow-item').forEach(btn=>{
+      if(btn.id==='header-cal-subscribe-btn' || btn.id==='header-delete-club-btn') return;
+      btn.disabled = true;
+    });
   }
 
   function attachClubManagementListeners(){
@@ -4676,6 +4903,9 @@
       if(overflowMenu) overflowMenu.hidden = true;
       showDeleteClubModal();
     });
+
+    const manageSubBtn = document.getElementById('manage-subscription-btn');
+    if(manageSubBtn) manageSubBtn.addEventListener('click', goToSubscriptionPlans);
 
     const saveBtn = document.getElementById('save-club-btn');
     if(!saveBtn) return;
@@ -4744,6 +4974,23 @@
         errEl.textContent = 'Speichern fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
         saveBtn.disabled = false; saveBtn.textContent = 'Speichern';
       }
+    });
+  }
+
+  // Plan-Auswahlseite: rein visuelle Kartenauswahl (Radiobutton-Klick togglet die "selected"-
+  // Rahmenhervorhebung), da ein tatsächlicher Planwechsel erst mit der Stripe-Integration
+  // gespeichert werden kann (siehe viewSubscriptionPlans()). Der Haupt-Button bleibt bewusst
+  // disabled ("Zahlung folgt in Kürze") - es gibt aktuell nichts zu bestätigen.
+  function attachSubscriptionPlansListeners(){
+    const cards = document.querySelectorAll('.plan-picker-card');
+    cards.forEach(card=>{
+      const input = card.querySelector('input[type="radio"]');
+      if(!input || input.disabled) return;
+      card.addEventListener('click', ()=>{
+        input.checked = true;
+        cards.forEach(c=>c.classList.remove('selected'));
+        card.classList.add('selected');
+      });
     });
   }
 

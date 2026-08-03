@@ -555,6 +555,8 @@ exports.closeEvening = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
   }
 
+  await requireClubAccessNotBlocked(clubId);
+
   const clubRef = db.collection('clubs').doc(clubId);
   const eveningRef = clubRef.collection('evenings').doc(eveningId);
 
@@ -724,6 +726,21 @@ function requireFinanceRole(request) {
   }
 }
 
+// Prüft, ob der Club im Read-Only-Modus ist (abgelaufener Free-Zeitraum, subscription.
+// accessBlocked - siehe updateSubscriptionAccessStatus oben und clubAccessBlocked() in
+// firestore.rules). Cloud Functions mit Admin-SDK-Rechten umgehen die Firestore Rules
+// vollständig, deshalb müssen schreibende Functions (closeEvening, reopenEvening,
+// deleteEvening, inviteMember, unlinkMemberAccount) diese Prüfung selbst vornehmen - sonst
+// wäre die Read-Only-Sperre über diese Functions aushebelbar. deleteClub ist bewusst
+// AUSGENOMMEN: ein blockierter Club muss weiterhin vollständig gelöscht werden können.
+async function requireClubAccessNotBlocked(clubId) {
+  const clubSnap = await db.collection('clubs').doc(clubId).get();
+  const subscription = clubSnap.exists ? clubSnap.data().subscription : null;
+  if (subscription && subscription.accessBlocked) {
+    throw new HttpsError('permission-denied', 'Der kostenlose Testzeitraum ist abgelaufen. Die App kann nur noch gelesen werden.');
+  }
+}
+
 exports.reopenEvening = onCall({}, async (request) => {
   requireFinanceRole(request);
 
@@ -734,6 +751,8 @@ exports.reopenEvening = onCall({}, async (request) => {
   if (!eveningId || typeof eveningId !== 'string') {
     throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
   }
+
+  await requireClubAccessNotBlocked(clubId);
 
   const clubRef = db.collection('clubs').doc(clubId);
   const eveningRef = clubRef.collection('evenings').doc(eveningId);
@@ -820,6 +839,8 @@ exports.deleteEvening = onCall({}, async (request) => {
   if (!eveningId || typeof eveningId !== 'string') {
     throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
   }
+
+  await requireClubAccessNotBlocked(clubId);
 
   const clubRef = db.collection('clubs').doc(clubId);
   const eveningRef = clubRef.collection('evenings').doc(eveningId);
@@ -956,6 +977,7 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
   }
+  await requireClubAccessNotBlocked(clubId);
 
   const adminAuth = getAuth();
   let userRecord;
@@ -1105,6 +1127,7 @@ exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
   clubData.subscription = {
     plan: 'free',
     freeUntil: freeUntilDate.toISOString().slice(0, 10),
+    accessBlocked: false,
   };
   await db.collection('clubs').doc(clubId).set(clubData);
 
@@ -1248,6 +1271,7 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
   }
+  await requireClubAccessNotBlocked(clubId);
 
   const adminAuth = getAuth();
   try {
@@ -1612,6 +1636,44 @@ exports.processRecurringBookings = onSchedule(
       } catch (e) {
         // Ein Fehler in einem Club darf die Verarbeitung der anderen Clubs nicht verhindern.
         logger.error(`Fehler bei processRecurringBookings für Club ${clubDoc.id}:`, e);
+      }
+    }
+  }
+);
+
+// -------- Abo-Zugriffsstatus täglich aktualisieren --------
+//
+// subscription.accessBlocked ist das Feld, gegen das die Firestore Rules bei JEDEM Schreibzugriff
+// prüfen (siehe firestore.rules, clubAccessBlocked()) - Rules können kein "heutiges Datum" selbst
+// berechnen, deshalb wird der Status hier einmal täglich serverseitig vorberechnet und im
+// Club-Dokument abgelegt, statt bei jedem Request neu zu vergleichen.
+//
+// Blockiert wird NUR bei plan 'free' mit abgelaufenem freeUntil. Ein 'pro'-Plan blockiert nie
+// (Zahlungsausfälle/Downgrades sind noch nicht implementiert, siehe Stripe-Planung). Fehlt
+// subscription komplett (z.B. bei sehr alten Clubs vor Einführung dieses Felds), wird ebenfalls
+// NICHT blockiert - sicherheitshalber kein rückwirkendes Aussperren durch reine Datenlücken.
+async function computeAccessBlocked(subscription, todayStr) {
+  if (!subscription || subscription.plan !== 'free') return false;
+  if (!subscription.freeUntil) return false;
+  return subscription.freeUntil < todayStr;
+}
+
+exports.updateSubscriptionAccessStatus = onSchedule(
+  { schedule: '30 0 * * *', timeZone: 'Europe/Berlin' },
+  async () => {
+    const todayStr = getTodayInBerlin();
+    const clubsSnapshot = await db.collection('clubs').get();
+    for (const clubDoc of clubsSnapshot.docs) {
+      try {
+        const subscription = clubDoc.data().subscription;
+        const shouldBlock = await computeAccessBlocked(subscription, todayStr);
+        const currentlyBlocked = !!(subscription && subscription.accessBlocked);
+        if (shouldBlock !== currentlyBlocked) {
+          await clubDoc.ref.set({ subscription: { ...(subscription || {}), accessBlocked: shouldBlock } }, { merge: true });
+          logger.info(`Club ${clubDoc.id}: subscription.accessBlocked auf ${shouldBlock} gesetzt.`);
+        }
+      } catch (e) {
+        logger.error(`Fehler bei updateSubscriptionAccessStatus für Club ${clubDoc.id}:`, e);
       }
     }
   }

@@ -33,6 +33,16 @@ service cloud.firestore {
       return isAdmin() || currentRole() == 'Kassenwart';
     }
 
+    // Liefert true, wenn der Club aktuell im Read-Only-Modus ist (abgelaufener Free-Zeitraum,
+    // siehe subscription.accessBlocked - wird täglich per updateSubscriptionAccessStatus
+    // Cloud Function vorberechnet, da Rules kein "heutiges Datum" selbst vergleichen können).
+    // Wird NUR auf normale Club-Unterdaten angewendet, NICHT auf das Club-Dokument selbst
+    // (clubs/{clubId}) - sonst käme niemand mehr aus dem Lockout heraus, um auf "Pro" zu
+    // wechseln oder mit dem Kassenwart/Präsident-Zugriff die Abo-Seite zu nutzen.
+    function clubAccessBlocked(clubId) {
+      return get(/databases/$(database)/documents/clubs/$(clubId)).data.subscription.accessBlocked == true;
+    }
+
     // Club-Stammdaten und club-eigene Daten (Mitglieder, Strafen-/Spiele-Katalog, ...).
     // Vorbereitung Multi-Club-Fähigkeit: aktuell gibt es nur einen Club, aber jeder Club-Baum
     // ist strukturell getrennt - die Regel gilt pro Club-Pfad, eine spätere feinere Zuordnung
@@ -56,7 +66,7 @@ service cloud.firestore {
     // Löschen) nur für Admin, Kassenwart oder Präsident.
     match /clubs/{clubId}/members/{memberId} {
       allow read: if request.auth != null;
-      allow write: if canManageMembers();
+      allow write: if canManageMembers() && !clubAccessBlocked(clubId);
     }
 
     // Alle übrigen Club-Unterdaten - unverändert offen für jeden eingeloggten Nutzer. Jede
@@ -65,16 +75,20 @@ service cloud.firestore {
     // auch members/** wieder öffnen und die Einschränkung aushebeln. Kommt künftig eine neue
     // Subcollection hinzu, muss sie hier ergänzt werden (bewusst kein Auto-Einschluss).
     match /clubs/{clubId}/evenings/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && !clubAccessBlocked(clubId);
     }
     match /clubs/{clubId}/events/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && !clubAccessBlocked(clubId);
     }
     match /clubs/{clubId}/rsvps/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && !clubAccessBlocked(clubId);
     }
     match /clubs/{clubId}/occurrence-edits/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && !clubAccessBlocked(clubId);
     }
     // Rückstände und Umsätze: Lesen bleibt für alle eingeloggten Nutzer offen (jeder sieht seinen
     // eigenen Rückstand und die Finanzübersicht), Schreiben (Zahlung erfassen, Rückstand
@@ -82,11 +96,11 @@ service cloud.firestore {
     // die übrige Mitglieder-/Clubverwaltung (siehe canManageFinances()).
     match /clubs/{clubId}/arrears/{document=**} {
       allow read: if request.auth != null;
-      allow write: if canManageFinances();
+      allow write: if canManageFinances() && !clubAccessBlocked(clubId);
     }
     match /clubs/{clubId}/transactions/{document=**} {
       allow read: if request.auth != null;
-      allow write: if canManageFinances();
+      allow write: if canManageFinances() && !clubAccessBlocked(clubId);
     }
     // 'data'-Subcollection (clubs/{clubId}/data/{key}): generischer Key-Value-Speicher für
     // Strafen-/Spielekatalog, Finanzkonten, wiederkehrende Buchungen, Sparziele,
@@ -101,14 +115,15 @@ service cloud.firestore {
     // stellen.
     match /clubs/{clubId}/data/fines-catalog {
       allow read: if request.auth != null;
-      allow write: if canManageMembers();
+      allow write: if canManageMembers() && !clubAccessBlocked(clubId);
     }
     match /clubs/{clubId}/data/games-catalog {
       allow read: if request.auth != null;
-      allow write: if canManageMembers();
+      allow write: if canManageMembers() && !clubAccessBlocked(clubId);
     }
     match /clubs/{clubId}/data/{key} {
-      allow read, write: if request.auth != null && key != 'fines-catalog' && key != 'games-catalog';
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && key != 'fines-catalog' && key != 'games-catalog' && !clubAccessBlocked(clubId);
     }
   }
 }
