@@ -37,10 +37,19 @@ service cloud.firestore {
     // siehe subscription.accessBlocked - wird täglich per updateSubscriptionAccessStatus
     // Cloud Function vorberechnet, da Rules kein "heutiges Datum" selbst vergleichen können).
     // Wird NUR auf normale Club-Unterdaten angewendet, NICHT auf das Club-Dokument selbst
-    // (clubs/{clubId}) - sonst käme niemand mehr aus dem Lockout heraus, um auf "Pro" zu
+    // (clubs/{clubId}) - sonst käme niemand mehr aus dem Lockout heraus, um auf "Premium" zu
     // wechseln oder mit dem Kassenwart/Präsident-Zugriff die Abo-Seite zu nutzen.
+    //
+    // WICHTIG: get(...).data.subscription.accessBlocked wirft in Firestore Rules einen Fehler
+    // (statt null zurückzugeben), sobald "subscription" oder "accessBlocked" im Dokument fehlt -
+    // z.B. bei Clubs, die vor Einführung des Subscription-Features angelegt wurden. Ein
+    // ungefangener Fehler lässt die GESAMTE umgebende allow-write-Regel fehlschlagen, was
+    // "permission-denied" für ALLE Schreibvorgänge bedeutet hätte, nicht nur für tatsächlich
+    // blockierte Clubs. Deshalb wird hier defensiv mit einem Default-Objekt gearbeitet: fehlt
+    // subscription komplett, gilt der Club als NICHT blockiert.
     function clubAccessBlocked(clubId) {
-      return get(/databases/$(database)/documents/clubs/$(clubId)).data.subscription.accessBlocked == true;
+      let club = get(/databases/$(database)/documents/clubs/$(clubId)).data;
+      return ('subscription' in club) && ('accessBlocked' in club.subscription) && club.subscription.accessBlocked == true;
     }
 
     // Club-Stammdaten und club-eigene Daten (Mitglieder, Strafen-/Spiele-Katalog, ...).

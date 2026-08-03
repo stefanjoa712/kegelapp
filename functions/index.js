@@ -1652,6 +1652,13 @@ exports.processRecurringBookings = onSchedule(
 // (Zahlungsausfälle/Downgrades sind noch nicht implementiert, siehe Stripe-Planung). Fehlt
 // subscription komplett (z.B. bei sehr alten Clubs vor Einführung dieses Felds), wird ebenfalls
 // NICHT blockiert - sicherheitshalber kein rückwirkendes Aussperren durch reine Datenlücken.
+// Berechnet, ob ein Club aktuell blockiert sein sollte. Siehe computeAccessBlocked() oben für
+// die Blockier-Logik selbst (nur plan 'free' + abgelaufenes freeUntil).
+//
+// subscription.plan: 'free' | 'pro'
+// subscription.priceEUR: Preis/Monat, nur relevant wenn plan !== 'free'
+// subscription.freeUntil: ISO-Datum (YYYY-MM-DD), Ende des Free-Zeitraums
+// subscription.accessBlocked: von dieser Function vorberechnet
 async function computeAccessBlocked(subscription, todayStr) {
   if (!subscription || subscription.plan !== 'free') return false;
   if (!subscription.freeUntil) return false;
@@ -1668,9 +1675,18 @@ exports.updateSubscriptionAccessStatus = onSchedule(
         const subscription = clubDoc.data().subscription;
         const shouldBlock = await computeAccessBlocked(subscription, todayStr);
         const currentlyBlocked = !!(subscription && subscription.accessBlocked);
-        if (shouldBlock !== currentlyBlocked) {
-          await clubDoc.ref.set({ subscription: { ...(subscription || {}), accessBlocked: shouldBlock } }, { merge: true });
-          logger.info(`Club ${clubDoc.id}: subscription.accessBlocked auf ${shouldBlock} gesetzt.`);
+        // Bugfix: Clubs OHNE subscription-Feld (z.B. angelegt vor Einführung dieses Features)
+        // wurden hier vorher NIE aktualisiert, weil shouldBlock (false) === currentlyBlocked
+        // (auch false, da subscription undefined ist) - das Feld 'accessBlocked' fehlte dadurch
+        // dauerhaft im Dokument. firestore.rules/clubAccessBlocked() wertet ein fehlendes Feld
+        // als Fehler, was ALLE Schreibvorgänge in diesen Clubs mit "permission-denied" blockiert
+        // hätte (siehe Bugreport: Kassenwart konnte keine Mitglieder mehr bearbeiten). Deshalb
+        // jetzt zusätzliche Bedingung: auch schreiben, wenn subscription komplett fehlt.
+        const needsInit = !subscription;
+        if (shouldBlock !== currentlyBlocked || needsInit) {
+          const base = subscription || { plan: 'free' };
+          await clubDoc.ref.set({ subscription: { ...base, accessBlocked: shouldBlock } }, { merge: true });
+          logger.info(`Club ${clubDoc.id}: subscription.accessBlocked auf ${shouldBlock} gesetzt${needsInit ? ' (subscription-Feld initialisiert)' : ''}.`);
         }
       } catch (e) {
         logger.error(`Fehler bei updateSubscriptionAccessStatus für Club ${clubDoc.id}:`, e);
