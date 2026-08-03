@@ -18,6 +18,7 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { Resend } = require('resend');
+const QRCode = require('qrcode');
 const logger = require('firebase-functions/logger');
 
 initializeApp();
@@ -1314,9 +1315,107 @@ exports.syncMemberRoleClaim = onDocumentWritten('clubs/{clubId}/members/{memberI
 
 // -------- Öffentliche Strafen-Übersicht für Gäste (kein Login nötig) --------
 
-function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactTotal, roundedTotal, paypalLink) {
+// -------- Überweisung per QR-Code (EPC069-12 / "GiroCode") --------
+//
+// Erzeugt den standardisierten Text-Payload für SEPA-Überweisungen per QR-Code. Das Format wird
+// von praktisch allen deutschen Banking-Apps über deren integrierten QR-Scanner gelesen (Feld
+// "Überweisung" -> Scanner-Symbol) und übernimmt IBAN, Empfänger, Betrag und Verwendungszweck
+// automatisch - eine Bestätigung durch den Zahler bleibt aber immer nötig, es gibt (bewusst,
+// aus Sicherheitsgründen) keinen Link, der eine Überweisung ohne Interaktion in der Banking-App
+// auslöst. Referenz: https://en.wikipedia.org/wiki/EPC_QR_code
+function buildEpcQrPayload(accountHolder, iban, amount, remittanceText) {
+  const lines = [
+    'BCD',              // Service Tag
+    '002',              // Versionsnummer
+    '1',                // Zeichensatz (1 = UTF-8)
+    'SCT',              // Identifikation (SEPA Credit Transfer)
+    '',                 // BIC (optional, seit 2016 im EWR nicht mehr erforderlich)
+    accountHolder.slice(0, 70),
+    iban,
+    `EUR${amount.toFixed(2)}`,
+    '',                 // Verwendungszweck-Kennung (leer)
+    '',                 // Referenznummer (leer, stattdessen unstrukturierter Verwendungszweck)
+    remittanceText.slice(0, 140),
+  ];
+  return lines.join('\n');
+}
+
+// Formatiert eine IBAN für die Anzeige in 4er-Blöcken (rein kosmetisch, kein Einfluss auf den
+// QR-Payload, der die IBAN ohne Leerzeichen erwartet).
+function formatIbanForDisplay(iban) {
+  return iban.replace(/(.{4})/g, '$1 ').trim();
+}
+
+// Rendert den EPC-Payload als quadratisches Inline-SVG (kein externer QR-Dienst, keine
+// Bilddaten verlassen diese Function).
+async function buildEpcQrSvg(payload) {
+  return QRCode.toString(payload, { type: 'svg', margin: 1, width: 220 });
+}
+
+// Prüft anhand des VORHANDENEN Rückstands, ob die Strafen dieses Abends für den Sitzplatz bereits
+// vollständig begleichen wurden - OHNE ein separates "bezahlt"-Feld einzuführen. Grundlage ist die
+// arrears-Verknüpfung: beim Abschluss eines Abends wird der Sitzplatz-Betrag über addToArrears()
+// zum Rückstand der Person addiert (siehe closeEvening). Zahlt die Person (oder für Gäste: wird
+// der Rückstand auf 0 zurückgeführt), sinkt/verschwindet ihr Rückstandseintrag entsprechend -
+// für Gäste wird das Dokument bei Betrag 0 sogar komplett gelöscht (siehe saveArrearsEntry).
+// Rückgabe: true (sicher bezahlt), false (sicher offen), oder null (nicht zuverlässig ableitbar -
+// dann zeigt die Seite bewusst NICHTS zum Zahlstatus an, siehe Aufrufer).
+async function resolveSeatPaymentStatus(clubId, detail, seat, roundedTotal) {
+  if (roundedTotal <= 0) return null; // keine Strafen -> Zahlstatus ist nicht sinnvoll definiert
+  if (!detail.closed) return null; // vor Abschluss wurde noch nichts in die Rückstände gebucht
+
+  const db2 = getFirestore();
+  const arrearsSnap = await db2.collection('clubs').doc(clubId).collection('arrears')
+    .where('name', '==', seat.name).limit(1).get();
+  const currentArrears = arrearsSnap.empty ? 0 : (JSON.parse(arrearsSnap.docs[0].data().value || '{}').amount || 0);
+
+  // priorArrearsSnapshot wurde exakt beim Abschluss dieses Abends für diesen Namen eingefroren
+  // (siehe closeEvening) - das ist der Rückstand VOR der heutigen Erhöhung um roundedTotal.
+  const priorArrears = detail.priorArrearsSnapshot && Object.prototype.hasOwnProperty.call(detail.priorArrearsSnapshot, seat.name)
+    ? detail.priorArrearsSnapshot[seat.name]
+    : null;
+  if (priorArrears === null) return null; // Abend wurde vor Einführung dieses Snapshots abgeschlossen
+
+  const expectedArrearsIfUnpaid = Math.round((priorArrears + roundedTotal) * 100) / 100;
+  const currentRounded = Math.round(currentArrears * 100) / 100;
+
+  // Nur eindeutige Fälle beantworten: entweder der volle Betrag dieses Abends steckt noch
+  // unverändert im Rückstand (offen), oder der Rückstand ist mindestens um roundedTotal
+  // gesunken bzw. das Gast-Dokument wurde komplett gelöscht (bezahlt). Jeder Zwischenzustand
+  // (z.B. Teilzahlung, andere Buchungen dazwischen) ist nicht zuverlässig zuordenbar -> null.
+  if (currentRounded >= expectedArrearsIfUnpaid - 0.005) return false;
+  if (currentRounded <= priorArrears + 0.005) return true;
+  return null;
+}
+
+function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactTotal, roundedTotal, paypalLink, isPaid, transferInfo) {
   const hasAnyLines = catalogLines.length + fremdstrafeLines.length + adHocLines.length > 0;
   const emptyHtml = hasAnyLines ? '' : '<p>Keine Strafen für diesen Abend.</p>';
+
+  // Zahlstatus konnte eindeutig als "bezahlt" ermittelt werden (siehe resolveSeatPaymentStatus):
+  // Bezahlen-Optionen ausblenden, stattdessen nur einen Hinweis zeigen. Bei false oder null
+  // (unklar) werden die Bezahlen-Optionen ganz normal angezeigt.
+  const paidHintHtml = '<div class="card paid-hint">✓ Diese Strafen wurden bereits bezahlt.</div>';
+
+  const transferHtml = transferInfo ? `
+    <div class="card transfer-card">
+      <h3>Alternativ per Überweisung</h3>
+      <div class="qr-wrap">${transferInfo.svg}</div>
+      <p class="hint">QR-Code mit der Banking-App scannen (meist über den Menüpunkt „Überweisung" &rarr; Kamera-/Scan-Symbol) - Empfänger, IBAN, Betrag und Verwendungszweck werden automatisch übernommen, die Überweisung selbst muss noch bestätigt werden.</p>
+      <table class="transfer-details">
+        <tr><td>Empfänger</td><td>${escapeHtml(transferInfo.accountHolder)}</td></tr>
+        <tr><td>IBAN</td><td>${escapeHtml(transferInfo.ibanDisplay)}</td></tr>
+        <tr><td>Betrag</td><td>${fmtEuro(roundedTotal)}</td></tr>
+        <tr><td>Verwendungszweck</td><td>${escapeHtml(transferInfo.remittanceText)}</td></tr>
+      </table>
+    </div>
+  ` : '';
+
+  const paymentSectionHtml = isPaid ? paidHintHtml : `
+    <a class="paypal-btn" href="${paypalLink}">Jetzt ${fmtEuro(roundedTotal)} per PayPal bezahlen</a>
+    ${transferHtml}
+  `;
+
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -1339,6 +1438,13 @@ function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, 
   .totals-summary{text-align:right; margin-top:8px;}
   .totals-summary .exact{font-size:13px; color:#9A9186;}
   .totals-summary .rounded{font-size:16px; font-weight:800; margin-top:2px;}
+  .paid-hint{text-align:center; background:#1a7a3c; color:#fff; font-weight:800; padding:16px 20px;}
+  .transfer-card{margin-top:14px;}
+  .qr-wrap{text-align:center; padding:6px 0 14px;}
+  .qr-wrap svg{width:180px; height:180px;}
+  .transfer-details td:first-child{color:#9A9186; padding-right:10px; white-space:nowrap;}
+  .transfer-details td:last-child{text-align:right; word-break:break-word;}
+  .hint{font-size:12px; color:#9A9186; margin:0 0 12px;}
 </style>
 </head>
 <body>
@@ -1356,7 +1462,7 @@ function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, 
       <div class="exact">Gesamt (genau): ${fmtEuro(exactTotal)}</div>
       <div class="rounded">Gesamt (gerundet): ${fmtEuro(roundedTotal)}</div>
     </div>
-    <a class="paypal-btn" href="${paypalLink}">Jetzt ${fmtEuro(roundedTotal)} per PayPal bezahlen</a>
+    ${paymentSectionHtml}
   </div>
 </body>
 </html>`;
@@ -1383,14 +1489,14 @@ exports.shareGuestBill = onRequest(async (req, res) => {
   // funktionieren. Da der Token selbst schon eindeutig ist, wird über alle existierenden Clubs
   // iteriert, bis der passende Sitzplatz gefunden ist, statt einen Club fest anzunehmen.
   const clubsSnapshot = await db.collection('clubs').get();
-  let foundDetail = null, foundSeat = null, foundClubId = null;
+  let foundDetail = null, foundSeat = null, foundClubId = null, foundClubData = null;
   for (const clubDoc of clubsSnapshot.docs) {
     const eveningsSnapshot = await db.collection('clubs').doc(clubDoc.id).collection('evenings').get();
     for (const doc of eveningsSnapshot.docs) {
       let detail;
       try { detail = JSON.parse(doc.data().value || '{}'); } catch (e) { continue; }
       const seat = (detail.seating || []).find(s => s.shareToken === token);
-      if (seat) { foundDetail = detail; foundSeat = seat; foundClubId = clubDoc.id; break; }
+      if (seat) { foundDetail = detail; foundSeat = seat; foundClubId = clubDoc.id; foundClubData = clubDoc.data(); break; }
     }
     if (foundDetail) break;
   }
@@ -1410,7 +1516,25 @@ exports.shareGuestBill = onRequest(async (req, res) => {
   const roundedTotal = roundUpToFullEuro(total);
   const paypalLink = buildPaypalLink(roundedTotal);
 
-  const html = buildShareGuestBillHtml(foundSeat.name, dateStr, catalogLines, fremdstrafeLines, adHocLines, total, roundedTotal, paypalLink);
+  const isPaid = await resolveSeatPaymentStatus(foundClubId, foundDetail, foundSeat, roundedTotal);
+
+  // Überweisungs-Info nur aufbauen, wenn Club sowohl IBAN als auch Kontoinhaber gepflegt hat -
+  // und nur, wenn ohnehin noch bezahlt werden muss (bei isPaid===true wird sie in der HTML-
+  // Funktion ausgeblendet, hier trotzdem einfach immer berechnet, das spart einen Sonderfall).
+  let transferInfo = null;
+  if (foundClubData && foundClubData.iban && foundClubData.accountHolder) {
+    const remittanceText = `Kegelabend ${dateStr} – ${foundSeat.name}`;
+    const payload = buildEpcQrPayload(foundClubData.accountHolder, foundClubData.iban, roundedTotal, remittanceText);
+    const svg = await buildEpcQrSvg(payload);
+    transferInfo = {
+      svg,
+      accountHolder: foundClubData.accountHolder,
+      ibanDisplay: formatIbanForDisplay(foundClubData.iban),
+      remittanceText,
+    };
+  }
+
+  const html = buildShareGuestBillHtml(foundSeat.name, dateStr, catalogLines, fremdstrafeLines, adHocLines, total, roundedTotal, paypalLink, isPaid, transferInfo);
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
 
