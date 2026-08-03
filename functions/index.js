@@ -1400,6 +1400,7 @@ function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, 
   .totals-summary{text-align:right; margin-top:8px;}
   .totals-summary .exact{font-size:13px; color:#9A9186;}
   .totals-summary .rounded{font-size:16px; font-weight:800; margin-top:2px;}
+  .payment-card{margin-top:8px;}
   .payment-card h3{text-align:center;}
   .divider{display:flex; align-items:center; text-align:center; margin:18px 0; color:#9A9186; font-size:12px; text-transform:uppercase; letter-spacing:0.06em;}
   .divider::before, .divider::after{content:''; flex:1; border-bottom:1px solid #e5e1d8;}
