@@ -728,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.102';
+  const APP_VERSION = '1.0.103';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1643,6 +1643,7 @@
         state.mainError = 'Konnte diesen Abend nicht laden.';
         state.view = 'main';
         render();
+        removeOrphanedEveningIndexEntry(eve.id);
         return;
       }
       state.currentEveningDetail = detail;
@@ -3628,23 +3629,81 @@
     const idx = state.eveningsIndex.findIndex(e=>e.id===detail.id);
     if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)};
   }
+
+  // Entfernt einen Index-Eintrag, dessen zugehöriges Hauptdokument in Firestore nicht mehr
+  // existiert (getEveningDetail() liefert null), aus state.eveningsIndex und speichert den
+  // bereinigten Index zurück. Wird aufgerufen, wenn der Versuch, einen Abend zu öffnen
+  // (openEveningDetail(), goToTodayEvening()), fehlschlägt, weil das Dokument fehlt - das ist der
+  // zuverlässigste Zeitpunkt für diese Selbstheilung, weil zu diesem Zeitpunkt zweifelsfrei
+  // feststeht, dass der Eintrag verwaist ist (nicht bloß ein Cache-Timing-Problem). Ein solcher
+  // Karteileichen-Eintrag kann z.B. entstehen, wenn ein früherer Löschvorgang
+  // (deleteEvening Cloud Function) durch eine Race Condition mit einem gleichzeitigen Schreiben
+  // auf evenings-index (anderes Gerät/Tab, oder ein noch nicht abgeschlossener vorheriger
+  // Speichervorgang) überschrieben wurde. Ohne diese Bereinigung blieb ein solcher Eintrag für
+  // immer in evenings-index bestehen, auch nach Reload, weil sonst kein Mechanismus
+  // evenings-index gegen die tatsächlich existierenden evenings-Dokumente abgleicht.
+  async function removeOrphanedEveningIndexEntry(eveningId){
+    const before = state.eveningsIndex.length;
+    state.eveningsIndex = state.eveningsIndex.filter(e=>e.id!==eveningId);
+    if(state.eveningsIndex.length===before) return; // war ohnehin nicht (mehr) im Index
+    markFetched('eveningsIndex');
+    try{
+      await setClubJSON('evenings-index', state.eveningsIndex);
+    }catch(e){
+      console.error('Konnte verwaisten evenings-index-Eintrag nicht zurückspeichern', e);
+    }
+  }
   // Holt für Abende, deren Index-Eintrag noch keine Kennzahlen enthält (ältere Einträge vor
   // Einführung dieses Felds), einmalig das Detail-Dokument nach und cacht die Kennzahlen im Index.
+  //
+  // SELBSTHEILUNG verwaister Index-Einträge: existiert zu einem Index-Eintrag KEIN
+  // Hauptdokument mehr (getEveningDetail() liefert null), wird der Eintrag hier automatisch aus
+  // state.eveningsIndex entfernt und der bereinigte Index zurückgespeichert. Das kann passieren,
+  // wenn eine frühere Löschung (deleteEvening Cloud Function) durch eine Race Condition den
+  // Index-Eintrag stehen ließ (z.B. gleichzeitige Schreibvorgänge auf evenings-index von einem
+  // anderen Gerät/Tab) oder ein noch stärker veralteter Client-Cache-Stand aus dem Delete-Zeitpunkt
+  // erneut gespeichert wurde, bevor der Löschvorgang serverseitig durchgeschlagen war. Ohne diese
+  // Bereinigung blieb ein solcher Karteileichen-Eintrag für immer bestehen (auch nach Reload),
+  // weil es sonst keinen weiteren Mechanismus gibt, der evenings-index gegen die tatsächlich
+  // existierenden evenings-Dokumente abgleicht.
   async function backfillEveningSummaries(){
     const missing = state.eveningsIndex.filter(e=> e.income===undefined);
     if(missing.length===0) return;
     try{
       const details = await Promise.all(missing.map(e=> getEveningDetail(e.id)));
-      let changed = false;
+      const orphanedIds = new Set();
+      const summaryById = {};
       details.forEach((detail, i)=>{
-        if(!detail) return;
-        const idx = state.eveningsIndex.findIndex(x=>x.id===missing[i].id);
-        if(idx>=0){ state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)}; changed = true; }
+        if(!detail){ orphanedIds.add(missing[i].id); return; }
+        summaryById[missing[i].id] = computeEveningSummaryFields(detail);
       });
-      if(changed){
-        await setClubJSON('evenings-index', state.eveningsIndex);
-        if(state.view==='main') render();
-      }
+      if(Object.keys(summaryById).length===0 && orphanedIds.size===0) return;
+
+      // Lokalen state.eveningsIndex mit den Ergebnissen aktualisieren, für sofortige Anzeige.
+      state.eveningsIndex = state.eveningsIndex
+        .filter(e=> !orphanedIds.has(e.id))
+        .map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e);
+      if(orphanedIds.size>0) console.warn('Verwaiste evenings-index-Einträge ohne Hauptdokument entfernt:', [...orphanedIds]);
+      if(state.view==='main') render();
+
+      // WICHTIG: Vor dem Zurückspeichern wird der AKTUELLE Serverstand von evenings-index neu
+      // geholt und die Backfill-Ergebnisse darauf angewendet, statt den unter Umständen
+      // veralteten lokalen state.eveningsIndex komplett zu überschreiben. backfillEveningSummaries()
+      // läuft im Hintergrund ohne await (siehe Aufrufstellen in goToMain()/init()) und kann daher
+      // etwas dauern; würde in dieser Zeit z.B. ein frisch angelegter Abend bereits wieder
+      // gelöscht (deleteEvening Cloud Function, schreibt den Index server-seitig neu), und
+      // backfillEveningSummaries schriebe anschließend seinen alten, den gelöschten Abend noch
+      // enthaltenden Snapshot zurück, würde der gelöschte Abend durch dieses Last-Write-Wins
+      // ungewollt wiederhergestellt. Der Re-Fetch unmittelbar vor dem Schreiben minimiert dieses
+      // Zeitfenster.
+      const serverIndexSnap = await withTimeout(getDocFromServer(clubDocRef('evenings-index')), STORAGE_TIMEOUT_MS);
+      const serverIndexRaw = serverIndexSnap.exists() ? JSON.parse(serverIndexSnap.data().value) : state.eveningsIndex;
+      const mergedIndex = serverIndexRaw
+        .filter(e=> !orphanedIds.has(e.id))
+        .map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e);
+      await setClubJSON('evenings-index', mergedIndex);
+      state.eveningsIndex = mergedIndex;
+      if(state.view==='main') render();
     }catch(e){ console.error('Backfill der Abend-Kennzahlen fehlgeschlagen', e); }
   }
 
@@ -5205,6 +5264,7 @@
         state.mainError = 'Konnte diesen Abend nicht laden.';
         state.view = 'main';
         render();
+        removeOrphanedEveningIndexEntry(id);
         return;
       }
       state.currentEveningDetail = detail;
