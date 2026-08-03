@@ -728,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.100';
+  const APP_VERSION = '1.0.101';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -5014,6 +5014,7 @@
       showModal(`
         <h3>Standardplatz Schriftführer</h3>
         <p>Bei der Option „Standardplatz" beim Auslosen eines Kegelabends wird automatisch die Person auf diesem Platz Schriftführer.</p>
+        <p>Ist dieser Platz beim jeweiligen Abend nicht besetzt (z. B. weil weniger Personen anwesend sind), wird stattdessen zufällig ein Mitglied als Schriftführer ausgelost.</p>
         <div class="confirm-row-buttons">
           <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
         </div>
@@ -6785,7 +6786,18 @@
 
     let schriftfuehrerSeatId = null;
     if(isStandardplatz){
-      if(seatAssignment[standardSeatId] && !seatAssignment[standardSeatId].isGuest) schriftfuehrerSeatId = standardSeatId;
+      if(seatAssignment[standardSeatId] && !seatAssignment[standardSeatId].isGuest){
+        schriftfuehrerSeatId = standardSeatId;
+      }else{
+        // Standardplatz existiert bei diesem Abend nicht (weniger Teilnehmer als der
+        // Standardplatz-Index erfordert) - in diesem Fall wird stattdessen wie bei "Auslosen"
+        // zufällig ein Mitglied (kein Gast) unter allen besetzten Plätzen bestimmt (siehe auch
+        // Hinweis im Info-Popup "Standardplatz Schriftführer" in der Clubverwaltung).
+        const memberSeatIds = occupiedSeatIds.filter((seatId, i)=> !shuffledParticipants[i].isGuest);
+        if(memberSeatIds.length>0){
+          schriftfuehrerSeatId = memberSeatIds[Math.floor(Math.random()*memberSeatIds.length)];
+        }
+      }
     }else if(schriftfuehrerChoice==='draw'){
       const memberSeatIds = occupiedSeatIds.filter((seatId, i)=> !shuffledParticipants[i].isGuest);
       if(memberSeatIds.length>0){
