@@ -723,7 +723,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.98';
+  const APP_VERSION = '1.0.99';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -792,6 +792,19 @@
     return seats;
   }
   function SEATS(){ return buildSeats(); }
+
+  // Standard-Sitzplatz, dessen Inhaber bei der Auslosungsoption "Standardplatz" automatisch
+  // Schriftführer wird (siehe #clubverwaltung, Abschnitt "Sitzplan", und createEvening()).
+  // Fällt auf 'kneipe-1' zurück (historischer Default, entspricht "Rechts 1" bei den
+  // Standard-Seitenbezeichnungen), falls der Club noch keinen eigenen Wert gespeichert hat, oder
+  // falls der gespeicherte Wert keiner der aktuell gültigen 12 seatIds entspricht (z.B. nach
+  // versehentlicher Dateninkonsistenz).
+  const DEFAULT_STANDARD_SCHRIFTFUEHRER_SEAT_ID = 'kneipe-1';
+  function getStandardSchriftfuehrerSeatId(){
+    const stored = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.standardSchriftfuehrerSeatId;
+    const validIds = buildSeats().map(s=>s.id);
+    return (stored && validIds.includes(stored)) ? stored : DEFAULT_STANDARD_SCHRIFTFUEHRER_SEAT_ID;
+  }
 
   // ---------- Zustand ----------
   // Ausstehender Notizen-Speichervorgang (800ms Debounce, siehe Notizen-Textarea-Handler weiter
@@ -2228,6 +2241,10 @@
     const readOnly = !canManageMembers();
     const disabledAttr = readOnly ? ' disabled' : '';
     const sideNames = getSeatingSideNames();
+    const standardSeatId = getStandardSchriftfuehrerSeatId();
+    const standardSeatOptionsHtml = buildSeats().map(seat=>
+      `<option value="${seat.id}"${seat.id===standardSeatId?' selected':''}>${escapeHtml(seat.label)}</option>`
+    ).join('');
     return `
       <div class="card">
         <h2 class="section-title">Abonnement</h2>
@@ -2242,6 +2259,17 @@
         <input type="date" id="club-founded" value="${club.foundedOn || ''}"${disabledAttr}>
       </div>
       <div class="card">
+        <h2 class="section-title">Sitzplan</h2>
+        <label for="club-seating-left">Bezeichnung linke Seite</label>
+        <input type="text" id="club-seating-left" placeholder="z. B. Links" value="${escapeHtml(sideNames.left)}"${disabledAttr}>
+        <label for="club-seating-right">Bezeichnung rechte Seite</label>
+        <input type="text" id="club-seating-right" placeholder="z. B. Rechts" value="${escapeHtml(sideNames.right)}"${disabledAttr}>
+        <p class="hint">Die Kürzel auf dem Sitzplan (z. B. „L1") leiten sich automatisch aus den Anfangsbuchstaben der Bezeichnungen ab.</p>
+        <label for="club-standard-seat">Standardplatz Schriftführer</label>
+        <select id="club-standard-seat"${disabledAttr}>${standardSeatOptionsHtml}</select>
+        <p class="hint">Bei der Option „Standardplatz" beim Auslosen eines Kegelabends wird automatisch die Person auf diesem Platz Schriftführer.</p>
+      </div>
+      <div class="card">
         <h2 class="section-title">Finanzen</h2>
         <label for="club-paypal">PayPal.Me-Name</label>
         <input type="text" id="club-paypal" placeholder="z. B. diepudolfs (aus paypal.com/paypalme/diepudolfs)" value="${escapeHtml(club.paypalName || '')}"${disabledAttr}>
@@ -2250,14 +2278,6 @@
         <label for="club-account-holder">Kontoinhaber</label>
         <input type="text" id="club-account-holder" placeholder="z. B. Die Pudolfs e.V." value="${escapeHtml(club.accountHolder || '')}"${disabledAttr}>
         <p class="hint">Sind IBAN und Kontoinhaber hinterlegt, bekommen Gäste auf ihrer Strafenseite zusätzlich zum PayPal-Button einen QR-Code für die Überweisung per Banking-App.</p>
-      </div>
-      <div class="card">
-        <h2 class="section-title">Sitzplan</h2>
-        <label for="club-seating-left">Bezeichnung linke Seite</label>
-        <input type="text" id="club-seating-left" placeholder="z. B. Links" value="${escapeHtml(sideNames.left)}"${disabledAttr}>
-        <label for="club-seating-right">Bezeichnung rechte Seite</label>
-        <input type="text" id="club-seating-right" placeholder="z. B. Rechts" value="${escapeHtml(sideNames.right)}"${disabledAttr}>
-        <p class="hint">Die Kürzel auf dem Sitzplan (z. B. „L1") leiten sich automatisch aus den Anfangsbuchstaben der Bezeichnungen ab.</p>
       </div>
       <p class="form-error" id="club-form-error"></p>
       ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-club-btn" disabled>Speichern</button>`}
@@ -4985,7 +5005,7 @@
 
     // Änderungs-Erkennung: Speichern-Button ist nur aktiv, wenn sich mind. ein Feld
     // gegenüber dem geladenen Stand unterscheidet.
-    const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder','club-seating-left','club-seating-right'];
+    const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder','club-seating-left','club-seating-right','club-standard-seat'];
     const initialClubValues = {};
     clubFieldIds.forEach(id=>{ const el = document.getElementById(id); if(el) initialClubValues[id] = el.value; });
     const updateSaveBtnState = ()=>{
@@ -5009,6 +5029,7 @@
       const accountHolder = document.getElementById('club-account-holder').value.trim();
       const seatingLeft = document.getElementById('club-seating-left').value.trim() || DEFAULT_SEATING_SIDE_NAMES.left;
       const seatingRight = document.getElementById('club-seating-right').value.trim() || DEFAULT_SEATING_SIDE_NAMES.right;
+      const standardSeatId = document.getElementById('club-standard-seat').value;
 
       if(!name){ errEl.textContent = 'Bitte einen Clubnamen angeben.'; return; }
       if(!foundedOn){ errEl.textContent = 'Bitte ein Gründungsdatum angeben.'; return; }
@@ -5042,6 +5063,7 @@
           accountHolder: accountHolder ? accountHolder : deleteField(),
           seatingSideNames: { left: seatingLeft, right: seatingRight },
           seatingShortLabels,
+          standardSchriftfuehrerSeatId: standardSeatId,
         };
         await saveClub(clubUpdate);
         CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), name, foundedOn };
@@ -5050,6 +5072,7 @@
         if(accountHolder){ CURRENT_CLUB_DATA.accountHolder = accountHolder; } else { delete CURRENT_CLUB_DATA.accountHolder; }
         CURRENT_CLUB_DATA.seatingSideNames = { left: seatingLeft, right: seatingRight };
         CURRENT_CLUB_DATA.seatingShortLabels = seatingShortLabels;
+        CURRENT_CLUB_DATA.standardSchriftfuehrerSeatId = standardSeatId;
         markFetched('clubData');
         applyClubBranding();
         render();
@@ -6711,19 +6734,22 @@
     const schriftfuehrerSelect = document.getElementById('schriftfuehrer-select');
     const schriftfuehrerChoice = schriftfuehrerSelect ? schriftfuehrerSelect.value : 'standard';
     const isStandardplatz = schriftfuehrerChoice === 'standard';
-    // Bei "Standardplatz" landet zwingend ein Mitglied (kein Gast) auf K1 und wird automatisch
-    // Schriftführer - bei "Auslosen" und einer konkreten Namenswahl bleibt die Sitzverlosung
-    // hingegen komplett normal/zufällig, der Schriftführer wird erst danach bestimmt.
+    // Der Standardplatz ist in der Clubverwaltung konfigurierbar (siehe
+    // getStandardSchriftfuehrerSeatId(), Default 'kneipe-1'). Bei "Standardplatz" landet zwingend
+    // ein Mitglied (kein Gast) auf diesem Platz und wird automatisch Schriftführer - bei
+    // "Auslosen" und einer konkreten Namenswahl bleibt die Sitzverlosung hingegen komplett
+    // normal/zufällig, der Schriftführer wird erst danach bestimmt.
+    const standardSeatId = getStandardSchriftfuehrerSeatId();
 
     let shuffledParticipants;
-    if(isStandardplatz && occupiedSeatIds.includes('kneipe-1')){
-      // K1 wird automatisch Schriftführer - dort darf deshalb kein Gast landen.
+    if(isStandardplatz && occupiedSeatIds.includes(standardSeatId)){
+      // Der Standardplatz wird automatisch Schriftführer - dort darf deshalb kein Gast landen.
       const members = participants.filter(p=>!p.isGuest);
       if(members.length>0){
         const forcedMember = members[Math.floor(Math.random()*members.length)];
         const rest = shuffle(participants.filter(p=>p!==forcedMember));
-        const otherSeatIds = occupiedSeatIds.filter(id=>id!=='kneipe-1');
-        const tempAssignment = { 'kneipe-1': forcedMember };
+        const otherSeatIds = occupiedSeatIds.filter(id=>id!==standardSeatId);
+        const tempAssignment = { [standardSeatId]: forcedMember };
         otherSeatIds.forEach((seatId, i)=>{ tempAssignment[seatId] = rest[i]; });
         shuffledParticipants = occupiedSeatIds.map(id=>tempAssignment[id]);
       }else{
@@ -6738,7 +6764,7 @@
 
     let schriftfuehrerSeatId = null;
     if(isStandardplatz){
-      if(seatAssignment['kneipe-1'] && !seatAssignment['kneipe-1'].isGuest) schriftfuehrerSeatId = 'kneipe-1';
+      if(seatAssignment[standardSeatId] && !seatAssignment[standardSeatId].isGuest) schriftfuehrerSeatId = standardSeatId;
     }else if(schriftfuehrerChoice==='draw'){
       const memberSeatIds = occupiedSeatIds.filter((seatId, i)=> !shuffledParticipants[i].isGuest);
       if(memberSeatIds.length>0){
