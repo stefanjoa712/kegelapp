@@ -728,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.104';
+  const APP_VERSION = '1.0.105';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3630,6 +3630,44 @@
     if(idx>=0) state.eveningsIndex[idx] = {...state.eveningsIndex[idx], ...computeEveningSummaryFields(detail)};
   }
 
+  // Holt den GARANTIERT aktuellen Serverstand von evenings-index (nie aus dem lokalen Cache),
+  // mit state.eveningsIndex als Fallback, falls das Dokument (noch) nicht existiert.
+  async function getEveningsIndexFromServer(){
+    try{
+      const snap = await withTimeout(getDocFromServer(clubDocRef('evenings-index')), STORAGE_TIMEOUT_MS);
+      return snap.exists() ? JSON.parse(snap.data().value) : [];
+    }catch(e){
+      console.error('Konnte evenings-index nicht vom Server laden, nutze lokalen Stand als Fallback', e);
+      return state.eveningsIndex;
+    }
+  }
+
+  // ZENTRALER Schreib-Helper für ALLE Änderungen an evenings-index (anlegen, löschen,
+  // Kennzahlen aktualisieren, Karteileichen entfernen).
+  //
+  // WICHTIG: mutatorFn bekommt NICHT state.eveningsIndex, sondern den frisch vom Server
+  // geholten Stand übergeben, und das Ergebnis wird sowohl zurückgeschrieben als auch in
+  // state.eveningsIndex übernommen. Vorher bauten alle Schreibstellen direkt auf
+  // state.eveningsIndex auf - war dieser lokale Stand durch den Firestore-Client-Cache
+  // (persistentLocalCache, siehe initializeFirestore()) veraltet (z.B. weil ein Kegelabend
+  // gerade per deleteEvening-Cloud-Function gelöscht wurde, was am Client komplett vorbeischreibt
+  // und den Cache nicht invalidiert), wurde dieser veraltete Stand bei JEDEM weiteren Schreiben
+  // erneut zementiert - ein bereits korrekt gelöschter Abend konnte so durch das bloße Anlegen
+  // eines NEUEN Abends (dessen newIndex auf dem stale state.eveningsIndex aufbaute) versehentlich
+  // wiederhergestellt werden. Indem jede Schreiboperation zwingend zuerst den echten Serverstand
+  // holt und NUR darauf ihre eigene, lokal bekannte Änderung anwendet, kann kein stale Zustand
+  // mehr über einen Schreibvorgang "zurückgeholt" werden.
+  //
+  // mutatorFn(serverIndex) muss den NEUEN Index-Array zurückgeben (reiner Funktionsstil, kein
+  // In-Place-Mutieren von serverIndex nötig, aber unschädlich).
+  async function updateEveningsIndex(mutatorFn){
+    const serverIndex = await getEveningsIndexFromServer();
+    const newIndex = mutatorFn(serverIndex);
+    await setClubJSON('evenings-index', newIndex);
+    state.eveningsIndex = newIndex;
+    return newIndex;
+  }
+
   // Entfernt einen Index-Eintrag, dessen zugehöriges Hauptdokument in Firestore nicht mehr
   // existiert (getEveningDetail() liefert null), aus state.eveningsIndex und speichert den
   // bereinigten Index zurück. Wird aufgerufen, wenn der Versuch, einen Abend zu öffnen
@@ -3643,19 +3681,17 @@
   // immer in evenings-index bestehen, auch nach Reload, weil sonst kein Mechanismus
   // evenings-index gegen die tatsächlich existierenden evenings-Dokumente abgleicht.
   async function removeOrphanedEveningIndexEntry(eveningId){
+    // Sofortiges lokales Update für unmittelbare Anzeige, BEVOR der Server-Roundtrip
+    // abgeschlossen ist (siehe render()-Aufruf unten) - der maßgebliche, dauerhaft gespeicherte
+    // Stand kommt aber aus updateEveningsIndex(), das zwingend gegen den frischen Serverstand
+    // arbeitet (siehe dortiger Kommentar).
     const before = state.eveningsIndex.length;
     state.eveningsIndex = state.eveningsIndex.filter(e=>e.id!==eveningId);
     if(state.eveningsIndex.length===before) return; // war ohnehin nicht (mehr) im Index
     markFetched('eveningsIndex');
-    // Die Bereinigung von state.eveningsIndex oben passiert VOR dem render() im aufrufenden
-    // openEveningDetail()/goToTodayEvening() (dort wird sofort nach dem Setzen von
-    // state.mainError gerendert, ohne auf diese async-Funktion zu warten) - ohne dieses zweite
-    // render() blieb der bereinigte Eintrag in der bereits angezeigten Liste unverändert stehen,
-    // bis der Nutzer durch irgendeine andere Aktion einen weiteren Render-Zyklus auslöste (z.B.
-    // durch einen zweiten Klick auf den Abend).
     if(state.view==='main') render();
     try{
-      await setClubJSON('evenings-index', state.eveningsIndex);
+      await updateEveningsIndex(serverIndex=> serverIndex.filter(e=>e.id!==eveningId));
     }catch(e){
       console.error('Konnte verwaisten evenings-index-Eintrag nicht zurückspeichern', e);
     }
@@ -3686,30 +3722,23 @@
       });
       if(Object.keys(summaryById).length===0 && orphanedIds.size===0) return;
 
-      // Lokalen state.eveningsIndex mit den Ergebnissen aktualisieren, für sofortige Anzeige.
+      // Sofortiges lokales Update für unmittelbare Anzeige, bevor der Server-Roundtrip
+      // abgeschlossen ist (siehe render()-Aufruf unten).
       state.eveningsIndex = state.eveningsIndex
         .filter(e=> !orphanedIds.has(e.id))
         .map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e);
       if(orphanedIds.size>0) console.warn('Verwaiste evenings-index-Einträge ohne Hauptdokument entfernt:', [...orphanedIds]);
       if(state.view==='main') render();
 
-      // WICHTIG: Vor dem Zurückspeichern wird der AKTUELLE Serverstand von evenings-index neu
-      // geholt und die Backfill-Ergebnisse darauf angewendet, statt den unter Umständen
-      // veralteten lokalen state.eveningsIndex komplett zu überschreiben. backfillEveningSummaries()
-      // läuft im Hintergrund ohne await (siehe Aufrufstellen in goToMain()/init()) und kann daher
-      // etwas dauern; würde in dieser Zeit z.B. ein frisch angelegter Abend bereits wieder
-      // gelöscht (deleteEvening Cloud Function, schreibt den Index server-seitig neu), und
-      // backfillEveningSummaries schriebe anschließend seinen alten, den gelöschten Abend noch
-      // enthaltenden Snapshot zurück, würde der gelöschte Abend durch dieses Last-Write-Wins
-      // ungewollt wiederhergestellt. Der Re-Fetch unmittelbar vor dem Schreiben minimiert dieses
-      // Zeitfenster.
-      const serverIndexSnap = await withTimeout(getDocFromServer(clubDocRef('evenings-index')), STORAGE_TIMEOUT_MS);
-      const serverIndexRaw = serverIndexSnap.exists() ? JSON.parse(serverIndexSnap.data().value) : state.eveningsIndex;
-      const mergedIndex = serverIndexRaw
+      // Der maßgebliche, dauerhaft gespeicherte Stand kommt aus updateEveningsIndex(), das
+      // zwingend gegen den frischen Serverstand arbeitet (siehe dortiger Kommentar) - wichtig,
+      // weil backfillEveningSummaries() im Hintergrund ohne await läuft (siehe Aufrufstellen in
+      // goToMain()/init()) und daher etwas dauern kann, während zwischenzeitlich z.B. ein
+      // Abend gelöscht wurde.
+      await updateEveningsIndex(serverIndex=> serverIndex
         .filter(e=> !orphanedIds.has(e.id))
-        .map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e);
-      await setClubJSON('evenings-index', mergedIndex);
-      state.eveningsIndex = mergedIndex;
+        .map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e)
+      );
       if(state.view==='main') render();
     }catch(e){ console.error('Backfill der Abend-Kennzahlen fehlgeschlagen', e); }
   }
@@ -4025,9 +4054,10 @@
   // etwas ändern (Katalog-Strafe hoch/runter zählen, Geldstrafe hinzufügen/bearbeiten/löschen).
   async function saveEveningSeatFinesAndIndex(detail, seatId){
     updateEveningIndexSummary(detail);
+    const summary = computeEveningSummaryFields(detail);
     await Promise.all([
       saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId]),
-      setClubJSON('evenings-index', state.eveningsIndex)
+      updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
     ]);
   }
 
@@ -4036,10 +4066,11 @@
   // Transaktion, unterschiedliche Sitzplätze können sich also weiterhin nicht kollidieren.
   async function saveEveningSeatsFinesAndIndex(detail, seatIds){
     updateEveningIndexSummary(detail);
+    const summary = computeEveningSummaryFields(detail);
     const uniqueSeatIds = [...new Set(seatIds)];
     await Promise.all([
       ...uniqueSeatIds.map(seatId=> saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId])),
-      setClubJSON('evenings-index', state.eveningsIndex)
+      updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
     ]);
   }
 
@@ -4268,9 +4299,10 @@
         delete seat.invalidAmount; // wird erst beim Abschließen fest eingetragen
       }
       updateEveningIndexSummary(detail);
+      const summary = computeEveningSummaryFields(detail);
       await Promise.all([
         saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex)
+        updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
       ]);
       closeGenericModal();
       render();
@@ -4298,9 +4330,10 @@
         delete seat.invalidAmount;
       }
       updateEveningIndexSummary(detail);
+      const summary = computeEveningSummaryFields(detail);
       await Promise.all([
         saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex)
+        updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
       ]);
       closeGenericModal();
       render();
@@ -4429,9 +4462,10 @@
       const seat = detail.seating.find(s=>s.seatId===seatId);
       if(seat){ seat.name = name; seat.isGuest = isGuest; seat.addedLater = true; }
       updateEveningIndexSummary(detail);
+      const summary = computeEveningSummaryFields(detail);
       await Promise.all([
         saveEveningMainDoc(detail),
-        setClubJSON('evenings-index', state.eveningsIndex)
+        updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
       ]);
       closeGenericModal();
       render();
@@ -6901,12 +6935,11 @@
 
     const id = uid('e');
     const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation };
-    const newIndex = [...state.eveningsIndex, {id, date, ...computeEveningSummaryFields(detail)}];
+    const newIndexEntry = {id, date, ...computeEveningSummaryFields(detail)};
     await Promise.all([
       saveEveningMainDoc(detail),
-      setClubJSON('evenings-index', newIndex)
+      updateEveningsIndex(serverIndex=> [...serverIndex, newIndexEntry])
     ]);
-    state.eveningsIndex = newIndex;
 
     state.currentEveningDetail = detail;
     state.justCreated = true;
