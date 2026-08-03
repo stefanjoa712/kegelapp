@@ -510,6 +510,8 @@
   .hint{background:var(--tint); border:1px solid var(--brass); color:var(--ink); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:6px;}
 
   .seating-diagram{width:100%; height:auto; display:block; max-width:520px; margin:0 auto;}
+  .seating-template-preview{max-width:280px; margin:4px auto 18px; padding:12px; background:var(--surface); border:1px solid var(--muted); border-radius:8px;}
+  .seating-template-preview .seating-diagram{max-width:100%;}
   @media (prefers-reduced-motion:no-preference){
     .reveal-group{animation:reveal .35s ease backwards;}
   }
@@ -728,7 +730,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.106';
+  const APP_VERSION = '1.0.107';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -784,26 +786,63 @@
     return computeSeatingShortLabels(names.left, names.right);
   }
 
-  // Baut die SEATS-Struktur dynamisch aus den konfigurierten Seitenbezeichnungen auf. Die
-  // seatId-Präfixe 'saal'/'kneipe' bleiben aus historischen Gründen bewusst bestehen (sie sind
-  // in Firestore an vielen Stellen als technischer Schlüssel verankert, z.B. in
-  // roundsGivenBySeat, finesBySeat, occupiedSeatIds) - nur 'section' und 'label' (reine
-  // Anzeigefelder) folgen der aktuellen Konfiguration.
-  function buildSeats(){
+  // Katalog der wählbaren Sitzplan-Templates (Tischform + Plätze pro Seite). 'shape' steuert
+  // die Geometrie in buildSeatingSVG()/buildPreviewSeatingSVG() ('trapez' = zur Kegelbahn hin
+  // verjüngend wie ursprünglich, 'rechteck' = parallele Kanten). 'perSide' ersetzt die früher
+  // fest verdrahtete 6 - JEDE Stelle im Code, die Sitzplätze zählt oder aufzählt, muss die
+  // perSide-Zahl des jeweils relevanten Templates verwenden (siehe getEveningSeatingTemplate()
+  // für bestehende Abende, getClubSeatingTemplate() für neu anzulegende).
+  const SEATING_TEMPLATES = [
+    { id:'trapez-5',    label:'Trapeztisch mit 5 Sitzplätzen pro Seite',    shape:'trapez',   perSide:5 },
+    { id:'trapez-6',    label:'Trapeztisch mit 6 Sitzplätzen pro Seite',    shape:'trapez',   perSide:6 },
+    { id:'trapez-7',    label:'Trapeztisch mit 7 Sitzplätzen pro Seite',    shape:'trapez',   perSide:7 },
+    { id:'rechteck-5',  label:'Rechteckiger Tisch mit 5 Sitzplätzen pro Seite', shape:'rechteck', perSide:5 },
+    { id:'rechteck-6',  label:'Rechteckiger Tisch mit 6 Sitzplätzen pro Seite', shape:'rechteck', perSide:6 },
+    { id:'rechteck-7',  label:'Rechteckiger Tisch mit 7 Sitzplätzen pro Seite', shape:'rechteck', perSide:7 }
+  ];
+  const DEFAULT_SEATING_TEMPLATE_ID = 'trapez-6'; // entspricht dem bisherigen, fest verdrahteten Verhalten
+  function getSeatingTemplateById(templateId){
+    return SEATING_TEMPLATES.find(t=>t.id===templateId) || SEATING_TEMPLATES.find(t=>t.id===DEFAULT_SEATING_TEMPLATE_ID);
+  }
+  // Aktuell in der Clubverwaltung konfiguriertes Template - gilt für NEU anzulegende Kegelabende
+  // (siehe handleConfirmNewEvening()). Bestehende Abende behalten ihr zum Erstellungszeitpunkt
+  // gespeichertes Template (detail.seatingTemplateId, siehe getEveningSeatingTemplate()) und
+  // ändern sich NICHT rückwirkend, wenn der Club das Template später wechselt.
+  function getClubSeatingTemplate(){
+    const stored = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.seatingTemplateId;
+    return getSeatingTemplateById(stored);
+  }
+  // Liefert das Template eines KONKRETEN Kegelabends: das zum Erstellungszeitpunkt in
+  // detail.seatingTemplateId gespeicherte, mit Fallback auf das Default-Template für ältere
+  // Abende von vor Einführung dieses Felds (die hatten technisch immer 6 Plätze pro Seite,
+  // Trapezform - genau das, was DEFAULT_SEATING_TEMPLATE_ID abbildet).
+  function getEveningSeatingTemplate(detail){
+    return getSeatingTemplateById(detail && detail.seatingTemplateId);
+  }
+
+  // Baut die SEATS-Struktur dynamisch aus den konfigurierten Seitenbezeichnungen UND der
+  // Plätze-pro-Seite-Zahl des übergebenen Templates auf. Die seatId-Präfixe 'saal'/'kneipe'
+  // bleiben aus historischen Gründen bewusst bestehen (sie sind in Firestore an vielen Stellen
+  // als technischer Schlüssel verankert, z.B. in roundsGivenBySeat, finesBySeat,
+  // occupiedSeatIds) - nur 'section' und 'label' (reine Anzeigefelder) folgen der aktuellen
+  // Konfiguration. template ist optional (Default: aktuelles Club-Template) - wird IMMER explizit
+  // übergeben, wenn es um einen bestehenden Kegelabend geht (siehe getEveningSeatingTemplate()).
+  function buildSeats(template){
+    const t = template || getClubSeatingTemplate();
     const names = getSeatingSideNames();
     const seats = [];
-    for(let i=1;i<=6;i++) seats.push({id:'saal-'+i, section:names.left, label:names.left+' '+i});
-    for(let i=1;i<=6;i++) seats.push({id:'kneipe-'+i, section:names.right, label:names.right+' '+i});
+    for(let i=1;i<=t.perSide;i++) seats.push({id:'saal-'+i, section:names.left, label:names.left+' '+i});
+    for(let i=1;i<=t.perSide;i++) seats.push({id:'kneipe-'+i, section:names.right, label:names.right+' '+i});
     return seats;
   }
-  function SEATS(){ return buildSeats(); }
+  function SEATS(template){ return buildSeats(template); }
 
   // Standard-Sitzplatz, dessen Inhaber bei der Auslosungsoption "Standardplatz" automatisch
   // Schriftführer wird (siehe #clubverwaltung, Abschnitt "Sitzplan", und createEvening()).
   // Fällt auf 'kneipe-1' zurück (historischer Default, entspricht "Rechts 1" bei den
   // Standard-Seitenbezeichnungen), falls der Club noch keinen eigenen Wert gespeichert hat, oder
-  // falls der gespeicherte Wert keiner der aktuell gültigen 12 seatIds entspricht (z.B. nach
-  // versehentlicher Dateninkonsistenz).
+  // falls der gespeicherte Wert keiner der aktuell gültigen seatIds des Club-Templates entspricht
+  // (z.B. nach einem Template-Wechsel mit weniger Plätzen, oder versehentlicher Dateninkonsistenz).
   const DEFAULT_STANDARD_SCHRIFTFUEHRER_SEAT_ID = 'kneipe-1';
   function getStandardSchriftfuehrerSeatId(){
     const stored = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.standardSchriftfuehrerSeatId;
@@ -1595,11 +1634,13 @@
   }
   // Erzeugt die Belegungsreihenfolge abwechselnd Kneipe/Saal (bzw. Saal/Kneipe), damit besetzte
   // Plätze nahe der Kegelbahn geclustert bleiben. Welche Seite zuerst drankommt (und bei ungerader
-  // Teilnehmerzahl den Überhang bekommt) wird pro Abend zufällig entschieden.
-  function buildSeatPriorityOrder(){
+  // Teilnehmerzahl den Überhang bekommt) wird pro Abend zufällig entschieden. perSide steuert die
+  // Anzahl Plätze pro Seite (siehe SEATING_TEMPLATES) - Default: aktuelles Club-Template.
+  function buildSeatPriorityOrder(perSide){
+    const n = perSide || getClubSeatingTemplate().perSide;
     const kneipeStarts = Math.random() < 0.5;
     const order = [];
-    for(let i=1;i<=6;i++){
+    for(let i=1;i<=n;i++){
       order.push(kneipeStarts ? 'kneipe-'+i : 'saal-'+i, kneipeStarts ? 'saal-'+i : 'kneipe-'+i);
     }
     return order;
@@ -2270,8 +2311,12 @@
     const readOnly = !canManageMembers();
     const disabledAttr = readOnly ? ' disabled' : '';
     const sideNames = getSeatingSideNames();
+    const currentTemplate = getClubSeatingTemplate();
+    const templateOptionsHtml = SEATING_TEMPLATES.map(t=>
+      `<option value="${t.id}"${t.id===currentTemplate.id?' selected':''}>${escapeHtml(t.label)}</option>`
+    ).join('');
     const standardSeatId = getStandardSchriftfuehrerSeatId();
-    const standardSeatOptionsHtml = buildSeats().map(seat=>
+    const standardSeatOptionsHtml = buildSeats(currentTemplate).map(seat=>
       `<option value="${seat.id}"${seat.id===standardSeatId?' selected':''}>${escapeHtml(seat.label)}</option>`
     ).join('');
     return `
@@ -2293,7 +2338,10 @@
         <input type="text" id="club-seating-left" placeholder="z. B. Links" value="${escapeHtml(sideNames.left)}"${disabledAttr}>
         <label for="club-seating-right">Bezeichnung rechte Seite</label>
         <input type="text" id="club-seating-right" placeholder="z. B. Rechts" value="${escapeHtml(sideNames.right)}"${disabledAttr}>
-        <p class="hint">Die Kürzel auf dem Sitzplan (z. B. „L1") leiten sich automatisch aus den Anfangsbuchstaben der Bezeichnungen ab.</p>
+        <label for="club-seating-template">Standard Sitzplan-Template</label>
+        <select id="club-seating-template"${disabledAttr}>${templateOptionsHtml}</select>
+        <p class="hint">Gilt nur für neu angelegte Kegelabende. Bereits bestehende Abende behalten ihren ursprünglichen Sitzplan.</p>
+        <div id="seating-template-preview" class="seating-template-preview">${buildPreviewSeatingSVG(currentTemplate)}</div>
         <div class="field-label-row">
           <label for="club-standard-seat">Standardplatz Schriftführer</label>
           <button type="button" class="info-icon-btn" id="standard-seat-info-btn" aria-label="Erklärung anzeigen">${ICON_INFO_SMALL}</button>
@@ -3564,7 +3612,7 @@
         </select>
       </div>
       <div class="card" style="text-align:center;">
-        <div class="seat-counter" id="seat-counter">0 / 12 Plätze belegt</div>
+        <div class="seat-counter" id="seat-counter">0 / ${getClubSeatingTemplate().perSide*2} Plätze belegt</div>
         <div class="form-error" id="form-error"></div>
         <button type="button" class="btn-primary" id="confirm-btn" disabled>Zufällig auslosen &amp; festlegen</button>
       </div>
@@ -3787,8 +3835,9 @@
     if(roundFines.length===0) return [];
     const bySeatId = {};
     detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
+    const perSide = getEveningSeatingTemplate(detail).perSide;
     const interleavedOrder = [];
-    for(let i=1;i<=6;i++){ interleavedOrder.push('saal-'+i, 'kneipe-'+i); }
+    for(let i=1;i<=perSide;i++){ interleavedOrder.push('saal-'+i, 'kneipe-'+i); }
     const occupied = interleavedOrder.map(id=>bySeatId[id]).filter(s=>s && s.name);
 
     const entries = [];
@@ -3874,8 +3923,9 @@
   function buildFinesSummary(detail){
     const bySeatId = {};
     detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
+    const perSide = getEveningSeatingTemplate(detail).perSide;
     const interleavedOrder = [];
-    for(let i=1;i<=6;i++){ interleavedOrder.push('saal-'+i, 'kneipe-'+i); }
+    for(let i=1;i<=perSide;i++){ interleavedOrder.push('saal-'+i, 'kneipe-'+i); }
     const occupied = interleavedOrder.map(id=>bySeatId[id]).filter(s=>s && s.name);
 
     const crownSeatIds = computePudelCrownSeatIds(detail);
@@ -4364,8 +4414,9 @@
     const kneipeActive = detail.seating.filter(s=>s.seatId.startsWith('kneipe-') && s.name && !s.invalid).length;
     const preferred = kneipeActive < saalActive ? 'kneipe' : (saalActive < kneipeActive ? 'saal' : (Math.random()<0.5 ? 'kneipe':'saal'));
     const sections = [preferred, preferred==='saal'?'kneipe':'saal'];
+    const perSide = getEveningSeatingTemplate(detail).perSide;
     for(const section of sections){
-      for(let i=1;i<=6;i++){
+      for(let i=1;i<=perSide;i++){
         const seatId = section+'-'+i;
         if(!occupied.has(seatId)) return seatId;
       }
@@ -4382,8 +4433,9 @@
     const oldSection = oldSeatId.startsWith('saal-') ? 'saal' : 'kneipe';
     const newSection = oldSection==='saal' ? 'kneipe' : 'saal';
     const occupied = new Set(detail.seating.filter(s=>s.name).map(s=>s.seatId));
+    const perSide = getEveningSeatingTemplate(detail).perSide;
     let newSeatId = null;
-    for(let i=1;i<=6;i++){
+    for(let i=1;i<=perSide;i++){
       const candidate = newSection+'-'+i;
       if(!occupied.has(candidate)){ newSeatId = candidate; break; }
     }
@@ -4504,8 +4556,9 @@
     }
     const bySeatIdForBulk = {};
     detail.seating.forEach(s=>{ bySeatIdForBulk[s.seatId] = s; });
+    const bulkPerSide = getEveningSeatingTemplate(detail).perSide;
     const interleavedSeatOrder = [];
-    for(let i=1;i<=6;i++){ interleavedSeatOrder.push('saal-'+i, 'kneipe-'+i); }
+    for(let i=1;i<=bulkPerSide;i++){ interleavedSeatOrder.push('saal-'+i, 'kneipe-'+i); }
     const memberSeats = interleavedSeatOrder.map(id=>bySeatIdForBulk[id]).filter(s=>s && s.name && !s.invalid);
     const fineOptionsHtml = catalog.map(f=>`<option value="fine:${f.id}">${escapeHtml(f.name)} (${fmtEuro(f.amount)})</option>`).join('');
     const gameOptionsHtml = games.map(g=>`<option value="game:${g.id}">${escapeHtml(g.name)}</option>`).join('');
@@ -4609,11 +4662,27 @@
     });
   }
 
+  // Zeichnet den Sitzplan eines KONKRETEN Kegelabends. Nutzt IMMER das zum Erstellungszeitpunkt
+  // des Abends gespeicherte Template (detail.seatingTemplateId, siehe getEveningSeatingTemplate())
+  // - ändert der Club das Template später, bleibt die Darstellung bestehender Abende bewusst
+  // unverändert (siehe Anforderung "alte Abende bleiben unverändert").
   function buildSeatingSVG(detail){
-    const W = 760, H = 1020;
-    const tableTopY = 130, tableBottomY = 970;
-    const topLX = 230, topRX = 530, botLX = 300, botRX = 460;
-    const chairW = 188, chairH = 122, outward = 128, n = 6;
+    const template = getEveningSeatingTemplate(detail);
+    const n = template.perSide;
+    // Grundmaße wie ursprünglich bei n=6 kalibriert (chairH=122 + Row-Abstand ergibt ca. 140px
+    // pro Platz) - bei anderem n wird die Tischlänge (tableBottomY-tableTopY) proportional
+    // mitskaliert, damit der Row-Abstand und damit die Stuhlgröße gleich bleiben, statt bei
+    // z.B. 7 Plätzen zu eng zusammengequetscht zu werden.
+    const rowSpacing = 140;
+    const tableTopY = 130;
+    const tableBottomY = tableTopY + n*rowSpacing;
+    const W = 760, H = tableBottomY + 50;
+    // Trapezform (zur Kegelbahn hin verjüngend, wie ursprünglich) vs. rechteckige Form (parallele
+    // Kanten, gleicher Abstand zur Mittelachse oben wie unten).
+    const topLX = 230, topRX = 530;
+    const botLX = template.shape==='rechteck' ? topLX : 300;
+    const botRX = template.shape==='rechteck' ? topRX : 460;
+    const chairW = 188, chairH = 122, outward = 128;
 
     const sideNames = getSeatingSideNames();
     const shortLabels = getSeatingShortLabels();
@@ -4691,6 +4760,55 @@
       <text class="lane-label-text" x="${W/2}" y="100" text-anchor="middle">Kegelbahn</text>
       <text class="side-label-text" x="115" y="55" text-anchor="middle">${escapeHtml(sideNames.left)}</text>
       <text class="side-label-text" x="${W-115}" y="55" text-anchor="middle">${escapeHtml(sideNames.right)}</text>
+      ${chairsHtml}
+    </svg>`;
+  }
+
+  // Vereinfachte, nicht-interaktive Vorschau eines Sitzplan-Templates für die Clubverwaltung:
+  // zeigt nur die Tischform und die Platzkürzel (kein Name, kein Klick, keine Badges) - reine
+  // Live-Vorschau bei Auswahl im Template-Dropdown, unabhängig von einem konkreten Kegelabend.
+  function buildPreviewSeatingSVG(template){
+    const n = template.perSide;
+    const rowSpacing = 84;
+    const tableTopY = 70;
+    const tableBottomY = tableTopY + n*rowSpacing;
+    const W = 460, H = tableBottomY + 30;
+    const topLX = 140, topRX = 320;
+    const botLX = template.shape==='rechteck' ? topLX : 175;
+    const botRX = template.shape==='rechteck' ? topRX : 285;
+    const chairW = 112, chairH = 72, outward = 76;
+
+    const sideNames = getSeatingSideNames();
+    const shortLabels = getSeatingShortLabels();
+
+    function edge(side, t){
+      const topX = side==='left' ? topLX : topRX;
+      const botX = side==='left' ? botLX : botRX;
+      return { x: topX + t*(botX-topX), y: tableTopY + t*(tableBottomY-tableTopY) };
+    }
+
+    function chairGroup(side, idx, sidePrefixLabel){
+      const t = (idx+0.5)/n;
+      const e = edge(side, t);
+      const cx = side==='left' ? e.x - outward : e.x + outward;
+      const cy = e.y;
+      const rectX = cx - chairW/2, rectY = cy - chairH/2;
+      const shortLabel = sidePrefixLabel + (idx+1);
+      return `<g>
+        <rect class="chair-body empty" x="${rectX}" y="${rectY}" width="${chairW}" height="${chairH}" rx="10" />
+        <text class="seat-label-text empty" x="${cx}" y="${cy+6}" text-anchor="middle" font-size="18">${shortLabel}</text>
+      </g>`;
+    }
+
+    let chairsHtml = '';
+    for(let i=0;i<n;i++) chairsHtml += chairGroup('left', i, shortLabels.left);
+    for(let i=0;i<n;i++) chairsHtml += chairGroup('right', i, shortLabels.right);
+
+    const tablePath = `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
+
+    return `<svg class="seating-diagram seating-diagram-preview" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vorschau des Sitzplan-Templates">
+      <path class="table-shape" d="${tablePath}" />
+      <line class="lane-center-line" x1="${W/2}" y1="${tableTopY+10}" x2="${W/2}" y2="${tableBottomY-10}" />
       ${chairsHtml}
     </svg>`;
   }
@@ -5150,7 +5268,7 @@
 
     // Änderungs-Erkennung: Speichern-Button ist nur aktiv, wenn sich mind. ein Feld
     // gegenüber dem geladenen Stand unterscheidet.
-    const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder','club-seating-left','club-seating-right','club-standard-seat'];
+    const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder','club-seating-left','club-seating-right','club-seating-template','club-standard-seat'];
     const initialClubValues = {};
     clubFieldIds.forEach(id=>{ const el = document.getElementById(id); if(el) initialClubValues[id] = el.value; });
     const updateSaveBtnState = ()=>{
@@ -5165,6 +5283,29 @@
       if(el) el.addEventListener('input', updateSaveBtnState);
     });
 
+    // Live-Vorschau des Sitzplan-Templates: bei jeder Auswahländerung wird sowohl die
+    // Vorschau-SVG als auch die Optionsliste des Standardplatz-Dropdowns neu aufgebaut (die
+    // Anzahl und Bezeichnung der verfügbaren Plätze hängt vom gewählten Template ab). Der
+    // Standardplatz wird dabei NICHT automatisch neu gewählt, außer der bisher gewählte Platz
+    // existiert im neuen Template nicht mehr (z.B. Wechsel von 7 auf 5 Plätze pro Seite) - dann
+    // fällt die Auswahl auf den ersten verfügbaren Platz zurück.
+    const templateSelect = document.getElementById('club-seating-template');
+    const previewContainer = document.getElementById('seating-template-preview');
+    const standardSeatSelect = document.getElementById('club-standard-seat');
+    if(templateSelect && previewContainer && standardSeatSelect){
+      templateSelect.addEventListener('change', ()=>{
+        const template = getSeatingTemplateById(templateSelect.value);
+        previewContainer.innerHTML = buildPreviewSeatingSVG(template);
+        const previousSelection = standardSeatSelect.value;
+        const seatsForTemplate = buildSeats(template);
+        const stillValid = seatsForTemplate.some(seat=>seat.id===previousSelection);
+        standardSeatSelect.innerHTML = seatsForTemplate.map(seat=>
+          `<option value="${escapeHtml(seat.id)}"${(stillValid ? seat.id===previousSelection : seat===seatsForTemplate[0])?' selected':''}>${escapeHtml(seat.label)}</option>`
+        ).join('');
+        updateSaveBtnState();
+      });
+    }
+
     saveBtn.addEventListener('click', async ()=>{
       const errEl = document.getElementById('club-form-error');
       const name = document.getElementById('club-name').value.trim();
@@ -5174,6 +5315,7 @@
       const accountHolder = document.getElementById('club-account-holder').value.trim();
       const seatingLeft = document.getElementById('club-seating-left').value.trim() || DEFAULT_SEATING_SIDE_NAMES.left;
       const seatingRight = document.getElementById('club-seating-right').value.trim() || DEFAULT_SEATING_SIDE_NAMES.right;
+      const seatingTemplateId = document.getElementById('club-seating-template').value;
       const standardSeatId = document.getElementById('club-standard-seat').value;
 
       if(!name){ errEl.textContent = 'Bitte einen Clubnamen angeben.'; return; }
@@ -5208,6 +5350,7 @@
           accountHolder: accountHolder ? accountHolder : deleteField(),
           seatingSideNames: { left: seatingLeft, right: seatingRight },
           seatingShortLabels,
+          seatingTemplateId,
           standardSchriftfuehrerSeatId: standardSeatId,
         };
         await saveClub(clubUpdate);
@@ -5217,6 +5360,7 @@
         if(accountHolder){ CURRENT_CLUB_DATA.accountHolder = accountHolder; } else { delete CURRENT_CLUB_DATA.accountHolder; }
         CURRENT_CLUB_DATA.seatingSideNames = { left: seatingLeft, right: seatingRight };
         CURRENT_CLUB_DATA.seatingShortLabels = seatingShortLabels;
+        CURRENT_CLUB_DATA.seatingTemplateId = seatingTemplateId;
         CURRENT_CLUB_DATA.standardSchriftfuehrerSeatId = standardSeatId;
         markFetched('clubData');
         applyClubBranding();
@@ -5802,13 +5946,14 @@
   function updateSeatCounter(){
     const checkedCount = document.querySelectorAll('.member-checkbox:checked').length;
     const total = checkedCount + currentGuests.length;
+    const maxSeats = getClubSeatingTemplate().perSide*2;
     const counterEl = document.getElementById('seat-counter');
     if(counterEl){
-      counterEl.textContent = `${total} / 12 Plätze belegt`;
-      counterEl.classList.toggle('over', total>12);
+      counterEl.textContent = `${total} / ${maxSeats} Plätze belegt`;
+      counterEl.classList.toggle('over', total>maxSeats);
     }
     const btn = document.getElementById('confirm-btn');
-    if(btn) btn.disabled = (total<1 || total>12);
+    if(btn) btn.disabled = (total<1 || total>maxSeats);
     const err = document.getElementById('form-error');
     if(err) err.textContent = '';
     updateSchriftfuehrerOptions();
@@ -6851,8 +6996,9 @@
     const originalBtnText = btn ? btn.textContent : '';
 
     // Schnelle, lokale Prüfungen zuerst - kein Netzwerk nötig, keine Ladeanzeige erforderlich.
+    const maxSeats = getClubSeatingTemplate().perSide*2;
     if(participants.length<1){ if(errEl) errEl.textContent='Wähle mindestens einen Teilnehmer aus.'; return; }
-    if(participants.length>12){ if(errEl) errEl.textContent='Maximal 12 Teilnehmer möglich – es gibt nur 12 Plätze.'; return; }
+    if(participants.length>maxSeats){ if(errEl) errEl.textContent=`Maximal ${maxSeats} Teilnehmer möglich – es gibt nur ${maxSeats} Plätze.`; return; }
 
     // Ab hier braucht es das Netzwerk - sofort sichtbares Feedback geben, damit ein Klick
     // nie so wirkt, als wäre nichts passiert.
@@ -6870,13 +7016,20 @@
 
     if(btn){ btn.textContent = 'Wird ausgelost…'; }
 
+    // Template wird HIER EINMALIG fixiert (nicht mehrfach über die Funktion verteilt neu
+    // gelesen), damit während der gesamten Erstellung konsistent dasselbe Template verwendet
+    // wird, selbst wenn der Club es zwischenzeitlich in einem anderen Tab ändert. Wird im
+    // detail-Objekt gespeichert (siehe unten) - bestehende Abende bleiben dadurch beim
+    // späteren Wechsel des Club-Templates unverändert (siehe getEveningSeatingTemplate()).
+    const seatingTemplate = getClubSeatingTemplate();
+
     // Aktuelle Strafenliste als feste Kopie für diesen Abend übernehmen - spätere Änderungen
     // in der Strafenverwaltung dürfen diesen Abend nicht mehr beeinflussen.
     const finesCatalogAtCreation = await getClubJSON('fines-catalog', state.finesCatalog);
     state.finesCatalog = finesCatalogAtCreation;
     markFetched('finesCatalog');
 
-    const occupiedSeatIds = buildSeatPriorityOrder().slice(0, participants.length);
+    const occupiedSeatIds = buildSeatPriorityOrder(seatingTemplate.perSide).slice(0, participants.length);
     const schriftfuehrerSelect = document.getElementById('schriftfuehrer-select');
     const schriftfuehrerChoice = schriftfuehrerSelect ? schriftfuehrerSelect.value : 'standard';
     const isStandardplatz = schriftfuehrerChoice === 'standard';
@@ -6938,7 +7091,7 @@
       }
     }
 
-    const seating = SEATS().map(seat=>{
+    const seating = SEATS(seatingTemplate).map(seat=>{
       const p = seatAssignment[seat.id];
       return {
         seatId:seat.id, section:seat.section, label:seat.label,
@@ -6948,7 +7101,10 @@
     });
 
     const id = uid('e');
-    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation };
+    // seatingTemplateId wird fest mit dem Abend gespeichert (analog zu finesCatalogSnapshot) -
+    // siehe getEveningSeatingTemplate(): ein späterer Wechsel des Club-Templates darf die
+    // Darstellung dieses bereits angelegten Abends nicht rückwirkend verändern.
+    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, seatingTemplateId: seatingTemplate.id };
     const newIndexEntry = {id, date, ...computeEveningSummaryFields(detail)};
     await Promise.all([
       saveEveningMainDoc(detail),
