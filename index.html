@@ -728,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.105';
+  const APP_VERSION = '1.0.106';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -974,9 +974,16 @@
   // erneuten Versuch mehr. Mit dem state-Update losgelöst vom render() wird der korrekte Stand
   // jetzt in jedem Fall übernommen, sobald er eintrifft - nur die sofortige Neu-Darstellung
   // bleibt der ursprünglich erwarteten View vorbehalten.
+  // Zeitstempel des letzten Hintergrund-Serverabgleichs für eveningsIndex (siehe
+  // backgroundStateUpdate() unten und init(), das damit eine Race Condition vermeidet: ohne
+  // diesen Zeitstempel konnte init() einen bereits vom Hintergrundabgleich korrigierten
+  // state.eveningsIndex-Wert direkt danach wieder mit seinem eigenen, unter Umständen
+  // veralteten Rückgabewert überschreiben).
+  let lastEveningsIndexBackgroundSyncAt = 0;
   function backgroundStateUpdate(stateKey, expectedView){
     return function(serverResult){
       state[stateKey] = serverResult;
+      if(stateKey==='eveningsIndex') lastEveningsIndexBackgroundSyncAt = Date.now();
       if(state.view===expectedView) render();
     };
   }
@@ -1608,13 +1615,20 @@
     const keys = ['eveningsIndex','financeArrears','calendarEvents','calendarOccurrenceEdits'];
     if(!allFresh(keys)) renderLoading('Übersicht wird geladen…');
     try{
+      // Siehe ausführlicher Kommentar in init(): eveningsIndexFetchStartedAt +
+      // lastEveningsIndexBackgroundSyncAt verhindern, dass die Zuweisung unten einen
+      // zwischenzeitlich vom Hintergrundabgleich bereits korrigierten state.eveningsIndex-Wert
+      // wieder mit dem (unter Umständen veralteten) Rückgabewert dieses Promise.all überschreibt.
+      const eveningsIndexFetchStartedAt = Date.now();
       const [eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         fetchIfStale('eveningsIndex', ()=> getClubJSONOrThrow('evenings-index', [], backgroundStateUpdate('eveningsIndex', 'main'))),
         fetchIfStale('financeArrears', getAllArrears),
         fetchIfStale('calendarEvents', getAllCalendarEvents),
         fetchIfStale('calendarOccurrenceEdits', getAllOccurrenceEdits)
       ]);
-      state.eveningsIndex = eveningsIndex;
+      if(lastEveningsIndexBackgroundSyncAt < eveningsIndexFetchStartedAt){
+        state.eveningsIndex = eveningsIndex;
+      }
       state.financeArrears = arrears;
       state.calendarEvents = calendarEvents;
       state.calendarOccurrenceEdits = calendarOccurrenceEdits;
@@ -7575,6 +7589,20 @@
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
     try{
+      // WICHTIG: eveningsIndex wird hier bewusst NICHT aus dem Promise.all-Ergebnis in
+      // state.eveningsIndex übernommen (siehe unten). getClubJSONOrThrow() startet parallel zu
+      // seinem eigenen Rückgabewert einen Hintergrund-Serverabgleich (onBackgroundUpdate,
+      // hier backgroundStateUpdate('eveningsIndex','main')), der state.eveningsIndex bereits
+      // während dieses Promise.all noch läuft mit dem korrekten Serverstand überschreiben kann
+      // (z.B. wenn der Server schneller antwortet als die anderen Requests in diesem Promise.all).
+      // Eine anschließende, bedingungslose Zuweisung state.eveningsIndex = eveningsIndex hätte
+      // diesen bereits korrigierten Wert wieder mit dem ursprünglichen (unter Umständen
+      // veralteten Cache-)Rückgabewert überschrieben - das führte dazu, dass ein kurz zuvor
+      // gelöschter Kegelabend nach einem Reload trotz bereits korrekt bereinigter Datenbank
+      // weiterhin angezeigt wurde. Stattdessen wird hier ein Platzhalter-Marker verglichen:
+      // nur falls der Hintergrundabgleich zwischenzeitlich NICHT bereits zugeschlagen hat, wird
+      // der Promise.all-Rückgabewert übernommen.
+      const eveningsIndexFetchStartedAt = Date.now();
       const [members, eveningsIndex, arrears, calendarEvents, calendarOccurrenceEdits] = await Promise.all([
         getAllMembers(),
         getClubJSONOrThrow('evenings-index', [], backgroundStateUpdate('eveningsIndex', 'main')),
@@ -7583,7 +7611,11 @@
         getAllOccurrenceEdits()
       ]);
       state.members = members;
-      state.eveningsIndex = eveningsIndex;
+      // Nur übernehmen, wenn seit Start dieses Ladevorgangs noch KEIN Hintergrundabgleich für
+      // eveningsIndex stattgefunden hat (siehe Kommentar oben und markEveningsIndexBackgroundSync()).
+      if(lastEveningsIndexBackgroundSyncAt < eveningsIndexFetchStartedAt){
+        state.eveningsIndex = eveningsIndex;
+      }
       state.financeArrears = arrears;
       state.calendarEvents = calendarEvents;
       state.calendarOccurrenceEdits = calendarOccurrenceEdits;
