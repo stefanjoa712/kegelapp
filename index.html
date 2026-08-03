@@ -723,7 +723,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.97';
+  const APP_VERSION = '1.0.98';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -935,11 +935,22 @@
   // nachträglich vom Server eingetroffenen Wert in den angegebenen state-Key und rendert neu -
   // nur falls sich die View seit dem Aufruf nicht geändert hat (sonst würde man z.B. mitten in
   // einer anderen Ansicht landen, weil ein alter Ladevorgang spät aufgelöst hat).
+  //
+  // WICHTIG: state[stateKey] wird IMMER aktualisiert, auch wenn die View inzwischen gewechselt
+  // hat - nur das render() wird auf die erwartete View beschränkt. Vorher wurde bei einem
+  // View-Wechsel der komplette Update verworfen; da getClubJSONOrThrow()/getClubJSON() den
+  // Firestore-Client-Cache (persistentLocalCache, überlebt Reloads über IndexedDB) cache-first
+  // zurückgeben, blieb dadurch teils dauerhaft ein veralteter Stand (z.B. bereits gelöschte
+  // Kegelabende in eveningsIndex) im state stehen: markFetched() markierte den Stand direkt nach
+  // dem Cache-Read als "frisch" (FRESH_MS), und wenn der eigentliche Server-Abgleich wegen
+  // zwischenzeitlicher Navigation verworfen wurde, gab es bis zum Ablauf von FRESH_MS keinen
+  // erneuten Versuch mehr. Mit dem state-Update losgelöst vom render() wird der korrekte Stand
+  // jetzt in jedem Fall übernommen, sobald er eintrifft - nur die sofortige Neu-Darstellung
+  // bleibt der ursprünglich erwarteten View vorbehalten.
   function backgroundStateUpdate(stateKey, expectedView){
     return function(serverResult){
-      if(state.view!==expectedView) return;
       state[stateKey] = serverResult;
-      render();
+      if(state.view===expectedView) render();
     };
   }
 
