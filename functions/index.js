@@ -1,5 +1,5 @@
 /**
- * Die Pudolfs Kegelapp – Cloud Function für Strafen-E-Mails
+ * Kegelapp – Cloud Functions für Strafen-E-Mails, Einladungen und Club-Verwaltung
  * ------------------------------------------------------------
  * Feuert immer dann, wenn ein Kegelabend-Dokument in Firestore geändert wird.
  * Sobald ein Abend von "offen" auf "abgeschlossen" wechselt, werden allen
@@ -150,7 +150,7 @@ function buildSectionHtml(title, lines) {
   `;
 }
 
-function buildEmailHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactEveningTotal, roundedEveningTotal, priorArrears, paypalName) {
+function buildEmailHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactEveningTotal, roundedEveningTotal, priorArrears, paypalName, clubName) {
   const hasAnyLines = catalogLines.length + fremdstrafeLines.length + adHocLines.length > 0;
   const emptyHtml = hasAnyLines ? '' : '<p>Keine Strafen für diesen Abend.</p>';
   const hasArrears = priorArrears > 0;
@@ -201,7 +201,7 @@ function buildEmailHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLine
       </div>
       ${paypalButtonHtml}
 
-      <p>Kegelgruß,<br>Die Pudolfs</p>
+      <p>Kegelgruß,<br>${escapeHtml(clubName)}</p>
     </div>
   `;
 }
@@ -210,14 +210,14 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function buildReopenEmailHtml(name, dateStr) {
+function buildReopenEmailHtml(name, dateStr, clubName) {
   return `
     <div style="font-family:sans-serif; color:#161616; max-width:480px;">
       <p>Hallo ${escapeHtml(name)},</p>
       <p>beim Kegelabend am <strong>${dateStr}</strong> gab es scheinbar einen Fehler in der Strafenberechnung.</p>
       <p><strong>Du kannst die vorherige E-Mail zu diesem Abend ignorieren – aktuell muss nichts bezahlt werden.</strong></p>
       <p>Sobald der Abend erneut abgeschlossen wird, bekommst du eine neue, korrigierte E-Mail mit den aktuellen Strafen.</p>
-      <p>Kegelgruß,<br>Die Pudolfs</p>
+      <p>Kegelgruß,<br>${escapeHtml(clubName)}</p>
     </div>
   `;
 }
@@ -374,6 +374,7 @@ async function handleEveningClosed(clubId, after, docId) {
 
   const clubSnap = await db.collection('clubs').doc(clubId).get();
   const paypalName = clubSnap.exists ? clubSnap.data().paypalName : undefined;
+  const clubName = (clubSnap.exists && clubSnap.data().name) || 'Dein Kegelclub';
 
   const resend = new Resend(resendApiKey.value());
   const dateStr = formatEveningDate(after);
@@ -426,7 +427,7 @@ async function handleEveningClosed(clubId, after, docId) {
   for (const r of recipients) {
     const roundedTotal = roundUpToFullEuro(r.total);
     const priorArrears = (after.priorArrearsSnapshot && after.priorArrearsSnapshot[r.name]) || 0;
-    const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal, priorArrears, paypalName);
+    const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal, priorArrears, paypalName, clubName);
     try {
       await resend.emails.send({
         from: FROM_ADDRESS,
@@ -444,6 +445,9 @@ async function handleEveningReopened(clubId, before, docId) {
   const members = await loadMembers(clubId);
   if (!members) return;
 
+  const clubSnap = await db.collection('clubs').doc(clubId).get();
+  const clubName = (clubSnap.exists && clubSnap.data().name) || 'Dein Kegelclub';
+
   const resend = new Resend(resendApiKey.value());
   const dateStr = formatEveningDate(before);
   const recipients = collectRecipientNames(before, members);
@@ -451,7 +455,7 @@ async function handleEveningReopened(clubId, before, docId) {
   logger.info(`Sende Korrektur-E-Mails (Wiedereröffnung) für Abend ${docId} an ${recipients.length} Empfänger.`);
 
   for (const r of recipients) {
-    const html = buildReopenEmailHtml(r.name, dateStr);
+    const html = buildReopenEmailHtml(r.name, dateStr, clubName);
     try {
       await resend.emails.send({
         from: FROM_ADDRESS,
@@ -978,6 +982,9 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
     logger.error(`Rolle für ${email} konnte beim Einladen nicht ermittelt werden:`, e);
   }
 
+  const clubSnapForInvite = await db.collection('clubs').doc(clubId).get();
+  const clubName = (clubSnapForInvite.exists && clubSnapForInvite.data().name) || 'Dein Kegelclub';
+
   // Custom Claim 'clubIds' (Array) ordnet den Auth-Account einem oder mehreren Clubs zu - nach
   // dem Login liest der Client daraus, welche(n) Club(s) dieser Nutzer sehen darf (bei genau
   // einem Eintrag direkt, bei mehreren über eine Auswahl). WICHTIG: den bestehenden Claim lesen
@@ -1006,14 +1013,14 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   const html = `
     <div style="font-family:sans-serif; color:#161616; max-width:480px;">
       <p>Hallo ${escapeHtml(name || '')},</p>
-      <p>du wurdest eingeladen, dich in der Kegelbuch-App der Pudolfs anzumelden.</p>
+      <p>du wurdest eingeladen, dich in der Kegelbuch-App von ${escapeHtml(clubName)} anzumelden.</p>
       <p>
         <a href="${resetLink}" style="display:inline-block; background:#E3421F; color:#fff; font-weight:800; text-decoration:none; padding:12px 22px; border-radius:8px;">
           Passwort festlegen
         </a>
       </p>
       <p>Danach kannst du dich mit deiner E-Mail-Adresse und deinem neuen Passwort in der App anmelden.</p>
-      <p>Kegelgruß,<br>Die Pudolfs</p>
+      <p>Kegelgruß,<br>${escapeHtml(clubName)}</p>
     </div>
   `;
 
@@ -1021,7 +1028,7 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
     await resend.emails.send({
       from: FROM_ADDRESS,
       to: email,
-      subject: 'Einladung: Die Pudolfs Kegelbuch',
+      subject: `Einladung: ${clubName} Kegelbuch`,
       html,
     });
   } catch (err) {
@@ -1048,7 +1055,7 @@ function slugifyClubName(name) {
     .replace(/^-+|-+$/g, '') || 'club';
 }
 
-function buildClubInviteEmailHtml(name) {
+function buildClubInviteEmailHtml(name, clubName) {
   return `
     <div style="font-family:sans-serif; color:#161616; max-width:480px;">
       <p>Hallo ${escapeHtml(name || '')},</p>
@@ -1059,7 +1066,7 @@ function buildClubInviteEmailHtml(name) {
         </a>
       </p>
       <p>Danach kannst du dich mit deiner E-Mail-Adresse und deinem neuen Passwort in der App anmelden.</p>
-      <p>Kegelgruß,<br>Die Pudolfs</p>
+      <p>Kegelgruß,<br>${escapeHtml(clubName)}</p>
     </div>
   `;
 }
@@ -1129,7 +1136,7 @@ exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
     url: HOSTING_URL,
     handleCodeInApp: false,
   });
-  const html = buildClubInviteEmailHtml(member.firstName).replace('RESET_LINK_PLACEHOLDER', resetLink);
+  const html = buildClubInviteEmailHtml(member.firstName, clubData.name).replace('RESET_LINK_PLACEHOLDER', resetLink);
 
   const resend = new Resend(resendApiKey.value());
   try {
