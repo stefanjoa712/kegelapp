@@ -630,7 +630,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, collection, getDoc, getDocs, getDocFromCache, setDoc, deleteDoc, deleteField, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+  import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, collection, getDoc, getDocs, getDocFromCache, getDocFromServer, setDoc, deleteDoc, deleteField, runTransaction } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
     setPersistence, browserLocalPersistence, browserSessionPersistence,
@@ -728,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.101';
+  const APP_VERSION = '1.0.102';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -912,7 +912,14 @@
     }catch(e){
       cacheResult = undefined;
     }
-    withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
+    // WICHTIG: getDocFromServer() statt getDoc() für den Hintergrundabgleich - getDoc() kann bei
+    // aktivem persistentLocalCache je nach SDK-interner Einschätzung den lokalen Cache bedienen,
+    // statt garantiert zum Server zu gehen. Das führte dazu, dass z.B. nach dem Löschen eines
+    // Kegelabends über eine Cloud Function (die am Client komplett vorbeischreibt) der stale
+    // Cache-Stand dauerhaft bestehen blieb, weil auch der vermeintliche "Server-Abgleich" nur
+    // denselben veralteten Cache-Wert zurücklieferte. getDocFromServer() erzwingt einen echten
+    // Server-Roundtrip und schließt diese Cache-Falle aus.
+    withTimeout(getDocFromServer(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
       const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
       if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
         onBackgroundUpdate(serverResult);
@@ -937,7 +944,9 @@
     }catch(e){
       cacheResult = undefined;
     }
-    withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
+    // Siehe Kommentar in getClubJSON() oben - getDocFromServer() statt getDoc(), um den
+    // Hintergrundabgleich verlässlich gegen den echten Serverstand laufen zu lassen.
+    withTimeout(getDocFromServer(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
       const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
       if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
         onBackgroundUpdate(serverResult);
