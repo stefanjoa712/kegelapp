@@ -723,7 +723,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.96';
+  const APP_VERSION = '1.0.97';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -731,20 +731,67 @@
   const ICON_GUEST = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.9 2.9-7 6.5-7s6.5 3.1 6.5 7"/><path d="M18 7.5v5M15.5 10h5"/></svg>`;
   const ICON_CLOSED = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>`;
 
-  const SEATS = [
-    {id:'saal-1', section:'Saal', label:'Saal 1'},
-    {id:'saal-2', section:'Saal', label:'Saal 2'},
-    {id:'saal-3', section:'Saal', label:'Saal 3'},
-    {id:'saal-4', section:'Saal', label:'Saal 4'},
-    {id:'saal-5', section:'Saal', label:'Saal 5'},
-    {id:'saal-6', section:'Saal', label:'Saal 6'},
-    {id:'kneipe-1', section:'Kneipe', label:'Kneipe 1'},
-    {id:'kneipe-2', section:'Kneipe', label:'Kneipe 2'},
-    {id:'kneipe-3', section:'Kneipe', label:'Kneipe 3'},
-    {id:'kneipe-4', section:'Kneipe', label:'Kneipe 4'},
-    {id:'kneipe-5', section:'Kneipe', label:'Kneipe 5'},
-    {id:'kneipe-6', section:'Kneipe', label:'Kneipe 6'}
-  ];
+  // Standard-Seitenbezeichnungen für den Sitzplan, falls der Club noch keine eigenen in
+  // clubs/{clubId}.seatingSideNames hinterlegt hat (siehe getSeatingSideNames()).
+  const DEFAULT_SEATING_SIDE_NAMES = { left: 'Links', right: 'Rechts' };
+
+  // Liest die konfigurierten Seitenbezeichnungen aus CURRENT_CLUB_DATA, mit Fallback auf die
+  // Standardnamen (fehlt z.B. bei Clubs, die noch nicht gespeichert haben, oder direkt nach
+  // dem Anlegen eines neuen Clubs).
+  function getSeatingSideNames(){
+    const names = (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.seatingSideNames) || {};
+    return {
+      left: (names.left && names.left.trim()) || DEFAULT_SEATING_SIDE_NAMES.left,
+      right: (names.right && names.right.trim()) || DEFAULT_SEATING_SIDE_NAMES.right
+    };
+  }
+
+  // Berechnet die Kürzel für beide Seiten aus deren Bezeichnung: normalerweise der erste
+  // Buchstabe (analog zum bisherigen 'S'/'K'), bei gleichem Anfangsbuchstaben werden die
+  // ersten zwei, drei usw. Buchstaben genommen, bis sich die Kürzel unterscheiden (oder eine
+  // Seite komplett aufgebraucht ist). Wird beim Ändern der Seitenbezeichnung einmalig berechnet
+  // und in clubs/{clubId}.seatingShortLabels gespeichert (siehe saveClubSeatingConfig()), damit
+  // dies nicht bei jedem Rendern erneut passieren muss.
+  function computeSeatingShortLabels(leftName, rightName){
+    const left = (leftName || '').trim() || DEFAULT_SEATING_SIDE_NAMES.left;
+    const right = (rightName || '').trim() || DEFAULT_SEATING_SIDE_NAMES.right;
+    let len = 1;
+    const maxLen = Math.max(left.length, right.length);
+    while(len < maxLen){
+      const l = left.slice(0, len).toUpperCase();
+      const r = right.slice(0, len).toUpperCase();
+      if(l !== r) break;
+      len++;
+    }
+    return {
+      left: left.slice(0, len).toUpperCase() || 'L',
+      right: right.slice(0, len).toUpperCase() || 'R'
+    };
+  }
+
+  // Liest die gespeicherten Kürzel aus CURRENT_CLUB_DATA; berechnet sie als Fallback live neu,
+  // falls sie (z.B. bei älteren Clubs, die die neuen Seitenbezeichnungen noch nicht gespeichert
+  // haben) noch nicht vorliegen.
+  function getSeatingShortLabels(){
+    const stored = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.seatingShortLabels;
+    if(stored && stored.left && stored.right) return stored;
+    const names = getSeatingSideNames();
+    return computeSeatingShortLabels(names.left, names.right);
+  }
+
+  // Baut die SEATS-Struktur dynamisch aus den konfigurierten Seitenbezeichnungen auf. Die
+  // seatId-Präfixe 'saal'/'kneipe' bleiben aus historischen Gründen bewusst bestehen (sie sind
+  // in Firestore an vielen Stellen als technischer Schlüssel verankert, z.B. in
+  // roundsGivenBySeat, finesBySeat, occupiedSeatIds) - nur 'section' und 'label' (reine
+  // Anzeigefelder) folgen der aktuellen Konfiguration.
+  function buildSeats(){
+    const names = getSeatingSideNames();
+    const seats = [];
+    for(let i=1;i<=6;i++) seats.push({id:'saal-'+i, section:names.left, label:names.left+' '+i});
+    for(let i=1;i<=6;i++) seats.push({id:'kneipe-'+i, section:names.right, label:names.right+' '+i});
+    return seats;
+  }
+  function SEATS(){ return buildSeats(); }
 
   // ---------- Zustand ----------
   // Ausstehender Notizen-Speichervorgang (800ms Debounce, siehe Notizen-Textarea-Handler weiter
@@ -2169,6 +2216,7 @@
     // Berechtigung wie die Mitgliederverwaltung.
     const readOnly = !canManageMembers();
     const disabledAttr = readOnly ? ' disabled' : '';
+    const sideNames = getSeatingSideNames();
     return `
       <div class="card">
         <h2 class="section-title">Abonnement</h2>
@@ -2191,6 +2239,14 @@
         <label for="club-account-holder">Kontoinhaber</label>
         <input type="text" id="club-account-holder" placeholder="z. B. Die Pudolfs e.V." value="${escapeHtml(club.accountHolder || '')}"${disabledAttr}>
         <p class="hint">Sind IBAN und Kontoinhaber hinterlegt, bekommen Gäste auf ihrer Strafenseite zusätzlich zum PayPal-Button einen QR-Code für die Überweisung per Banking-App.</p>
+      </div>
+      <div class="card">
+        <h2 class="section-title">Sitzplan</h2>
+        <label for="club-seating-left">Bezeichnung linke Seite</label>
+        <input type="text" id="club-seating-left" placeholder="z. B. Links" value="${escapeHtml(sideNames.left)}"${disabledAttr}>
+        <label for="club-seating-right">Bezeichnung rechte Seite</label>
+        <input type="text" id="club-seating-right" placeholder="z. B. Rechts" value="${escapeHtml(sideNames.right)}"${disabledAttr}>
+        <p class="hint">Die Kürzel auf dem Sitzplan (z. B. „L1") leiten sich automatisch aus den Anfangsbuchstaben der Bezeichnungen ab.</p>
       </div>
       <p class="form-error" id="club-form-error"></p>
       ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-club-btn" disabled>Speichern</button>`}
@@ -4312,8 +4368,8 @@
       </select>
       <label>Anwesende</label>
       <div class="bulk-quick-select-row">
-        <button type="button" class="btn-secondary bulk-quick-btn" id="bulk-select-saal-btn">Saal</button>
-        <button type="button" class="btn-secondary bulk-quick-btn" id="bulk-select-kneipe-btn">Kneipe</button>
+        <button type="button" class="btn-secondary bulk-quick-btn" id="bulk-select-saal-btn">${escapeHtml(getSeatingSideNames().left)}</button>
+        <button type="button" class="btn-secondary bulk-quick-btn" id="bulk-select-kneipe-btn">${escapeHtml(getSeatingSideNames().right)}</button>
       </div>
       <div id="bulk-members-list">${memberRowsHtml}</div>
       <p class="form-error" id="bulk-fine-form-error"></p>
@@ -4398,6 +4454,9 @@
     const topLX = 230, topRX = 530, botLX = 300, botRX = 460;
     const chairW = 188, chairH = 122, outward = 128, n = 6;
 
+    const sideNames = getSeatingSideNames();
+    const shortLabels = getSeatingShortLabels();
+
     const bySeatId = {};
     detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
     const crownSeatIds = computePudelCrownSeatIds(detail);
@@ -4416,7 +4475,7 @@
       const rectX = cx - chairW/2, rectY = cy - chairH/2;
       const seat = bySeatId[seatId] || { name:null, isGuest:false };
       const empty = !seat.name;
-      const shortLabel = seatId.startsWith('saal') ? 'S'+seatId.split('-')[1] : 'K'+seatId.split('-')[1];
+      const shortLabel = (seatId.startsWith('saal') ? shortLabels.left : shortLabels.right) + seatId.split('-')[1];
       const tickX2 = side==='left' ? rectX+chairW : rectX;
       const nameRaw = empty ? '— frei —' : seat.name;
       const fontSize = nameRaw.length>10 ? 21 : 25;
@@ -4469,8 +4528,8 @@
       <path class="table-shape" d="${tablePath}" />
       <line class="lane-center-line" x1="${W/2}" y1="${tableTopY+15}" x2="${W/2}" y2="${tableBottomY-15}" />
       <text class="lane-label-text" x="${W/2}" y="100" text-anchor="middle">Kegelbahn</text>
-      <text class="side-label-text" x="115" y="55" text-anchor="middle">Saal</text>
-      <text class="side-label-text" x="${W-115}" y="55" text-anchor="middle">Kneipe</text>
+      <text class="side-label-text" x="115" y="55" text-anchor="middle">${escapeHtml(sideNames.left)}</text>
+      <text class="side-label-text" x="${W-115}" y="55" text-anchor="middle">${escapeHtml(sideNames.right)}</text>
       ${chairsHtml}
     </svg>`;
   }
@@ -4915,7 +4974,7 @@
 
     // Änderungs-Erkennung: Speichern-Button ist nur aktiv, wenn sich mind. ein Feld
     // gegenüber dem geladenen Stand unterscheidet.
-    const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder'];
+    const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder','club-seating-left','club-seating-right'];
     const initialClubValues = {};
     clubFieldIds.forEach(id=>{ const el = document.getElementById(id); if(el) initialClubValues[id] = el.value; });
     const updateSaveBtnState = ()=>{
@@ -4937,6 +4996,8 @@
       const paypalName = document.getElementById('club-paypal').value.trim();
       const iban = document.getElementById('club-iban').value.replace(/\s+/g,'').toUpperCase();
       const accountHolder = document.getElementById('club-account-holder').value.trim();
+      const seatingLeft = document.getElementById('club-seating-left').value.trim() || DEFAULT_SEATING_SIDE_NAMES.left;
+      const seatingRight = document.getElementById('club-seating-right').value.trim() || DEFAULT_SEATING_SIDE_NAMES.right;
 
       if(!name){ errEl.textContent = 'Bitte einen Clubnamen angeben.'; return; }
       if(!foundedOn){ errEl.textContent = 'Bitte ein Gründungsdatum angeben.'; return; }
@@ -4959,17 +5020,25 @@
         // daher muss ein geleertes PayPal-/IBAN-/Kontoinhaber-Feld explizit per deleteField()
         // entfernt werden - ein einfaches Weglassen des Felds im Payload würde es serverseitig
         // NICHT löschen.
+        // Kürzel (z.B. 'L'/'R') werden hier einmalig aus den Bezeichnungen berechnet und
+        // mitgespeichert, damit sie beim Anzeigen des Sitzplans nicht bei jedem Aufruf neu
+        // berechnet werden müssen (siehe computeSeatingShortLabels()/getSeatingShortLabels()).
+        const seatingShortLabels = computeSeatingShortLabels(seatingLeft, seatingRight);
         const clubUpdate = {
           name, foundedOn,
           paypalName: paypalName ? paypalName : deleteField(),
           iban: iban ? iban : deleteField(),
           accountHolder: accountHolder ? accountHolder : deleteField(),
+          seatingSideNames: { left: seatingLeft, right: seatingRight },
+          seatingShortLabels,
         };
         await saveClub(clubUpdate);
         CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), name, foundedOn };
         if(paypalName){ CURRENT_CLUB_DATA.paypalName = paypalName; } else { delete CURRENT_CLUB_DATA.paypalName; }
         if(iban){ CURRENT_CLUB_DATA.iban = iban; } else { delete CURRENT_CLUB_DATA.iban; }
         if(accountHolder){ CURRENT_CLUB_DATA.accountHolder = accountHolder; } else { delete CURRENT_CLUB_DATA.accountHolder; }
+        CURRENT_CLUB_DATA.seatingSideNames = { left: seatingLeft, right: seatingRight };
+        CURRENT_CLUB_DATA.seatingShortLabels = seatingShortLabels;
         markFetched('clubData');
         applyClubBranding();
         render();
@@ -6675,7 +6744,7 @@
       }
     }
 
-    const seating = SEATS.map(seat=>{
+    const seating = SEATS().map(seat=>{
       const p = seatAssignment[seat.id];
       return {
         seatId:seat.id, section:seat.section, label:seat.label,
