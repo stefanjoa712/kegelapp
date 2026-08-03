@@ -1098,6 +1098,14 @@ exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
   if (paypalName && typeof paypalName === 'string' && paypalName.trim()) {
     clubData.paypalName = paypalName.trim();
   }
+  // Neuer Club startet automatisch mit 3 Monaten kostenlosem Testzeitraum (reine Anzeige/Tracking
+  // in der Clubverwaltung, siehe formatSubscriptionLabel() im Frontend - kein Sperrmechanismus).
+  const freeUntilDate = new Date();
+  freeUntilDate.setMonth(freeUntilDate.getMonth() + 3);
+  clubData.subscription = {
+    plan: 'free',
+    freeUntil: freeUntilDate.toISOString().slice(0, 10),
+  };
   await db.collection('clubs').doc(clubId).set(clubData);
 
   const memberId = 'm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
