@@ -383,7 +383,7 @@
   input[type="text"], input[type="date"], input[type="password"], input[type="email"]{
     font-family:var(--font-body); font-size:15px; padding:10px 12px; border:1px solid var(--line);
     border-radius:8px; background:#fff; color:var(--ink); width:100%;
-    -webkit-appearance:none; appearance:none; box-sizing:border-box; margin:0;
+    -webkit-appearance:none; appearance:none; box-sizing:border-box; margin:0 0 12px;
   }
   input[type="date"]{ min-height:44px; }
   input[type="date"]::-webkit-date-and-time-value{ text-align:left; }
@@ -730,7 +730,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.107';
+  const APP_VERSION = '1.0.108';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2334,14 +2334,16 @@
       </div>
       <div class="card">
         <h2 class="section-title">Sitzplan</h2>
+        <div class="field-label-row">
+          <label for="club-seating-template">Standard Sitzplan</label>
+          <button type="button" class="info-icon-btn" id="seating-template-info-btn" aria-label="Erklärung anzeigen">${ICON_INFO_SMALL}</button>
+        </div>
+        <select id="club-seating-template"${disabledAttr}>${templateOptionsHtml}</select>
+        <div id="seating-template-preview" class="seating-template-preview">${buildPreviewSeatingSVG(currentTemplate)}</div>
         <label for="club-seating-left">Bezeichnung linke Seite</label>
         <input type="text" id="club-seating-left" placeholder="z. B. Links" value="${escapeHtml(sideNames.left)}"${disabledAttr}>
         <label for="club-seating-right">Bezeichnung rechte Seite</label>
         <input type="text" id="club-seating-right" placeholder="z. B. Rechts" value="${escapeHtml(sideNames.right)}"${disabledAttr}>
-        <label for="club-seating-template">Standard Sitzplan-Template</label>
-        <select id="club-seating-template"${disabledAttr}>${templateOptionsHtml}</select>
-        <p class="hint">Gilt nur für neu angelegte Kegelabende. Bereits bestehende Abende behalten ihren ursprünglichen Sitzplan.</p>
-        <div id="seating-template-preview" class="seating-template-preview">${buildPreviewSeatingSVG(currentTemplate)}</div>
         <div class="field-label-row">
           <label for="club-standard-seat">Standardplatz Schriftführer</label>
           <button type="button" class="info-icon-btn" id="standard-seat-info-btn" aria-label="Erklärung anzeigen">${ICON_INFO_SMALL}</button>
@@ -4806,7 +4808,7 @@
 
     const tablePath = `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
 
-    return `<svg class="seating-diagram seating-diagram-preview" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vorschau des Sitzplan-Templates">
+    return `<svg class="seating-diagram seating-diagram-preview" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vorschau des Sitzplans">
       <path class="table-shape" d="${tablePath}" />
       <line class="lane-center-line" x1="${W/2}" y1="${tableTopY+10}" x2="${W/2}" y2="${tableBottomY-10}" />
       ${chairsHtml}
@@ -5256,6 +5258,19 @@
         <h3>Standardplatz Schriftführer</h3>
         <p>Bei der Option „Standardplatz" beim Auslosen eines Kegelabends wird automatisch die Person auf diesem Platz Schriftführer.</p>
         <p>Ist dieser Platz beim jeweiligen Abend nicht besetzt (z. B. weil weniger Personen anwesend sind), wird stattdessen zufällig ein Mitglied als Schriftführer ausgelost.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    });
+
+    // Info-Popup für "Standard Sitzplan" - ebenfalls vor dem readOnly-Return angehängt.
+    const seatingTemplateInfoBtn = document.getElementById('seating-template-info-btn');
+    if(seatingTemplateInfoBtn) seatingTemplateInfoBtn.addEventListener('click', ()=>{
+      showModal(`
+        <h3>Standard Sitzplan</h3>
+        <p>Gilt nur für neu angelegte Kegelabende. Bereits bestehende Abende behalten ihren ursprünglichen Sitzplan.</p>
         <div class="confirm-row-buttons">
           <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
         </div>
