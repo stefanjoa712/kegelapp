@@ -1352,68 +1352,30 @@ async function buildEpcQrSvg(payload) {
   return QRCode.toString(payload, { type: 'svg', margin: 1, width: 220 });
 }
 
-// Prüft anhand des VORHANDENEN Rückstands, ob die Strafen dieses Abends für den Sitzplatz bereits
-// vollständig begleichen wurden - OHNE ein separates "bezahlt"-Feld einzuführen. Grundlage ist die
-// arrears-Verknüpfung: beim Abschluss eines Abends wird der Sitzplatz-Betrag über addToArrears()
-// zum Rückstand der Person addiert (siehe closeEvening). Zahlt die Person (oder für Gäste: wird
-// der Rückstand auf 0 zurückgeführt), sinkt/verschwindet ihr Rückstandseintrag entsprechend -
-// für Gäste wird das Dokument bei Betrag 0 sogar komplett gelöscht (siehe saveArrearsEntry).
-// Rückgabe: true (sicher bezahlt), false (sicher offen), oder null (nicht zuverlässig ableitbar -
-// dann zeigt die Seite bewusst NICHTS zum Zahlstatus an, siehe Aufrufer).
-async function resolveSeatPaymentStatus(clubId, detail, seat, roundedTotal) {
-  if (roundedTotal <= 0) return null; // keine Strafen -> Zahlstatus ist nicht sinnvoll definiert
-  if (!detail.closed) return null; // vor Abschluss wurde noch nichts in die Rückstände gebucht
-
-  const db2 = getFirestore();
-  const arrearsSnap = await db2.collection('clubs').doc(clubId).collection('arrears')
-    .where('name', '==', seat.name).limit(1).get();
-  const currentArrears = arrearsSnap.empty ? 0 : (JSON.parse(arrearsSnap.docs[0].data().value || '{}').amount || 0);
-
-  // priorArrearsSnapshot wurde exakt beim Abschluss dieses Abends für diesen Namen eingefroren
-  // (siehe closeEvening) - das ist der Rückstand VOR der heutigen Erhöhung um roundedTotal.
-  const priorArrears = detail.priorArrearsSnapshot && Object.prototype.hasOwnProperty.call(detail.priorArrearsSnapshot, seat.name)
-    ? detail.priorArrearsSnapshot[seat.name]
-    : null;
-  if (priorArrears === null) return null; // Abend wurde vor Einführung dieses Snapshots abgeschlossen
-
-  const expectedArrearsIfUnpaid = Math.round((priorArrears + roundedTotal) * 100) / 100;
-  const currentRounded = Math.round(currentArrears * 100) / 100;
-
-  // Nur eindeutige Fälle beantworten: entweder der volle Betrag dieses Abends steckt noch
-  // unverändert im Rückstand (offen), oder der Rückstand ist mindestens um roundedTotal
-  // gesunken bzw. das Gast-Dokument wurde komplett gelöscht (bezahlt). Jeder Zwischenzustand
-  // (z.B. Teilzahlung, andere Buchungen dazwischen) ist nicht zuverlässig zuordenbar -> null.
-  if (currentRounded >= expectedArrearsIfUnpaid - 0.005) return false;
-  if (currentRounded <= priorArrears + 0.005) return true;
-  return null;
-}
-
-function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactTotal, roundedTotal, paypalLink, isPaid, transferInfo) {
+function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, adHocLines, exactTotal, roundedTotal, paypalLink, transferInfo) {
   const hasAnyLines = catalogLines.length + fremdstrafeLines.length + adHocLines.length > 0;
   const emptyHtml = hasAnyLines ? '' : '<p>Keine Strafen für diesen Abend.</p>';
 
-  // Zahlstatus konnte eindeutig als "bezahlt" ermittelt werden (siehe resolveSeatPaymentStatus):
-  // Bezahlen-Optionen ausblenden, stattdessen nur einen Hinweis zeigen. Bei false oder null
-  // (unklar) werden die Bezahlen-Optionen ganz normal angezeigt.
-  const paidHintHtml = '<div class="card paid-hint">✓ Diese Strafen wurden bereits bezahlt.</div>';
-
   const transferHtml = transferInfo ? `
-    <div class="card transfer-card">
-      <h3>Alternativ per Überweisung</h3>
+    <div class="divider"><span>oder</span></div>
+    <div class="transfer-block">
       <div class="qr-wrap">${transferInfo.svg}</div>
-      <p class="hint">QR-Code mit der Banking-App scannen (meist über den Menüpunkt „Überweisung" &rarr; Kamera-/Scan-Symbol) - Empfänger, IBAN, Betrag und Verwendungszweck werden automatisch übernommen, die Überweisung selbst muss noch bestätigt werden.</p>
       <table class="transfer-details">
         <tr><td>Empfänger</td><td>${escapeHtml(transferInfo.accountHolder)}</td></tr>
         <tr><td>IBAN</td><td>${escapeHtml(transferInfo.ibanDisplay)}</td></tr>
         <tr><td>Betrag</td><td>${fmtEuro(roundedTotal)}</td></tr>
         <tr><td>Verwendungszweck</td><td>${escapeHtml(transferInfo.remittanceText)}</td></tr>
       </table>
+      <p class="hint">QR-Code mit der Banking-App scannen (meist über den Menüpunkt „Überweisung" &rarr; Kamera-/Scan-Symbol) - Empfänger, IBAN, Betrag und Verwendungszweck werden automatisch übernommen, die Überweisung selbst muss noch bestätigt werden.</p>
     </div>
   ` : '';
 
-  const paymentSectionHtml = isPaid ? paidHintHtml : `
-    <a class="paypal-btn" href="${paypalLink}">Jetzt ${fmtEuro(roundedTotal)} per PayPal bezahlen</a>
-    ${transferHtml}
+  const paymentSectionHtml = `
+    <div class="card payment-card">
+      <h3>Bezahlen mit</h3>
+      <a class="paypal-btn" href="${paypalLink}">Jetzt ${fmtEuro(roundedTotal)} per PayPal bezahlen</a>
+      ${transferHtml}
+    </div>
   `;
 
   return `<!DOCTYPE html>
@@ -1434,17 +1396,19 @@ function buildShareGuestBillHtml(name, dateStr, catalogLines, fremdstrafeLines, 
   .total-card{background:#E3421F; color:#fff; text-align:center; padding:22px 20px;}
   .total-amount{font-size:30px; font-weight:800;}
   .total-label{font-size:12px; text-transform:uppercase; letter-spacing:0.06em; opacity:0.9; margin-top:4px;}
-  .paypal-btn{display:block; text-align:center; background:#161616; color:#fff; font-weight:800; text-decoration:none; padding:14px 22px; border-radius:10px; margin-top:6px;}
+  .paypal-btn{display:block; text-align:center; background:#161616; color:#fff; font-weight:800; text-decoration:none; padding:14px 22px; border-radius:10px;}
   .totals-summary{text-align:right; margin-top:8px;}
   .totals-summary .exact{font-size:13px; color:#9A9186;}
   .totals-summary .rounded{font-size:16px; font-weight:800; margin-top:2px;}
-  .paid-hint{text-align:center; background:#1a7a3c; color:#fff; font-weight:800; padding:16px 20px;}
-  .transfer-card{margin-top:14px;}
+  .payment-card h3{text-align:center;}
+  .divider{display:flex; align-items:center; text-align:center; margin:18px 0; color:#9A9186; font-size:12px; text-transform:uppercase; letter-spacing:0.06em;}
+  .divider::before, .divider::after{content:''; flex:1; border-bottom:1px solid #e5e1d8;}
+  .divider span{padding:0 10px;}
   .qr-wrap{text-align:center; padding:6px 0 14px;}
   .qr-wrap svg{width:180px; height:180px;}
   .transfer-details td:first-child{color:#9A9186; padding-right:10px; white-space:nowrap;}
   .transfer-details td:last-child{text-align:right; word-break:break-word;}
-  .hint{font-size:12px; color:#9A9186; margin:0 0 12px;}
+  .hint{font-size:12px; color:#9A9186; margin:12px 0 0;}
 </style>
 </head>
 <body>
@@ -1516,11 +1480,7 @@ exports.shareGuestBill = onRequest(async (req, res) => {
   const roundedTotal = roundUpToFullEuro(total);
   const paypalLink = buildPaypalLink(roundedTotal);
 
-  const isPaid = await resolveSeatPaymentStatus(foundClubId, foundDetail, foundSeat, roundedTotal);
-
-  // Überweisungs-Info nur aufbauen, wenn Club sowohl IBAN als auch Kontoinhaber gepflegt hat -
-  // und nur, wenn ohnehin noch bezahlt werden muss (bei isPaid===true wird sie in der HTML-
-  // Funktion ausgeblendet, hier trotzdem einfach immer berechnet, das spart einen Sonderfall).
+  // Überweisungs-Info nur aufbauen, wenn Club sowohl IBAN als auch Kontoinhaber gepflegt hat.
   let transferInfo = null;
   if (foundClubData && foundClubData.iban && foundClubData.accountHolder) {
     const remittanceText = `Kegelabend ${dateStr} – ${foundSeat.name}`;
@@ -1534,7 +1494,7 @@ exports.shareGuestBill = onRequest(async (req, res) => {
     };
   }
 
-  const html = buildShareGuestBillHtml(foundSeat.name, dateStr, catalogLines, fremdstrafeLines, adHocLines, total, roundedTotal, paypalLink, isPaid, transferInfo);
+  const html = buildShareGuestBillHtml(foundSeat.name, dateStr, catalogLines, fremdstrafeLines, adHocLines, total, roundedTotal, paypalLink, transferInfo);
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
 
