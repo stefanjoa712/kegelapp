@@ -375,6 +375,11 @@
   .year-evenings .evening-row{padding-left:10px;}
 
   label{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-soft); display:block; margin-bottom:6px;}
+  .field-label-row{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .field-label-row label{margin-bottom:0;}
+  .info-icon-btn{display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; padding:0; margin-bottom:6px; border:none; background:none; color:var(--ink-soft); cursor:pointer; flex-shrink:0;}
+  .info-icon-btn svg{width:18px; height:18px;}
+  .info-icon-btn:hover{color:var(--ink);}
   input[type="text"], input[type="date"], input[type="password"], input[type="email"]{
     font-family:var(--font-body); font-size:15px; padding:10px 12px; border:1px solid var(--line);
     border-radius:8px; background:#fff; color:var(--ink); width:100%;
@@ -723,7 +728,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.99';
+  const APP_VERSION = '1.0.100';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2265,9 +2270,11 @@
         <label for="club-seating-right">Bezeichnung rechte Seite</label>
         <input type="text" id="club-seating-right" placeholder="z. B. Rechts" value="${escapeHtml(sideNames.right)}"${disabledAttr}>
         <p class="hint">Die Kürzel auf dem Sitzplan (z. B. „L1") leiten sich automatisch aus den Anfangsbuchstaben der Bezeichnungen ab.</p>
-        <label for="club-standard-seat">Standardplatz Schriftführer</label>
+        <div class="field-label-row">
+          <label for="club-standard-seat">Standardplatz Schriftführer</label>
+          <button type="button" class="info-icon-btn" id="standard-seat-info-btn" aria-label="Erklärung anzeigen">${ICON_INFO_SMALL}</button>
+        </div>
         <select id="club-standard-seat"${disabledAttr}>${standardSeatOptionsHtml}</select>
-        <p class="hint">Bei der Option „Standardplatz" beim Auslosen eines Kegelabends wird automatisch die Person auf diesem Platz Schriftführer.</p>
       </div>
       <div class="card">
         <h2 class="section-title">Finanzen</h2>
@@ -4999,6 +5006,20 @@
 
     const manageSubBtn = document.getElementById('manage-subscription-btn');
     if(manageSubBtn) manageSubBtn.addEventListener('click', goToSubscriptionPlans);
+
+    // Info-Popup für den Standardplatz Schriftführer - vor dem readOnly-Return angehängt,
+    // damit die Erklärung auch für Nutzer ohne Bearbeitungsrechte verfügbar bleibt.
+    const standardSeatInfoBtn = document.getElementById('standard-seat-info-btn');
+    if(standardSeatInfoBtn) standardSeatInfoBtn.addEventListener('click', ()=>{
+      showModal(`
+        <h3>Standardplatz Schriftführer</h3>
+        <p>Bei der Option „Standardplatz" beim Auslosen eines Kegelabends wird automatisch die Person auf diesem Platz Schriftführer.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn" style="flex:1;">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    });
 
     const saveBtn = document.getElementById('save-club-btn');
     if(!saveBtn) return;
