@@ -184,26 +184,6 @@
   }
   @keyframes loading-spin{ to{ transform:rotate(360deg); } }
 
-  /* Initialer, rein statischer Ladebildschirm direkt im HTML (kein JS nötig) - überbrückt die
-     Zeit, bis Firebase geladen ist und der Auth-Status feststeht (siehe #initial-loading unten).
-     Wird automatisch entfernt, sobald der erste echte Render document.getElementById('app').
-     innerHTML überschreibt (renderLoginScreen(), renderLoading(), etc. in bootstrapAuth()) - kein
-     zusätzlicher Removal-Code nötig. Heller Hintergrund passend zum Login-Screen (--bg), nicht
-     zum dunklen App-Header - in den allermeisten Fällen (App gerade erst geöffnet, noch nicht
-     eingeloggt) folgt der Login-Screen, nicht die Übersicht; ein dunkler Ladebildschirm hätte
-     dort wie ein unpassender Zwischenschritt gewirkt (dunkel -> hell -> wieder hell). */
-  #initial-loading{
-    position:fixed; inset:0; background:var(--bg);
-    display:flex; align-items:center; justify-content:center; z-index:2000;
-  }
-  #initial-loading .loading-spinner{
-    width:36px; height:36px;
-    border:3px solid var(--line);
-    border-top-color:var(--felt);
-    border-radius:50%;
-    animation:loading-spin 0.7s linear infinite;
-  }
-
   .card{
     background:var(--surface);
     border:1.5px solid var(--line);
@@ -683,7 +663,7 @@
 </style>
 </head>
 <body>
-<div id="app"><div id="initial-loading"><div class="loading-spinner"></div></div></div>
+<div id="app"></div>
 <div id="update-banner" class="update-banner" hidden>
   <span>Neue Version verfügbar</span>
   <button type="button" id="update-banner-btn">Jetzt aktualisieren</button>
@@ -742,28 +722,6 @@
   let CURRENT_CLUB_DATA = null;
   const CLUB_NAME_FALLBACK = 'Kegelclub';
   function clubDisplayName(){ return (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.name) || CLUB_NAME_FALLBACK; }
-  // In-Memory-Cache für das Club-Logo als Data-URL: headerHtml() wird bei JEDEM render() im
-  // 'main'-View komplett neu erzeugt (siehe render(), app.innerHTML = ...), erzeugt also auch
-  // ein komplett neues <img>-Element. Ohne diesen Cache lädt der Browser das Bild dabei jedes
-  // Mal erneut vom Netzwerk statt aus dem eigenen HTTP-Cache (auf iOS/Safari besonders
-  // ausgeprägt bei Firebase-Storage-URLs). Der Cache ist an die logoUrl selbst gebunden (Key),
-  // damit ein geändertes/entferntes Logo automatisch nicht mehr aus dem alten Cache-Eintrag
-  // bedient wird. Wird einmal pro logoUrl per fetch() geladen und dann für die Laufzeit der
-  // Seite (bis Reload) aus dem Speicher bedient.
-  let clubLogoDataUrlCache = { url: null, dataUrl: null };
-  function preloadClubLogoIfNeeded(){
-    const url = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.logoUrl;
-    if(!url || clubLogoDataUrlCache.url === url) return;
-    fetch(url).then(res=> res.blob()).then(blob=> new Promise((resolve, reject)=>{
-      const reader = new FileReader();
-      reader.onload = ()=> resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    })).then(dataUrl=>{
-      clubLogoDataUrlCache = { url, dataUrl };
-      if(state.view==='main') render();
-    }).catch(()=>{ /* Bei Fehler bleibt einfach die Original-URL im Einsatz (siehe headerHtml()) */ });
-  }
   // Initialen aus dem Clubnamen (max. 2 Buchstaben) als Avatar-Fallback, solange kein Logo
   // hochgeladen ist - übliches Muster (Slack, Notion, ...) statt eines generischen Platzhalterbilds.
   function clubInitials(name){
@@ -826,7 +784,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.9';
+  const APP_VERSION = '1.1.10';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -5497,10 +5455,8 @@
       // Screenreader erhalten, auch wenn der Name bei fehlendem Logo sichtbar doppelt vorkäme;
       // das ist ok, da er dann optisch identisch mit dem sichtbaren Text ist.
       const logoUrl = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.logoUrl;
-      if(logoUrl) preloadClubLogoIfNeeded();
-      const logoSrc = (logoUrl && clubLogoDataUrlCache.url===logoUrl) ? clubLogoDataUrlCache.dataUrl : logoUrl;
-      const brandInnerHtml = logoSrc
-        ? `<h1 class="sr-only">${escapeHtml(clubDisplayName())}</h1><img src="${escapeHtml(logoSrc)}" alt="${escapeHtml(clubDisplayName())} Kegelclub" class="brand-logo">`
+      const brandInnerHtml = logoUrl
+        ? `<h1 class="sr-only">${escapeHtml(clubDisplayName())}</h1><img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(clubDisplayName())} Kegelclub" class="brand-logo">`
         : `<h1 class="header-brand-name">${escapeHtml(clubDisplayName())}</h1>`;
       return `<header class="app-header">
         <div class="app-header-top">
