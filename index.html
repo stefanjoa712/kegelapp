@@ -722,42 +722,6 @@
   let CURRENT_CLUB_DATA = null;
   const CLUB_NAME_FALLBACK = 'Kegelclub';
   function clubDisplayName(){ return (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.name) || CLUB_NAME_FALLBACK; }
-  // Cache für das Club-Logo als Data-URL in localStorage: headerHtml() wird bei JEDEM render()
-  // im 'main'-View komplett neu erzeugt (app.innerHTML = ...), erzeugt also auch jedes Mal ein
-  // neues <img>-Element - ohne Cache lädt der Browser das Bild dabei jedes Mal erneut vom
-  // Netzwerk statt aus dem eigenen HTTP-Cache (auf iOS/Safari besonders ausgeprägt bei
-  // Firebase-Storage-URLs). localStorage statt nur In-Memory, damit der Cache auch einen
-  // Reload/App-Neustart überlebt. Key ist an die logoUrl selbst gebunden: ändert sich die URL
-  // (neues Logo hochgeladen) oder verschwindet sie (Logo entfernt), greift der alte Eintrag
-  // automatisch nicht mehr.
-  const CLUB_LOGO_CACHE_KEY = 'clubLogoCache';
-  function readClubLogoCache(){
-    try{
-      const raw = localStorage.getItem(CLUB_LOGO_CACHE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    }catch(e){ return null; }
-  }
-  function writeClubLogoCache(url, dataUrl){
-    try{ localStorage.setItem(CLUB_LOGO_CACHE_KEY, JSON.stringify({ url, dataUrl })); }
-    catch(e){ /* z.B. Speicherquota voll - Cache bleibt dann einfach leer, kein Absturz */ }
-  }
-  function clearClubLogoCache(){
-    try{ localStorage.removeItem(CLUB_LOGO_CACHE_KEY); }catch(e){ /* siehe oben */ }
-  }
-  // Lädt das Logo per fetch() EINMALIG nach (wird nur aufgerufen, wenn der Cache für diese
-  // logoUrl noch keinen Eintrag hat) und speichert es als Data-URL. Löst danach einen erneuten
-  // render() aus, damit das <img> beim nächsten Aufbau direkt aus dem Cache bedient wird.
-  function preloadClubLogoIfNeeded(url){
-    fetch(url).then(res=> res.blob()).then(blob=> new Promise((resolve, reject)=>{
-      const reader = new FileReader();
-      reader.onload = ()=> resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    })).then(dataUrl=>{
-      writeClubLogoCache(url, dataUrl);
-      if(state.view==='main') render();
-    }).catch(()=>{ /* Bei Fehler bleibt einfach die Original-URL im Einsatz, siehe headerHtml() */ });
-  }
   // Initialen aus dem Clubnamen (max. 2 Buchstaben) als Avatar-Fallback, solange kein Logo
   // hochgeladen ist - übliches Muster (Slack, Notion, ...) statt eines generischen Platzhalterbilds.
   function clubInitials(name){
@@ -820,7 +784,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.11';
+  const APP_VERSION = '1.1.12';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1538,9 +1502,7 @@
   // durch den Export in ein weißes Rechteck verwandelt). Läuft komplett im Browser - keine
   // zusätzliche Cloud Function nötig, da nur Kassenwart/Präsident/Admin überhaupt hochladen
   // dürfen (siehe storage.rules) und ein einzelnes Club-Logo keine Vielzahl an Formaten/Größen
-  // braucht. Liefert sowohl den Blob (für den Storage-Upload) als auch direkt die Data-URL
-  // (canvas.toDataURL) zurück, damit uploadClubLogo() den Logo-Cache sofort füllen kann, ohne
-  // die frisch hochgeladene Datei per fetch() erneut vom Server herunterladen zu müssen.
+  // braucht.
   function resizeImageToBlob(file, maxSize){
     return new Promise((resolve, reject)=>{
       const img = new Image();
@@ -1557,9 +1519,8 @@
         canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/png');
         canvas.toBlob(blob=>{
-          if(blob) resolve({ blob, dataUrl }); else reject(new Error('Bild konnte nicht verarbeitet werden.'));
+          if(blob) resolve(blob); else reject(new Error('Bild konnte nicht verarbeitet werden.'));
         }, 'image/png');
       };
       img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('Bild konnte nicht geladen werden.')); };
@@ -1568,16 +1529,21 @@
   }
 
   // Lädt das verkleinerte Logo nach Storage hoch (fester Pfad pro Club, überschreibt ein
-  // vorheriges Logo), füllt den lokalen Logo-Cache direkt mit der bereits vorliegenden Data-URL
-  // (siehe readClubLogoCache()/writeClubLogoCache() oben) und liefert die Download-URL zum
-  // Speichern in clubs/{clubId}.logoUrl.
+  // Lädt das verkleinerte Logo nach Storage hoch (fester Pfad pro Club, überschreibt ein
+  // vorheriges Logo) und liefert die Download-URL zum Speichern in clubs/{clubId}.logoUrl.
+  // cacheControl sorgt dafür, dass der BROWSER selbst das Bild lange cacht (kein eigener
+  // JS-Cache nötig) - Firebase Storage setzt ohne diese Angabe keinen langlebigen Cache-Header,
+  // wodurch das Bild bei jedem Laden neu vom Netzwerk geholt wurde. Da derselbe Dateiname
+  // (logo.png) bei jedem Upload überschrieben wird, würde ein reiner Cache-Control-Header nach
+  // einem ÄNDERN des Logos aber weiterhin das alte, gecachte Bild zeigen (die URL selbst bliebe
+  // gleich) - deshalb wird zusätzlich ein Zeitstempel als Query-Parameter (?v=...) angehängt,
+  // der die URL bei jedem Upload eindeutig ändert und den Browser zu einem frischen Request zwingt.
   async function uploadClubLogo(file){
-    const { blob, dataUrl } = await resizeImageToBlob(file, 512);
+    const blob = await resizeImageToBlob(file, 512);
     const ref = storageRef(storage, `clubs/${CURRENT_CLUB_ID}/logo.png`);
-    await uploadBytes(ref, blob, { contentType: 'image/png' });
-    const logoUrl = await getDownloadURL(ref);
-    writeClubLogoCache(logoUrl, dataUrl);
-    return logoUrl;
+    await uploadBytes(ref, blob, { contentType: 'image/png', cacheControl: 'public, max-age=31536000' });
+    const baseUrl = await getDownloadURL(ref);
+    return baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
   }
   // Listet die IDs ALLER existierenden Clubs auf, unabhängig von einem Claim - wird nur für den
   // Admin-Sonderfall in resolveActiveClub() gebraucht (Admin hat noch keinen Claim, soll aber aus
@@ -5497,19 +5463,13 @@
       // (kein generisches Platzhalterbild mehr) - der sr-only-Titel bleibt daneben trotzdem für
       // Screenreader erhalten, auch wenn der Name bei fehlendem Logo sichtbar doppelt vorkäme;
       // das ist ok, da er dann optisch identisch mit dem sichtbaren Text ist.
+      // Kein eigener JS-Cache für das Bild (siehe uploadClubLogo() - setzt beim Upload einen
+      // langen Cache-Control-Header, der Browser cacht das Bild dann selbst zuverlässig; ein
+      // JS-seitiger fetch()-Cache war hier nicht robust, weil Firebase Storage per Default keine
+      // CORS-Header für fetch()-Zugriffe sendet - <img src="..."> braucht diese Header nicht).
       const logoUrl = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.logoUrl;
-      let logoSrc = null;
-      if(logoUrl){
-        const cached = readClubLogoCache();
-        if(cached && cached.url === logoUrl){
-          logoSrc = cached.dataUrl;
-        }else{
-          logoSrc = logoUrl; // Original-URL für DIESEN Render, während im Hintergrund gecacht wird
-          preloadClubLogoIfNeeded(logoUrl);
-        }
-      }
-      const brandInnerHtml = logoSrc
-        ? `<h1 class="sr-only">${escapeHtml(clubDisplayName())}</h1><img src="${escapeHtml(logoSrc)}" alt="${escapeHtml(clubDisplayName())} Kegelclub" class="brand-logo">`
+      const brandInnerHtml = logoUrl
+        ? `<h1 class="sr-only">${escapeHtml(clubDisplayName())}</h1><img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(clubDisplayName())} Kegelclub" class="brand-logo">`
         : `<h1 class="header-brand-name">${escapeHtml(clubDisplayName())}</h1>`;
       return `<header class="app-header">
         <div class="app-header-top">
@@ -6020,7 +5980,6 @@
           CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}) };
           delete CURRENT_CLUB_DATA.logoUrl;
           markFetched('clubData');
-          clearClubLogoCache();
           render();
         }catch(e){
           logoRemoveBtn.disabled = false;
