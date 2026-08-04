@@ -751,7 +751,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.124';
+  const APP_VERSION = '1.0.126';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4101,7 +4101,8 @@
         fineName: c.fineName,
         given: !!c.given,
         instanceIndex: c.id,
-        carried: true
+        carried: true,
+        sourceDate: c.sourceDate || null
       });
     });
     return entries;
@@ -4142,7 +4143,7 @@
           <span class="round-avatar">${escapeHtml(initialsFor(e.name))}</span>
           <span class="round-entry-main">
             <span class="round-entry-name">${escapeHtml(e.name)}</span>
-            <span class="round-entry-badge">${escapeHtml(e.fineName)}${e.carried ? ' <span class="round-carried-tag">· übernommen</span>' : ''}</span>
+            <span class="round-entry-badge">${escapeHtml(e.fineName)}${e.carried ? ` <span class="round-carried-tag">· übernommen vom ${e.sourceDate ? escapeHtml(formatDateShortDE(e.sourceDate)) : '?'}</span>` : ''}</span>
           </span>
           ${closed ? '' : `<button type="button" class="round-mark-given-btn" data-seat-id="${e.seatId||''}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" data-carried="${e.carried?'1':'0'}" aria-label="Als gegeben markieren" title="Als gegeben markieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg></button>`}
         </div>
@@ -4154,7 +4155,7 @@
           <span class="round-avatar">${escapeHtml(initialsFor(e.name))}</span>
           <span class="round-entry-main">
             <span class="round-entry-name">${escapeHtml(e.name)}</span>
-            <span class="round-entry-badge">${escapeHtml(e.fineName)}${e.carried ? ' <span class="round-carried-tag">· übernommen</span>' : ''}</span>
+            <span class="round-entry-badge">${escapeHtml(e.fineName)}${e.carried ? ` <span class="round-carried-tag">· übernommen vom ${e.sourceDate ? escapeHtml(formatDateShortDE(e.sourceDate)) : '?'}</span>` : ''}</span>
           </span>
           ${closed ? `<svg class="round-given-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>` : `<button type="button" class="round-undo-given-btn" data-seat-id="${e.seatId||''}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" data-carried="${e.carried?'1':'0'}" aria-label="Rückgängig machen" title="Rückgängig machen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>`}
         </div>
@@ -7521,9 +7522,13 @@
   //
   // Damit eine offene Runde nicht bei jedem weiteren neuen Abend erneut als Quelle dient (z.B.
   // Abend 1 -> Abend 2 übernommen, dort wieder nicht gegeben -> darf NICHT zusätzlich nochmal aus
-  // Abend 1 UND aus Abend 2 in Abend 3 einfließen), wird jeder als Quelle genutzte alte Abend mit
-  // roundsCarriedForward:true markiert und dient danach nicht mehr als Quelle. Die "Kette" läuft
-  // dadurch immer nur über den jeweils letzten Abend, der die offene Runde trägt.
+  // Abend 1 UND aus Abend 2 in Abend 3 einfließen), wird ein alter Abend NUR DANN mit
+  // roundsCarriedForward:true markiert, wenn tatsächlich mindestens eine seiner offenen Runden
+  // übernommen werden konnte. Nahm z.B. die betroffene Person am neuen Abend nicht teil, bleibt
+  // der alte Abend weiterhin als Quelle verfügbar - sonst würde die Rundenpflicht ersatzlos
+  // verloren gehen, sobald diese Person länger pausiert. Jeder übernommene Eintrag trägt
+  // zusätzlich sourceEveningId, damit removeCarriedRoundsFromSource() beim Löschen des Abends,
+  // der die Übernahme ausgelöst hat, den Quell-Abend gezielt wieder freigeben kann (siehe dort).
   async function carryOverOpenRounds(newDate, participantNames){
     const sourceIndexEntries = state.eveningsIndex.filter(e=> e.date < newDate && e.hasOpenRounds && !e.roundsCarriedForward);
     if(sourceIndexEntries.length===0) return [];
@@ -7538,18 +7543,12 @@
       oldEntries.forEach(e=>{
         if(!participantNames.has(e.name)) return;
         usedAny = true;
-        carried.push({ id: uid('cr'), fineId: e.fineId, fineName: e.fineName, name: e.name, given: false });
+        carried.push({ id: uid('cr'), fineId: e.fineId, fineName: e.fineName, name: e.name, given: false, sourceEveningId: oldDetail.id, sourceDate: oldDetail.date });
       });
-      // Der alte Abend wird IMMER als "abgearbeitet" markiert, sobald er als Quelle geprüft wurde -
-      // auch wenn aktuell keine seiner offenen Runden übernommen werden konnte (z.B. weil die
-      // betroffene Person heute fehlt). Ansonsten würde er bei jedem künftigen neuen Abend erneut
-      // geprüft und könnte doch noch zuschlagen, sobald die Person irgendwann wieder teilnimmt -
-      // das widerspricht "nur vom jeweils letzten Abend weiterreichen" nicht, weil eine nicht
-      // teilnehmende Person ihre Rundenpflicht ohnehin erst beim nächsten Abend, an dem sie
-      // dabei ist, einlösen kann; diese Prüfung passiert dann über den neuen (aktuellen) Abend.
-      oldDetail.roundsCarriedForward = true;
-      touchedOldDetails.push(oldDetail);
-      if(usedAny){ /* nur informativ für Kommentar oben, keine Verzweigung nötig */ }
+      if(usedAny){
+        oldDetail.roundsCarriedForward = true;
+        touchedOldDetails.push(oldDetail);
+      }
     }
     await Promise.all(touchedOldDetails.map(d=> saveEveningMainDoc(d)));
     // evenings-index ebenfalls aktualisieren, damit spätere Abend-Anlagen diese Quellen nicht
@@ -7560,6 +7559,31 @@
       state.eveningsIndex = state.eveningsIndex.map(e=> touchedIds.has(e.id) ? {...e, roundsCarriedForward:true} : e);
     }
     return carried;
+  }
+
+  // Gibt die Quell-Abende einer Liste carriedOverRounds-Einträge wieder als Runden-Quelle frei
+  // (roundsCarriedForward:false), sofern die jeweilige Runde noch offen war (given:false) - eine
+  // bereits gegebene Runde muss nicht zurückgegeben werden, die Pflicht wurde ja bereits erfüllt.
+  // Wird beim Löschen eines Abends aufgerufen (siehe attachDetailListeners()), damit übernommene,
+  // aber noch offene Rundenpflichten nicht ersatzlos verschwinden, nur weil der Abend, der sie
+  // übernommen hatte, wieder gelöscht wird.
+  async function releaseCarriedRoundsToSource(carriedOverRounds){
+    const openCarried = (carriedOverRounds||[]).filter(c=>!c.given && c.sourceEveningId);
+    if(openCarried.length===0) return;
+    const sourceIds = [...new Set(openCarried.map(c=>c.sourceEveningId))];
+    await Promise.all(sourceIds.map(id=> updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===id ? {...e, roundsCarriedForward:false} : e))));
+    // Alle Aufrufe zielen auf dasselbe Server-Dokument evenings-index - sequenziell statt
+    // Promise.all wäre hier zwar unkritisch, würde aber ohne Not mehrere Overwrite-Runden
+    // riskieren; updateEveningsIndex liest/schreibt bereits pro Aufruf den vollen aktuellen
+    // Serverstand, mögliche Kollisionen bei mehreren IDs sind also selbst im Promise.all-Fall
+    // durch das jeweils frische Lesen abgefangen.
+    state.eveningsIndex = state.eveningsIndex.map(e=> sourceIds.includes(e.id) ? {...e, roundsCarriedForward:false} : e);
+    // Auch im Hauptdokument des alten Abends selbst zurücksetzen, damit ein direkt danach
+    // geladenes Detail (z.B. erneuter Blick auf den alten Abend) konsistent ist.
+    await Promise.all(sourceIds.map(async id=>{
+      const oldDetail = await getEveningDetail(id);
+      if(oldDetail){ oldDetail.roundsCarriedForward = false; await saveEveningMainDoc(oldDetail); }
+    }));
   }
 
   async function handleConfirmNewEvening(){
@@ -7841,6 +7865,7 @@
 
       showModalLoadingOverlay('Abend wird gelöscht…');
       try{
+        await releaseCarriedRoundsToSource(detail.carriedOverRounds);
         const deleteEveningFn = httpsCallable(functions, 'deleteEvening');
         await deleteEveningFn({ clubId: CURRENT_CLUB_ID, eveningId: id });
       }catch(e){
