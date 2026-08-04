@@ -759,7 +759,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.1';
+  const APP_VERSION = '1.1.2';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -7623,7 +7623,18 @@
     if(errEl) errEl.innerHTML = '';
     if(btn){ btn.disabled = true; btn.textContent = 'Wird geprüft…'; }
 
-    state.eveningsIndex = await getClubJSON('evenings-index', state.eveningsIndex);
+    // WICHTIG: hier bewusst NICHT getClubJSON() (cache-first) verwenden. Der Firestore-Client-
+    // Cache kann kurz nach einem Löschen über die deleteEvening Cloud Function (die am Client
+    // komplett vorbeischreibt) noch den alten Indexstand enthalten, bevor der Server-Push
+    // eintrifft - die Duplikatsprüfung würde einen bereits gelöschten Abend fälschlich als
+    // "noch vorhanden" melden. Deshalb erzwingen wir hier per getDocFromServer() einen echten
+    // Server-Roundtrip, statt uns auf einen möglicherweise stale lokalen Cache zu verlassen.
+    try{
+      const snap = await withTimeout(getDocFromServer(clubDocRef('evenings-index')), STORAGE_TIMEOUT_MS);
+      state.eveningsIndex = snap.exists() ? JSON.parse(snap.data().value) : state.eveningsIndex;
+    }catch(e){
+      console.error('Server-Abgleich evenings-index fehlgeschlagen, nutze lokalen Stand', e);
+    }
     markFetched('eveningsIndex');
     const existing = state.eveningsIndex.find(e=>e.date===date);
     if(existing){
