@@ -501,11 +501,26 @@
   .adhoc-fine-row:last-child{border-bottom:none;}
   .muted{color:var(--muted); font-size:13px; margin:0;}
 
-  .round-entry-row{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 2px; border-bottom:1px dashed var(--line);}
+  .round-entry-row{display:flex; align-items:center; gap:12px; padding:12px 2px; border-bottom:1px dashed var(--line); transition:opacity .35s ease, transform .35s ease, max-height .35s ease; max-height:80px; overflow:hidden;}
   .round-entry-row:last-child{border-bottom:none;}
-  .round-entry-row.given{color:var(--muted);}
-  .round-entry-name{flex:1; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .round-mark-given-btn{flex-shrink:0; padding:8px 14px !important; font-size:13px !important;}
+  .round-entry-row.fading-out{opacity:0; transform:translateX(12px); max-height:0; padding-top:0; padding-bottom:0; border-bottom-color:transparent;}
+  .round-entry-row.given{padding:9px 2px;}
+  .round-avatar{flex-shrink:0; width:34px; height:34px; border-radius:50%; background:var(--tint); color:var(--brass); font-family:var(--font-display); font-weight:700; font-size:14px; display:flex; align-items:center; justify-content:center;}
+  .round-entry-row.given .round-avatar{background:var(--line); color:var(--muted);}
+  .round-entry-main{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;}
+  .round-entry-name{font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink);}
+  .round-entry-row.given .round-entry-name{color:var(--muted); font-weight:600;}
+  .round-entry-badge{display:inline-block; align-self:flex-start; background:var(--tint); color:var(--brass); font-size:12px; font-weight:700; padding:2px 8px; border-radius:20px;}
+  .round-entry-row.given .round-entry-badge{background:transparent; color:var(--muted); padding:0; font-weight:600;}
+  .round-mark-given-btn{flex-shrink:0; padding:8px 14px !important; font-size:13px !important; transition:background .2s ease, border-color .2s ease, color .2s ease;}
+  .round-mark-given-btn.confirmed{background:var(--felt) !important; border-color:var(--felt) !important; color:#fff !important;}
+  .round-given-check{flex-shrink:0; width:22px; height:22px; color:var(--muted);}
+  .rounds-given-toggle{display:flex; align-items:center; justify-content:space-between; width:100%; background:none; border:none; padding:14px 2px 8px; cursor:pointer; font-family:var(--font-body); border-top:1px solid var(--line); margin-top:4px;}
+  .rounds-given-toggle-label{font-weight:700; color:var(--muted); font-size:14px;}
+  .rounds-given-toggle-chevron{color:var(--muted); transition:transform .2s ease;}
+  .rounds-given-toggle.open .rounds-given-toggle-chevron{transform:rotate(180deg);}
+  .rounds-given-list{overflow:hidden; transition:max-height .3s ease;}
+  .rounds-given-list.collapsed{max-height:0;}
 
   .hint{background:var(--tint); border:1px solid var(--brass); color:var(--ink); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:6px;}
 
@@ -730,7 +745,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.119';
+  const APP_VERSION = '1.0.120';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4079,10 +4094,22 @@
     }
     const openEntries = entries.filter(e=>!e.given);
     const givenEntries = entries.filter(e=>e.given);
+
+    function initialsFor(name){
+      const parts = String(name||'').trim().split(/\s+/).filter(Boolean);
+      if(parts.length===0) return '?';
+      if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
+      return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
+    }
+
     function openRowHtml(e){
       return `
         <div class="round-entry-row" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}">
-          <span class="round-entry-name">${escapeHtml(e.name)} (${escapeHtml(e.fineName)})</span>
+          <span class="round-avatar">${escapeHtml(initialsFor(e.name))}</span>
+          <span class="round-entry-main">
+            <span class="round-entry-name">${escapeHtml(e.name)}</span>
+            <span class="round-entry-badge">${escapeHtml(e.fineName)}</span>
+          </span>
           ${closed ? '' : `<button type="button" class="btn-secondary round-mark-given-btn" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}">Gegeben</button>`}
         </div>
       `;
@@ -4090,20 +4117,33 @@
     function givenRowHtml(e){
       return `
         <div class="round-entry-row given">
-          <span class="round-entry-name">${escapeHtml(e.name)} (${escapeHtml(e.fineName)})</span>
+          <span class="round-avatar">${escapeHtml(initialsFor(e.name))}</span>
+          <span class="round-entry-main">
+            <span class="round-entry-name">${escapeHtml(e.name)}</span>
+            <span class="round-entry-badge">${escapeHtml(e.fineName)}</span>
+          </span>
+          <svg class="round-given-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
         </div>
       `;
     }
+    const givenIsOpen = !!state.roundsGivenSectionOpen;
     return `
       <div class="card">
         <h2 class="section-title">Runden <span class="member-count">(${openEntries.length} offen)</span></h2>
-        ${openEntries.length===0 ? `<p class="empty-state">Alle Runden wurden gegeben.</p>` : openEntries.map(openRowHtml).join('')}
+        ${openEntries.length===0 && givenEntries.length===0 ? `<p class="empty-state">Alle Runden wurden gegeben.</p>` : ''}
+        <div id="rounds-open-list">
+          ${openEntries.map(openRowHtml).join('')}
+        </div>
+        ${givenEntries.length>0 ? `
+          <button type="button" class="rounds-given-toggle${givenIsOpen ? ' open' : ''}" id="rounds-given-toggle-btn">
+            <span class="rounds-given-toggle-label">Gegeben (${givenEntries.length})</span>
+            <svg class="rounds-given-toggle-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="rounds-given-list${givenIsOpen ? '' : ' collapsed'}" id="rounds-given-list">
+            ${givenEntries.map(givenRowHtml).join('')}
+          </div>
+        ` : ''}
       </div>
-      ${givenEntries.length>0 ? `
-      <div class="card">
-        <h2 class="section-title">Gegebene Runden <span class="member-count">(${givenEntries.length})</span></h2>
-        ${givenEntries.map(givenRowHtml).join('')}
-      </div>` : ''}
     `;
   }
 
@@ -5901,6 +5941,7 @@
       state.confirmDeleteEveningId = null;
       state.mainError = '';
       state.eveningTab = 'sitzplan';
+      state.roundsGivenSectionOpen = false;
       state.view = 'detail';
       render();
     }catch(e){
@@ -7592,10 +7633,23 @@
     if(tabRundenBtn) tabRundenBtn.addEventListener('click', ()=>{ state.eveningTab='runden'; render(); });
     document.querySelectorAll('.round-mark-given-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
+        if(btn.disabled) return;
         const { seatId, fineId } = btn.dataset;
         const instanceIndex = parseInt(btn.dataset.instanceIndex, 10);
-        markRoundGiven(seatId, fineId, instanceIndex);
+        btn.disabled = true;
+        btn.textContent = '✓';
+        btn.classList.add('confirmed');
+        const row = btn.closest('.round-entry-row');
+        setTimeout(()=>{
+          if(row) row.classList.add('fading-out');
+          setTimeout(()=>{ markRoundGiven(seatId, fineId, instanceIndex); }, 350);
+        }, 300);
       });
+    });
+    const roundsGivenToggleBtn = document.getElementById('rounds-given-toggle-btn');
+    if(roundsGivenToggleBtn) roundsGivenToggleBtn.addEventListener('click', ()=>{
+      state.roundsGivenSectionOpen = !state.roundsGivenSectionOpen;
+      render();
     });
     const tabSpieleBtn = document.getElementById('tab-spiele-btn');
     if(tabSpieleBtn) tabSpieleBtn.addEventListener('click', ()=>{ state.eveningTab='spiele'; render(); });
