@@ -996,12 +996,17 @@ exports.deleteEvening = onCall({}, async (request) => {
     const filtered = poolEntries.filter(e => e.sourceEveningId !== eveningId);
     if (filtered.length !== poolEntries.length) { poolEntries = filtered; poolChanged = true; }
   }
-  const openCarriedToReturn = (detail.carriedOverRounds || []).filter(c => !c.given && c.sourceEveningId);
+  // Bewusst NICHT auf c.sourceEveningId geprüft: Geburtstagsrunden (fineId 'birthday', siehe
+  // getBirthdayMembersSinceLastEvening() im Client) haben sourceEveningId=null, weil sie nicht aus
+  // einer Übernahme aus dem Pool stammen, sondern direkt beim Anlegen dieses Abends erzeugt
+  // wurden - sie müssen beim Löschen des Abends trotzdem zurück in den Pool wandern, sonst ginge
+  // die Rundenpflicht ersatzlos verloren.
+  const openCarriedToReturn = (detail.carriedOverRounds || []).filter(c => !c.given);
   if (openCarriedToReturn.length > 0) {
     openCarriedToReturn.forEach(c => {
       poolEntries.push({
         id: `or-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-        name: c.name, fineId: c.fineId, fineName: c.fineName,
+        name: c.name, memberId: c.memberId, fineId: c.fineId, fineName: c.fineName,
         sourceEveningId: c.sourceEveningId, sourceDate: c.sourceDate,
       });
     });

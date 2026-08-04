@@ -787,7 +787,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.17';
+  const APP_VERSION = '1.1.18';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2354,6 +2354,13 @@
       </span>
     </div>`;
   }
+  // Club-weite Einstellung (gespeichert in clubs/{clubId}.birthdayRoundsEnabled, siehe saveClub()) -
+  // Default true (aktiv), falls das Feld noch nicht existiert (ältere Clubs ohne diese Einstellung).
+  // Analog zu anderen Club-Stammdaten wie PayPal/IBAN in der Clubverwaltung.
+  function isBirthdayRoundsEnabled(){
+    return !CURRENT_CLUB_DATA || CURRENT_CLUB_DATA.birthdayRoundsEnabled !== false;
+  }
+
   function viewFinesManagement(){
     const strafenList = state.finesCatalog.filter(f=>f.type!=='runde');
     const rundenList = state.finesCatalog.filter(f=>f.type==='runde');
@@ -2375,6 +2382,14 @@
           <h2 class="section-title">Runden <span class="member-count">(${rundenList.length})</span></h2>
         </div>
         <div id="runden-list-container">${rundenHtml}</div>
+        <div class="toggle-row" style="margin-top:14px;">
+          <span>Geburtstagsrunde automatisch hinzufügen</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="birthday-rounds-toggle"${isBirthdayRoundsEnabled()?' checked':''}>
+            <span class="toggle-switch-track"></span>
+          </label>
+        </div>
+        <p class="hint">Beim Anlegen eines neuen Kegelabends wird für jeden Geburtstag seit dem letzten Abend (inkl. heute) automatisch eine Runde eingetragen.</p>
       </div>
     `;
   }
@@ -6469,6 +6484,15 @@
       reorderWithinSubset(newIdOrder);
       await setClubJSON('fines-catalog', state.finesCatalog);
     });
+    const birthdayToggle = document.getElementById('birthday-rounds-toggle');
+    if(birthdayToggle){
+      if(!canManageMembers()) birthdayToggle.disabled = true;
+      birthdayToggle.addEventListener('change', async ()=>{
+        const enabled = birthdayToggle.checked;
+        CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), birthdayRoundsEnabled: enabled };
+        await saveClub({ birthdayRoundsEnabled: enabled });
+      });
+    }
   }
 
   function attachFineDetailListeners(){
@@ -7823,6 +7847,37 @@
   // direkt aus dem Pool entfernt (statt nur markiert) - das ist der zentrale Vorteil ggü. der
   // früheren Instanz-Tracking-Lösung: kein Durchsuchen vergangener Abende mehr nötig, der Pool
   // IST bereits die vollständige, flache Liste aller offenen Rundenpflichten.
+  // Ermittelt alle Mitglieder, die zwischen dem Datum des letzten Kegelabends (EXKLUSIVE) und dem
+  // Datum des neuen Abends (INKLUSIVE, siehe Vorgabe "inkl. Heute") Geburtstag hatten - für jedes
+  // tatsächliche Geburtstagsdatum in diesem Zeitraum ein eigener Eintrag (bei einer sehr langen
+  // Pause über ein Jahr kann eine Person also mehrfach auftauchen). Gibt es noch keinen
+  // vorherigen Abend, wird nur der Tag des neuen Abends selbst geprüft (kein unbegrenzter
+  // Rückwärts-Scan). Rein datumsbasiert (analog zu getBirthdaysOnDate()) - unabhängig davon, wer
+  // an den jeweiligen Abenden teilgenommen hat.
+  function getBirthdayMembersSinceLastEvening(newEveningDate){
+    const priorDates = state.eveningsIndex
+      .map(e=>e.date)
+      .filter(d=> d < newEveningDate)
+      .sort();
+    const lastDate = priorDates.length>0 ? priorDates[priorDates.length-1] : null;
+    const rangeStart = lastDate ? addDaysISO(lastDate, 1) : newEveningDate;
+    const results = [];
+    let cur = rangeStart;
+    while(cur <= newEveningDate){
+      const [y, m, d] = cur.split('-').map(Number);
+      state.members.forEach(mem=>{
+        if(!mem.birthday) return;
+        const [by, bm, bd] = mem.birthday.split('-').map(Number);
+        if(bm===m && bd===d && y>by){
+          results.push({ memberId: mem.id, name: displayName(mem), date: cur });
+        }
+      });
+      if(cur===newEveningDate) break;
+      cur = addDaysISO(cur, 1);
+    }
+    return results;
+  }
+
   async function carryOverOpenRoundsFromPool(participantMemberIds){
     const carried = [];
     await updateOpenRoundsPool(serverPool=>{
@@ -7982,6 +8037,29 @@
     const carryOverCheckbox = document.getElementById('carry-over-rounds-checkbox');
     const carryOverEnabled = !carryOverCheckbox || carryOverCheckbox.checked;
     const carriedOverRounds = carryOverEnabled ? await carryOverOpenRoundsFromPool(participantMemberIds) : [];
+
+    // Geburtstagsrunden (siehe isBirthdayRoundsEnabled()/getBirthdayMembersSinceLastEvening()):
+    // für jeden Geburtstag seit dem letzten Abend (inkl. heute) eine offene Runde. Anwesende
+    // Mitglieder bekommen sie direkt in diesem Abend (als carriedOverRounds-Eintrag, gleiche
+    // Struktur wie Pool-Übernahmen - kein Geldbetrag, nur Rundenpflicht). Abwesende Mitglieder
+    // landen im zentralen Pool (open-rounds-pool) und werden übernommen, sobald sie das nächste
+    // Mal an einem Abend teilnehmen.
+    if(isBirthdayRoundsEnabled()){
+      const birthdayHits = getBirthdayMembersSinceLastEvening(date);
+      if(birthdayHits.length>0){
+        const presentHits = birthdayHits.filter(h=>participantMemberIds.has(h.memberId));
+        const absentHits = birthdayHits.filter(h=>!participantMemberIds.has(h.memberId));
+        presentHits.forEach(h=>{
+          carriedOverRounds.push({ id: uid('cr'), fineId: 'birthday', fineName: 'Geburtstagsrunde', name: h.name, memberId: h.memberId, given: false, sourceEveningId: null, sourceDate: h.date });
+        });
+        if(absentHits.length>0){
+          await updateOpenRoundsPool(serverPool=> [
+            ...serverPool,
+            ...absentHits.map(h=>({ id: `br-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`, name: h.name, memberId: h.memberId, fineId: 'birthday', fineName: 'Geburtstagsrunde', sourceEveningId: null, sourceDate: h.date }))
+          ]);
+        }
+      }
+    }
 
     const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, seatingTemplateId: seatingTemplate.id, seatingSideNamesSnapshot: seatingSideNamesAtCreation, carriedOverRounds };
     const newIndexEntry = {id, date, ...computeEveningSummaryFields(detail)};
