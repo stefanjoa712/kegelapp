@@ -1132,6 +1132,38 @@ exports.checkMemberDeletable = onCall({}, async (request) => {
 // Kegelabend-Historie, Rückstände, Kalender-Einträge und offene Rundenpflichten nicht verwaisen.
 // Archivierte Mitglieder bleiben im Index, tauchen aber clientseitig (activeMembers()) nicht
 // mehr in Auswahllisten auf.
+// Entfernt die Auth-Berechtigung eines Mitglieds für GENAU EINEN Club: entfernt die clubId aus
+// dessen 'clubIds'-Custom-Claim-Array. Ist der Nutzer danach in KEINEM Club mehr Mitglied, wird
+// der komplette Auth-Account gelöscht (kein "Karteileichen"-Account ohne jede Zugehörigkeit).
+// Gemeinsam genutzt von unlinkMemberAccount (manuelles Entfernen der Verknüpfung) und
+// deleteOrArchiveMember (Login soll nach Archivieren/Löschen in diesem Club nicht mehr möglich
+// sein). Idempotent: fehlt der Auth-Account bereits, ist das für uns trotzdem ein Erfolg.
+async function removeMemberClubAuthAccess(email, clubId) {
+  if (!email) return;
+  const adminAuth = getAuth();
+  try {
+    const userRecord = await adminAuth.getUserByEmail(email);
+    const existingClaims = userRecord.customClaims || {};
+    const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
+    const remainingClubIds = existingClubIds.filter((id) => id !== clubId);
+
+    if (remainingClubIds.length > 0) {
+      await adminAuth.setCustomUserClaims(userRecord.uid, {
+        ...existingClaims,
+        clubIds: remainingClubIds,
+      });
+    } else {
+      await adminAuth.deleteUser(userRecord.uid);
+    }
+  } catch (e) {
+    if (e.code !== 'auth/user-not-found') {
+      logger.error(`Fehler beim Entfernen der Club-Zugehörigkeit für ${email}:`, e);
+      throw new HttpsError('internal', 'Account-Zugriff konnte nicht entfernt werden.');
+    }
+    // Account existierte bereits nicht mehr - für uns trotzdem ein Erfolg (idempotent).
+  }
+}
+
 exports.deleteOrArchiveMember = onCall({}, async (request) => {
   requireManageMembersRole(request);
 
@@ -1158,8 +1190,17 @@ exports.deleteOrArchiveMember = onCall({}, async (request) => {
 
   const { deletable, reasons } = await findMemberReferences(clubRef, memberId);
 
+  // Login-Zugriff für DIESEN Club entfernen - sowohl beim Archivieren als auch beim endgültigen
+  // Löschen, in beiden Fällen darf sich die Person hier nicht mehr einloggen können. War sie in
+  // weiteren Clubs Mitglied, bleibt der Auth-Account für diese bestehen (siehe
+  // removeMemberClubAuthAccess), nur diese eine Club-Zugehörigkeit fällt weg.
+  if (member.email) {
+    await removeMemberClubAuthAccess(member.email, clubId);
+  }
+
   if (!deletable) {
     member.archived = true;
+    if (member.email) { member.hasAccount = false; member.lastLogin = null; }
     await memberRef.set({ value: JSON.stringify(member) });
     return { success: true, archived: true, reasons };
   }
@@ -1532,31 +1573,7 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   }
   await requireClubAccessNotBlocked(clubId);
 
-  const adminAuth = getAuth();
-  try {
-    const userRecord = await adminAuth.getUserByEmail(email);
-    // Ein Nutzer kann Mitglied in mehreren Clubs sein - beim Entfernen darf NICHT der ganze
-    // Account gelöscht werden, sondern nur die eine clubId aus dem Claim-Array entfernt werden.
-    // Erst wenn danach keine Club-Zugehörigkeit mehr übrig ist, wird der Account wirklich gelöscht.
-    const existingClaims = userRecord.customClaims || {};
-    const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
-    const remainingClubIds = existingClubIds.filter((id) => id !== clubId);
-
-    if (remainingClubIds.length > 0) {
-      await adminAuth.setCustomUserClaims(userRecord.uid, {
-        ...existingClaims,
-        clubIds: remainingClubIds,
-      });
-    } else {
-      await adminAuth.deleteUser(userRecord.uid);
-    }
-  } catch (e) {
-    if (e.code !== 'auth/user-not-found') {
-      logger.error(`Fehler beim Entfernen des Accounts für ${email}:`, e);
-      throw new HttpsError('internal', 'Account konnte nicht entfernt werden.');
-    }
-    // Account existierte bereits nicht mehr - für uns trotzdem ein Erfolg (idempotent).
-  }
+  await removeMemberClubAuthAccess(email, clubId);
 
   return { success: true };
 });
