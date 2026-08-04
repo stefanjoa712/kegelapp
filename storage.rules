@@ -21,9 +21,10 @@ service firebase.storage {
     // für Kassenwart/Präsident/Admin - dieselbe Berechtigung wie die Clubverwaltung in
     // firestore.rules. Max. 3 MB, nur Bilddateien (Client verkleinert vorher auf 512x512, das
     // hier ist nur ein serverseitiges Sicherheitsnetz gegen falsch programmierte/manipulierte Clients).
-    // Fester Dateiname (immer "logo.jpg", siehe uploadClubLogo() in index.html) - kein
-    // Wildcard-Segment für die Dateiendung nötig.
-    match /clubs/{clubId}/logo.jpg {
+    // Fester Dateiname (immer "logo.png", siehe uploadClubLogo() in index.html - PNG statt JPEG,
+    // damit ein transparenter Hintergrund erhalten bleibt) - kein Wildcard-Segment für die
+    // Dateiendung nötig.
+    match /clubs/{clubId}/logo.png {
       allow read: if request.auth != null;
       allow write: if canManageMembers()
         && request.resource.size < 3 * 1024 * 1024

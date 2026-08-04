@@ -784,7 +784,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.6';
+  const APP_VERSION = '1.1.7';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1497,10 +1497,12 @@
   }
 
   // Verkleinert eine vom Nutzer ausgewählte Bilddatei client-seitig per Canvas auf max.
-  // 512x512 (Seitenverhältnis bleibt erhalten, kein Zuschneiden) und komprimiert sie als JPEG.
-  // Läuft komplett im Browser - keine zusätzliche Cloud Function nötig, da nur Kassenwart/
-  // Präsident/Admin überhaupt hochladen dürfen (siehe storage.rules) und ein einzelnes
-  // Club-Logo keine Vielzahl an Formaten/Größen braucht.
+  // 512x512 (Seitenverhältnis bleibt erhalten, kein Zuschneiden) und exportiert als PNG, damit
+  // ein transparenter Hintergrund erhalten bleibt (JPEG kann keine Transparenz - hätte sie bisher
+  // durch den Export in ein weißes Rechteck verwandelt). Läuft komplett im Browser - keine
+  // zusätzliche Cloud Function nötig, da nur Kassenwart/Präsident/Admin überhaupt hochladen
+  // dürfen (siehe storage.rules) und ein einzelnes Club-Logo keine Vielzahl an Formaten/Größen
+  // braucht.
   function resizeImageToBlob(file, maxSize){
     return new Promise((resolve, reject)=>{
       const img = new Image();
@@ -1516,12 +1518,10 @@
         const canvas = document.createElement('canvas');
         canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
         canvas.toBlob(blob=>{
           if(blob) resolve(blob); else reject(new Error('Bild konnte nicht verarbeitet werden.'));
-        }, 'image/jpeg', 0.8);
+        }, 'image/png');
       };
       img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('Bild konnte nicht geladen werden.')); };
       img.src = url;
@@ -1532,8 +1532,8 @@
   // vorheriges Logo) und liefert die Download-URL zum Speichern in clubs/{clubId}.logoUrl.
   async function uploadClubLogo(file){
     const blob = await resizeImageToBlob(file, 512);
-    const ref = storageRef(storage, `clubs/${CURRENT_CLUB_ID}/logo.jpg`);
-    await uploadBytes(ref, blob, { contentType: 'image/jpeg' });
+    const ref = storageRef(storage, `clubs/${CURRENT_CLUB_ID}/logo.png`);
+    await uploadBytes(ref, blob, { contentType: 'image/png' });
     return await getDownloadURL(ref);
   }
   // Listet die IDs ALLER existierenden Clubs auf, unabhängig von einem Claim - wird nur für den
