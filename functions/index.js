@@ -1047,6 +1047,134 @@ exports.deleteEvening = onCall({}, async (request) => {
   return { success: true };
 });
 
+// Wie canManageMembers() im Client: Kassenwart und Präsident dürfen Mitglieder verwalten
+// (löschen/archivieren), bewusst weiter gefasst als requireFinanceRole() (nur Kassenwart).
+function requireManageMembersRole(request) {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  const callerRole = request.auth.token.role || 'Mitglied';
+  const isCallerAdmin = request.auth.token.email === 'admin@die-pudolfs.internal';
+  if (!isCallerAdmin && callerRole !== 'Kassenwart' && callerRole !== 'Präsident') {
+    throw new HttpsError('permission-denied', 'Nur Kassenwart, Präsident oder Admin dürfen diese Aktion ausführen.');
+  }
+}
+
+// Prüft, ob eine memberId noch irgendwo referenziert wird, wo sie beim Löschen verwaisen würde:
+// - Sitzplan eines Kegelabends (evenings/{id}.seating[].memberId) - dafür müssen ALLE
+//   Kegelabend-Hauptdokumente des Clubs gescannt werden, da es dafür keinen Index gibt.
+// - Offener Rückstand (arrears/{memberId}.amount > 0)
+// - Kalender-Zusage/Absage (calendar-rsvps/*.memberId)
+// - Offene Rundenpflicht im zentralen Pool (data/open-rounds-pool)
+// Gibt { deletable: boolean, reasons: string[] } zurück.
+async function findMemberReferences(clubRef, memberId) {
+  const reasons = [];
+
+  const eveningsSnap = await clubRef.collection('evenings').get();
+  let inEvening = false;
+  eveningsSnap.forEach(snap => {
+    if (inEvening) return;
+    let detail;
+    try { detail = JSON.parse(snap.data().value); } catch (e) { return; }
+    if (Array.isArray(detail.seating) && detail.seating.some(s => s.memberId === memberId)) {
+      inEvening = true;
+    }
+  });
+  if (inEvening) reasons.push('evening');
+
+  const arrearsSnap = await clubRef.collection('arrears').doc(memberId).get();
+  if (arrearsSnap.exists) {
+    try {
+      const entry = JSON.parse(arrearsSnap.data().value);
+      if (entry && Math.round((entry.amount || 0) * 100) !== 0) reasons.push('arrears');
+    } catch (e) { /* defektes Dokument ignorieren */ }
+  }
+
+  const rsvpsSnap = await clubRef.collection('rsvps').get();
+  const hasRsvp = rsvpsSnap.docs.some(snap => {
+    try { return JSON.parse(snap.data().value).memberId === memberId; } catch (e) { return false; }
+  });
+  if (hasRsvp) reasons.push('calendar');
+
+  const poolSnap = await clubRef.collection('data').doc('open-rounds-pool').get();
+  if (poolSnap.exists) {
+    try {
+      const pool = JSON.parse(poolSnap.data().value || '[]');
+      if (pool.some(entry => entry.memberId === memberId)) reasons.push('rounds');
+    } catch (e) { /* defektes Dokument ignorieren */ }
+  }
+
+  return { deletable: reasons.length === 0, reasons };
+}
+
+// Reiner Lese-Check für das Löschen-Popup im Client: liefert nur das Ergebnis, ohne etwas zu
+// verändern - deleteOrArchiveMember() führt denselben Check danach nochmal serverseitig aus,
+// direkt vor der eigentlichen Aktion (falls sich der Stand zwischen Popup-Öffnen und Bestätigen
+// geändert hat, z.B. paralleler Kegelabend-Abschluss auf einem anderen Gerät).
+exports.checkMemberDeletable = onCall({}, async (request) => {
+  requireManageMembersRole(request);
+
+  const { clubId, memberId } = request.data || {};
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
+  }
+  if (!memberId || typeof memberId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Mitglieds-ID fehlt.');
+  }
+
+  const clubRef = db.collection('clubs').doc(clubId);
+  const { deletable, reasons } = await findMemberReferences(clubRef, memberId);
+  return { deletable, reasons };
+});
+
+// Löscht ein Mitglied nur, wenn es nirgends mehr referenziert wird (siehe
+// findMemberReferences) - sonst wird es stattdessen archiviert (member.archived = true), damit
+// Kegelabend-Historie, Rückstände, Kalender-Einträge und offene Rundenpflichten nicht verwaisen.
+// Archivierte Mitglieder bleiben im Index, tauchen aber clientseitig (activeMembers()) nicht
+// mehr in Auswahllisten auf.
+exports.deleteOrArchiveMember = onCall({}, async (request) => {
+  requireManageMembersRole(request);
+
+  const { clubId, memberId } = request.data || {};
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
+  }
+  if (!memberId || typeof memberId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Mitglieds-ID fehlt.');
+  }
+
+  await requireClubAccessNotBlocked(clubId);
+
+  const clubRef = db.collection('clubs').doc(clubId);
+  const memberRef = clubRef.collection('members').doc(memberId);
+  const memberSnap = await memberRef.get();
+  if (!memberSnap.exists) {
+    throw new HttpsError('not-found', 'Mitglied wurde nicht gefunden.');
+  }
+  let member;
+  try { member = JSON.parse(memberSnap.data().value); } catch (e) {
+    throw new HttpsError('internal', 'Mitglieds-Dokument konnte nicht gelesen werden.');
+  }
+
+  const { deletable, reasons } = await findMemberReferences(clubRef, memberId);
+
+  if (!deletable) {
+    member.archived = true;
+    await memberRef.set({ value: JSON.stringify(member) });
+    return { success: true, archived: true, reasons };
+  }
+
+  await db.runTransaction(async (tx) => {
+    const indexRef = clubRef.collection('members').doc('_index');
+    const indexSnap = await tx.get(indexRef);
+    const index = indexSnap.exists ? JSON.parse(indexSnap.data().value) : [];
+    tx.delete(memberRef);
+    tx.set(indexRef, { value: JSON.stringify(index.filter(id => id !== memberId)) });
+  });
+
+  return { success: true, archived: false };
+});
+
 // -------- Die eigentliche Cloud Function --------
 // Trigger-Pfad mit Wildcard {clubId} statt fest verdrahteter CLUB_ID: reagiert auf
 // Kegelabend-Änderungen in JEDEM Club, nicht nur dem einen aktuell existierenden. clubId kommt
