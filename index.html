@@ -447,6 +447,14 @@
   .bulk-quick-btn{flex:1; padding:8px 10px !important; font-size:13px !important;}
   .member-check-row:last-child{border-bottom:none;}
   .member-check-row input[type="checkbox"]{width:18px; height:18px; accent-color:var(--felt); flex-shrink:0;}
+  .toggle-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0;}
+  .toggle-switch{position:relative; display:inline-block; width:46px; height:26px; flex-shrink:0;}
+  .toggle-switch input{position:absolute; opacity:0; width:0; height:0;}
+  .toggle-switch-track{position:absolute; inset:0; background:var(--line); border-radius:999px; transition:background .15s ease; cursor:pointer;}
+  .toggle-switch-track::before{content:''; position:absolute; left:3px; top:3px; width:20px; height:20px; background:#fff; border-radius:50%; box-shadow:0 1px 2px rgba(0,0,0,.25); transition:transform .15s ease;}
+  .toggle-switch input:checked + .toggle-switch-track{background:var(--felt);}
+  .toggle-switch input:checked + .toggle-switch-track::before{transform:translateX(20px);}
+  .toggle-switch input:focus-visible + .toggle-switch-track{outline:2px solid var(--felt); outline-offset:2px;}
 
   .guest-row{display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--bg); border:1px solid var(--line); border-radius:8px; margin-bottom:6px;}
   .remove-guest-btn{background:none; border:none; color:var(--wine); cursor:pointer; font-size:15px;}
@@ -751,7 +759,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '1.1.1';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3819,23 +3827,23 @@
         </div>
       </div>
       <div class="card">
-        <h3 class="section-title-small">Sitzplan</h3>
+        <h3 class="section-title-small">Sonstiges</h3>
+        <label for="seating-template-select">Sitzplan</label>
         <select id="seating-template-select">${buildEveningSeatingTemplateOptionsHtml()}</select>
-      </div>
-      <div class="card">
-        <h3 class="section-title-small">Schriftführer</h3>
+        <label for="schriftfuehrer-select" style="margin-top:14px;">Schriftführer</label>
         <select id="schriftfuehrer-select">
           <optgroup label="Zufällig">
             <option value="standard">Standardplatz</option>
             <option value="draw">Auslosen</option>
           </optgroup>
         </select>
-      </div>
-      <div class="card">
-        <label class="member-check-row" style="cursor:pointer;">
-          <input type="checkbox" id="carry-over-rounds-checkbox" checked>
+        <div class="toggle-row" style="margin-top:14px;">
           <span>Offene Runden von vergangenen Abenden übernehmen</span>
-        </label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="carry-over-rounds-checkbox" checked>
+            <span class="toggle-switch-track"></span>
+          </label>
+        </div>
       </div>
       <div class="card" style="text-align:center;">
         <div class="seat-counter" id="seat-counter">0 / ${getClubSeatingTemplate().perSide*2} Plätze belegt</div>
