@@ -48,7 +48,7 @@ if (!clubId) {
   process.exit(1);
 }
 
-initializeApp();
+initializeApp({ projectId: 'die-pudolfs' });
 const db = getFirestore();
 
 function displayName(m) {
