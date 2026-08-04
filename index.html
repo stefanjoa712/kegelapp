@@ -434,6 +434,7 @@
   .row-actions{display:flex; align-items:center; gap:4px;}
   .nickname-tag{color:var(--brass); font-style:italic; font-weight:400;}
   .role-tag{display:inline-block; font-size:0.72em; font-weight:600; letter-spacing:.02em; text-transform:uppercase; color:var(--brass); border:1px solid var(--brass); border-radius:20px; padding:1px 8px; margin-left:6px; vertical-align:middle;}
+  .archived-tag{display:inline-block; font-size:0.72em; font-weight:600; letter-spacing:.02em; text-transform:uppercase; color:var(--ink-soft); border:1px solid var(--ink-soft); border-radius:20px; padding:1px 8px; margin-left:6px; vertical-align:middle;}
   .icon-btn{background:none; border:none; font-size:15px; cursor:pointer; color:var(--muted); padding:3px 6px; border-radius:3px;}
   .icon-btn:disabled{opacity:0.4; cursor:not-allowed;}
   .edit-member-btn:hover{color:var(--felt); background:var(--line);}
@@ -786,7 +787,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.13';
+  const APP_VERSION = '1.1.14';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2920,7 +2921,7 @@
     // Aktive Mitglieder: immer eine Zeile, auch bei 0 Rückstand (dient als vollständige Übersicht).
     const memberRows = activeMembers().map(m=>{
       const entry = state.financeArrears.find(a=>a.memberId===m.id);
-      return { memberId: m.id, name: displayName(m), amount: entry ? entry.amount : 0 };
+      return { memberId: m.id, name: displayName(m), amount: entry ? entry.amount : 0, archived:false };
     });
     // Gäste UND archivierte Mitglieder mit noch offenem Rückstand: nur bei amount>0 aufgeführt,
     // damit ein archiviertes Mitglied ohne offenen Rückstand wie gewünscht komplett verschwindet,
@@ -2929,13 +2930,13 @@
       .filter(a=> (!memberIds.has(a.memberId) || (state.members.find(m=>m.id===a.memberId)||{}).archived) && a.amount>0)
       .map(a=>{
         const m = state.members.find(x=>x.id===a.memberId);
-        return { memberId:a.memberId, name: m ? `${displayName(m)} (archiviert)` : a.name, amount:a.amount };
+        return { memberId:a.memberId, name: m ? displayName(m) : a.name, amount:a.amount, archived: !!m };
       });
     const allRows = [...memberRows, ...nonActiveRows].sort((a,b)=> a.name.localeCompare(b.name,'de'));
     const totalDue = allRows.reduce((sum,r)=> sum + r.amount, 0);
     const rowsHtml = allRows.map(r=>`
       <div class="fines-summary-row" data-member-id="${escapeHtml(r.memberId)}">
-        <span class="fines-summary-name">${escapeHtml(r.name)}</span>
+        <span class="fines-summary-name">${escapeHtml(r.name)}${r.archived?' <span class="archived-tag">Archiviert</span>':''}</span>
         <span class="fines-summary-amount ${r.amount>0?'amount-due':'amount-clear'}">${fmtEuro(r.amount)}</span>
       </div>
     `).join('');
