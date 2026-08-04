@@ -730,7 +730,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.117';
+  const APP_VERSION = '1.0.118';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4908,32 +4908,40 @@
   // Zählweise bei Trapez/Rechteck (dort war idx=0 ebenfalls die Reihe am nächsten zur Bahn).
   function buildRoundSeatingSVG(detail, template, sideNames, shortLabels, bySeatId, crownSeatIds){
     const n = template.perSide;
-    const chairW = 168, chairH = 108;
-    // Radius wächst mit n, damit bei mehr Plätzen pro Seite genug Bogenlänge für alle Stühle
-    // bleibt (kalibriert wie die 140px-Row-Abstände bei Trapez/Rechteck).
-    const R = 210 + (n-2)*46;
-    const cx0 = 380, cy0 = R + 170;
-    const W = 760, H = cy0 + R + 90;
-    const outward = 30; // zusätzlicher Abstand der Stühle nach außen relativ zum Kreisrand
+    // Maximale Gesamtbreite des SVG ist 760px (gleich wie Trapez/Rechteck). Der Kreis muss
+    // mit seinen Stühlen darin passen. Stuhlbreite + outward bestimmen den Platzbedarf seitlich.
+    // Wir berechnen R so, dass Gesamtbreite (2*(R+outward+chairW/2+sideMargin)) <= 740 bleibt.
+    // Zusätzlich wächst R leicht mit n für mehr Bogenlänge, wird aber nach oben begrenzt.
+    const chairW = 160, chairH = 104;
+    const outward = 26;
+    const sideMargin = 90; // Platz für Seitenbezeichnungen links/rechts außen
+    // R: wächst mit n, aber maximal so groß, dass alles in 760px Breite passt.
+    const maxR = Math.floor((760 - 2*(chairW/2 + outward + sideMargin)) / 2);
+    const targetR = 170 + (n-2)*36;
+    const R = Math.min(targetR, maxR);
+    const cx0 = 380, cy0 = R + 160;
+    const W = 760, H = cy0 + R + chairH/2 + 60;
 
-    // Jede Seite bekommt einen Winkelbereich von halbGap bis (180°-halbGap), gemessen von der
+    // Jede Seite bekommt einen Winkelbereich von gapDeg bis (180°-gapDeg), gemessen von der
     // oberen Achse (0° = senkrecht nach oben Richtung Kegelbahn) im Uhrzeigersinn für rechts,
     // gegen den Uhrzeigersinn für links - so bleibt an der 0°/180°-Achse (oben UND unten) bewusst
     // eine Lücke, statt dass ein Platz dort exakt mittig sitzt.
     const gapDeg = 14;
     function seatAngleDeg(idx){
-      // idx läuft von 0 (nah an der Bahn, oben) bis n-1 (unten) - gleichmäßig verteilt zwischen
-      // gapDeg und (180-gapDeg).
       const span = 180 - 2*gapDeg;
       return gapDeg + (idx+0.5)/n * span;
     }
     function pointOnCircle(angleDeg, side, radius){
       const rad = angleDeg * Math.PI/180;
-      // Winkel 0° = oben (Richtung Kegelbahn), 90° = seitlich, 180° = unten.
       const dy = -Math.cos(rad) * radius;
       const dx = Math.sin(rad) * radius * (side==='left' ? -1 : 1);
       return { x: cx0+dx, y: cy0+dy };
     }
+
+    // Seitenbezeichnungen: auf Höhe cy0, aber weit genug außen, damit sie nicht mit den
+    // seitlichsten Stühlen (Winkel ~90°, also direkt auf Höhe cy0) kollidieren.
+    // Der äußerste Punkt eines Stuhls liegt bei R + outward + chairW/2 vom Kreismittelpunkt.
+    const sideTextX = R + outward + chairW/2 + 18;
 
     function chairGroup(seatId, side, idx){
       const angle = seatAngleDeg(idx);
@@ -4991,10 +4999,10 @@
 
     return `<svg class="seating-diagram" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sitzplan des Kegelabends">
       <circle class="table-shape" cx="${cx0}" cy="${cy0}" r="${R}" />
-      <line class="lane-center-line" x1="${cx0}" y1="${cy0-R-40}" x2="${cx0}" y2="${cy0-R+15}" />
+      <line class="lane-center-line" x1="${cx0}" y1="${cy0-R-40}" x2="${cx0}" y2="${cy0+R}" />
       <text class="lane-label-text" x="${cx0}" y="${cy0-R-55}" text-anchor="middle">Kegelbahn</text>
-      <text class="side-label-text" x="${cx0-R-95}" y="${cy0}" text-anchor="middle">${escapeHtml(sideNames.left)}</text>
-      <text class="side-label-text" x="${cx0+R+95}" y="${cy0}" text-anchor="middle">${escapeHtml(sideNames.right)}</text>
+      <text class="side-label-text" x="${cx0-sideTextX}" y="${cy0}" text-anchor="middle">${escapeHtml(sideNames.left)}</text>
+      <text class="side-label-text" x="${cx0+sideTextX}" y="${cy0}" text-anchor="middle">${escapeHtml(sideNames.right)}</text>
       ${chairsHtml}
     </svg>`;
   }
@@ -5060,10 +5068,13 @@
   function buildRoundPreviewSeatingSVG(template){
     const n = template.perSide;
     const chairW = 100, chairH = 64;
-    const R = 120 + (n-2)*28;
-    const cx0 = 230, cy0 = R + 100;
-    const W = 460, H = cy0 + R + 55;
-    const outward = 20;
+    const outward = 16;
+    const sideMargin = 10; // Preview hat keine Seitenbezeichnungen, nur minimaler Rand
+    const maxR = Math.floor((460 - 2*(chairW/2 + outward + sideMargin)) / 2);
+    const targetR = 100 + (n-2)*24;
+    const R = Math.min(targetR, maxR);
+    const cx0 = 230, cy0 = R + 90;
+    const W = 460, H = cy0 + R + chairH/2 + 40;
     const gapDeg = 14;
 
     const shortLabels = getSeatingShortLabels();
@@ -5097,7 +5108,7 @@
 
     return `<svg class="seating-diagram seating-diagram-preview" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vorschau des Sitzplans">
       <circle class="table-shape" cx="${cx0}" cy="${cy0}" r="${R}" />
-      <line class="lane-center-line" x1="${cx0}" y1="${cy0-R-25}" x2="${cx0}" y2="${cy0-R+10}" />
+      <line class="lane-center-line" x1="${cx0}" y1="${cy0-R-20}" x2="${cx0}" y2="${cy0+R}" />
       ${chairsHtml}
     </svg>`;
   }
