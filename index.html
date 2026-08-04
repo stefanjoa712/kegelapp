@@ -426,6 +426,8 @@
   .draggable-row.dragging{box-shadow:0 4px 12px rgba(0,0,0,0.25); background:var(--surface); border-radius:8px; opacity:0.95;}
   .drag-placeholder{background:var(--bg); border:2px dashed var(--line); border-radius:8px; margin:2px 0;}
   .game-type-badge{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); background:var(--bg); padding:4px 8px; border-radius:6px; white-space:nowrap;}
+  .game-score-status{font-family:var(--font-mono); font-size:12px; color:var(--muted); white-space:nowrap;}
+  .game-score-status.done{color:var(--wine);}
   .fine-type-icon{width:22px; height:22px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
   .fine-type-icon svg{width:16px; height:16px; display:block;}
   .fine-row-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
@@ -787,7 +789,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.21';
+  const APP_VERSION = '1.1.22';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1439,10 +1441,12 @@
     main.finesBySeat = {};
     main.adHocFinesBySeat = {};
     main.roundsGivenBySeat = {};
+    main.gameScoresBySeat = {};
     for(const seatId of Object.keys(seatFines)){
       if(seatFines[seatId].finesBySeat) main.finesBySeat[seatId] = seatFines[seatId].finesBySeat;
       if(seatFines[seatId].adHocFinesBySeat) main.adHocFinesBySeat[seatId] = seatFines[seatId].adHocFinesBySeat;
       if(seatFines[seatId].roundsGivenBySeat) main.roundsGivenBySeat[seatId] = seatFines[seatId].roundsGivenBySeat;
+      if(seatFines[seatId].gameScoresBySeat) main.gameScoresBySeat[seatId] = seatFines[seatId].gameScoresBySeat;
     }
     return main;
   }
@@ -1452,7 +1456,7 @@
   // einfach ignoriert.
   async function saveEveningMainDoc(detail){
     assertNotAccessBlocked();
-    const { finesBySeat, adHocFinesBySeat, roundsGivenBySeat, ...mainFields } = detail;
+    const { finesBySeat, adHocFinesBySeat, roundsGivenBySeat, gameScoresBySeat, ...mainFields } = detail;
     await withTimeout(setDoc(eveningDocRef(detail.id), { value: JSON.stringify(mainFields) }), STORAGE_TIMEOUT_MS);
   }
 
@@ -1462,7 +1466,37 @@
   async function saveEveningSeatFines(eveningId, seatId, fines, adHocFines, roundsGiven){
     assertNotAccessBlocked();
     await withTimeout(runTransaction(db, async (tx)=>{
-      tx.set(eveningSeatDocRef(eveningId, seatId), { value: JSON.stringify({ finesBySeat: fines||{}, adHocFinesBySeat: adHocFines||[], roundsGivenBySeat: roundsGiven||{} }) });
+      const ref = eveningSeatDocRef(eveningId, seatId);
+      // gameScoresBySeat läuft über einen eigenen Save-Pfad (saveGameScoreForSeat) und darf hier
+      // nicht überschrieben werden - deshalb erst den Serverstand lesen und das Feld übernehmen,
+      // statt das Sitzplatz-Dokument blind mit nur den Strafen-Feldern zu ersetzen.
+      const snap = await tx.get(ref);
+      const serverData = snap.exists() ? JSON.parse(snap.data().value || '{}') : {};
+      tx.set(ref, { value: JSON.stringify({ finesBySeat: fines||{}, adHocFinesBySeat: adHocFines||[], roundsGivenBySeat: roundsGiven||{}, gameScoresBySeat: serverData.gameScoresBySeat||{} }) });
+    }), STORAGE_TIMEOUT_MS);
+  }
+
+  // Speichert EINEN Punktewert für EIN Spiel an EINEM Sitzplatz - im Gegensatz zu
+  // saveEveningSeatFines wird hier NICHT der komplette lokale Snapshot des Sitzplatz-Dokuments
+  // geschrieben, sondern innerhalb der Transaktion zuerst der aktuelle Serverstand gelesen und nur
+  // das gameScoresBySeat-Feld darin punktuell gemergt. Das schützt vor Race Conditions: tippt z.B.
+  // gleichzeitig jemand eine Strafe für denselben Sitzplatz ein (separater Save-Pfad über
+  // saveEveningSeatFines mit vollem tx.set), geht dieser Wert hier nicht verloren, weil wir nie
+  // blind überschreiben, sondern immer vom zuletzt bestätigten Serverstand aus weiterschreiben.
+  async function saveGameScoreForSeat(eveningId, seatId, gameId, points){
+    assertNotAccessBlocked();
+    await withTimeout(runTransaction(db, async (tx)=>{
+      const ref = eveningSeatDocRef(eveningId, seatId);
+      const snap = await tx.get(ref);
+      const serverData = snap.exists() ? JSON.parse(snap.data().value || '{}') : {};
+      const gameScores = { ...(serverData.gameScoresBySeat || {}) };
+      if(points===null || points===undefined){
+        delete gameScores[gameId];
+      } else {
+        gameScores[gameId] = points;
+      }
+      const merged = { ...serverData, gameScoresBySeat: gameScores };
+      tx.set(ref, { value: JSON.stringify(merged) });
     }), STORAGE_TIMEOUT_MS);
   }
 
@@ -2180,7 +2214,7 @@
     else if(state.view==='savingsPotDetail') goToFinanceManagement();
     else if(state.view==='financeAccountDetail') goToFinanceManagement();
     else if(state.view==='eventDetail') goBackFromEventDetail();
-    else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
+    else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail' || state.view==='gameScoreDetail'){ history.back(); }
     else goToMain();
   }
   function goBackFromHeader(){
@@ -3286,6 +3320,7 @@
 
   function historySignature(){
     if(state.view==='personFineDetail' && state.currentEveningDetail) return 'personFine:'+state.currentEveningDetail.id+':'+state.currentFineSeatId;
+    if(state.view==='gameScoreDetail' && state.currentEveningDetail) return 'gameScore:'+state.currentEveningDetail.id+':'+state.currentGameScoreId;
     if(state.view==='detail' && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
     if(state.view==='arrearsDetail') return 'arrearsDetail:'+encodeURIComponent(state.currentArrearsMemberId||'');
     if(state.view==='transactionDetail') return 'transactionDetail:'+(state.currentTransactionId||'new');
@@ -3349,6 +3384,7 @@
     else if(state.view==='new') body = viewNew();
     else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
     else if(state.view==='personFineDetail') body = viewPersonFineDetail();
+    else if(state.view==='gameScoreDetail') body = viewGameScoreDetail();
     // Read-Only-Banner (abgelaufener Free-Zeitraum) wird zentral hier vorangestellt, statt in
     // jeder viewXyz()-Funktion einzeln - so ist er auf jeder Seite sichtbar, unabhängig davon,
     // welche Aktion der Nutzer als Nächstes versucht. Ausnahme: auf der Abo-Seite selbst
@@ -4279,6 +4315,52 @@
   // Runden weiter unten in einem eigenen Bereich "Gegebene Runden" (nur noch informativ, ohne
   // Aktions-Button). Runden können hier nur als gegeben markiert, nicht gelöscht werden -
   // Löschen/Reduzieren läuft ausschließlich über die Strafen-Zähler auf der Personen-Detailseite.
+  // Zeigt alle Punkte- und Gruppenspiele des Clubs, alphabetisch sortiert und nach Kategorie
+  // gruppiert, mit Status pro Spiel für DIESEN Abend (erfasst/teilweise/offen). Geldspiele
+  // erscheinen hier bewusst nicht - die laufen weiterhin über die Geldstrafen (siehe
+  // showAddGeldstrafeModal), Punkte gibt es nur für Punkte-/Gruppenspiele.
+  function buildGamesTab(detail){
+    const relevantGames = (state.gamesCatalog||[]).filter(g=> g.type==='punktspiel' || g.type==='group');
+    if(relevantGames.length===0){
+      return `
+        <div class="card">
+          <h2 class="section-title">Spiele</h2>
+          <p class="empty-state">Noch keine Punkte- oder Gruppenspiele angelegt. Lege sie in der Spieleverwaltung an.</p>
+        </div>
+      `;
+    }
+    const occupiedCount = detail.seating.filter(s=>s.name && !s.invalid).length;
+    function statusHtml(game){
+      const scoredCount = detail.seating.filter(s=> s.name && !s.invalid && detail.gameScoresBySeat && detail.gameScoresBySeat[s.seatId] && detail.gameScoresBySeat[s.seatId][game.id]!==undefined).length;
+      if(scoredCount===0) return `<span class="game-score-status">—</span>`;
+      if(scoredCount>=occupiedCount) return `<span class="game-score-status done">✓ erfasst</span>`;
+      return `<span class="game-score-status">${scoredCount}/${occupiedCount}</span>`;
+    }
+    function gameRow(game){
+      return `<div class="member-row row-clickable" data-game-id="${game.id}">
+        <span class="fine-row-name">${escapeHtml(game.name)}</span>
+        <span class="row-actions">
+          ${statusHtml(game)}
+          <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        </span>
+      </div>`;
+    }
+    function categoryBlock(type, label){
+      const games = relevantGames.filter(g=>g.type===type).sort((a,b)=> a.name.localeCompare(b.name,'de'));
+      if(games.length===0) return '';
+      return `
+        <div class="card">
+          <h2 class="section-title">${label}</h2>
+          <div>${games.map(gameRow).join('')}</div>
+        </div>
+      `;
+    }
+    return `
+      ${categoryBlock('punktspiel','Punktespiele')}
+      ${categoryBlock('group','Gruppenspiele')}
+    `;
+  }
+
   function buildRoundsTab(detail){
     const entries = computeRoundEntries(detail);
     const closed = !!detail.closed || !canEditEvening(detail);
@@ -4463,6 +4545,12 @@
     render();
   }
 
+  function goToGameScoreDetail(gameId){
+    state.currentGameScoreId = gameId;
+    state.view = 'gameScoreDetail';
+    render();
+  }
+
   async function openFineDetailFromHistory(eveningId, seatId){
     renderLoading('Kegelabend wird geladen…');
     try{
@@ -4594,6 +4682,63 @@
         <div class="stat-total"><span>Gesamt (gerundet)</span><span>${fmtEuro(roundUpToFullEuro(total))}</span></div>
       </div>
     `;
+  }
+
+  // Punkte-Erfassungsseite für EIN Spiel über alle anwesenden Mitglieder dieses Abends. Speichert
+  // direkt bei jeder Änderung (wie die Strafen-Seite), kein separater Speichern-Button. Reihenfolge
+  // folgt der Sitzordnung (detail.seating ist bereits in dieser Reihenfolge angelegt), nicht
+  // alphabetisch - das entspricht der Reihenfolge, in der am Tisch abgefragt wird.
+  function viewGameScoreDetail(){
+    const detail = state.currentEveningDetail;
+    const gameId = state.currentGameScoreId;
+    const game = (state.gamesCatalog||[]).find(g=>g.id===gameId);
+    const closed = !!detail.closed || !canEditEvening(detail);
+    const occupiedSeats = detail.seating.filter(s=>s.name && !s.invalid);
+    if(!game){
+      return `<div class="card"><p class="empty-state">Dieses Spiel wurde nicht gefunden.</p></div>`;
+    }
+    if(occupiedSeats.length===0){
+      return `<div class="card"><p class="empty-state">Noch niemand anwesend, für den Punkte erfasst werden könnten.</p></div>`;
+    }
+    function scoreRowHtml(seat){
+      const scores = (detail.gameScoresBySeat && detail.gameScoresBySeat[seat.seatId]) || {};
+      const points = scores[gameId] || 0;
+      return `
+        <div class="fine-detail-row${closed?' readonly':''}" data-seat-id="${seat.seatId}">
+          <span class="fine-detail-name">${escapeHtml(seat.name)}</span>
+          <span class="fine-detail-controls">
+            ${closed ? '' : `<button type="button" class="fine-minus-btn game-score-minus-btn" data-seat-id="${seat.seatId}" aria-label="Um 1 verringern">−</button>`}
+            <span class="fine-detail-count">${points}</span>
+          </span>
+        </div>
+      `;
+    }
+    return `
+      <div class="card">
+        <h2 class="section-title">${escapeHtml(gameTypeLabel(game.type))}</h2>
+        <div id="game-score-list">${occupiedSeats.map(scoreRowHtml).join('')}</div>
+        ${closed ? '' : `<p class="hint">Zeile antippen für +1, − zum Verringern.</p>`}
+      </div>
+    `;
+  }
+
+  // Ändert den Punktewert eines Spiels für einen Sitzplatz um delta (nie unter 0) - aktualisiert
+  // zuerst den lokalen State und rendert sofort, speichert danach im Hintergrund über den
+  // race-condition-sicheren Save-Pfad saveGameScoreForSeat (siehe dort).
+  async function adjustGameScore(seatId, delta){
+    const detail = state.currentEveningDetail;
+    const gameId = state.currentGameScoreId;
+    if(!detail.gameScoresBySeat) detail.gameScoresBySeat = {};
+    if(!detail.gameScoresBySeat[seatId]) detail.gameScoresBySeat[seatId] = {};
+    const current = detail.gameScoresBySeat[seatId][gameId] || 0;
+    const newValue = Math.max(0, current + delta);
+    detail.gameScoresBySeat[seatId][gameId] = newValue;
+    render();
+    try{
+      await saveGameScoreForSeat(detail.id, seatId, gameId, newValue);
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', ()=>goToGameScoreDetail(gameId));
+    }
   }
 
   // Speichert die Strafen für einen bestimmten Sitzplatz eines Abends und hält gleichzeitig die
@@ -4956,6 +5101,10 @@
     if(detail.roundsGivenBySeat && detail.roundsGivenBySeat[oldSeatId]){
       detail.roundsGivenBySeat[newSeatId] = detail.roundsGivenBySeat[oldSeatId];
       delete detail.roundsGivenBySeat[oldSeatId];
+    }
+    if(detail.gameScoresBySeat && detail.gameScoresBySeat[oldSeatId]){
+      detail.gameScoresBySeat[newSeatId] = detail.gameScoresBySeat[oldSeatId];
+      delete detail.gameScoresBySeat[oldSeatId];
     }
     return newSeatId;
   }
@@ -5581,6 +5730,10 @@
     else if(state.view==='new') title = 'Neuer Kegelabend';
     else if(state.view==='detail' && state.currentEveningDetail) title = `Kegelabend vom ${formatDateShortDE(state.currentEveningDetail.date)}`;
     else if(state.view==='personFineDetail') title = `Strafen von ${state.currentFineName || ''}`;
+    else if(state.view==='gameScoreDetail'){
+      const game = (state.gamesCatalog||[]).find(g=>g.id===state.currentGameScoreId);
+      title = game ? game.name : 'Punkte erfassen';
+    }
 
     const isClosed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
     // Bearbeitungsrecht für DIESEN Abend (siehe canEditEvening()) - separat von isClosed, da ein
@@ -5859,10 +6012,7 @@
     }
     if(state.eveningTab==='spiele'){
       return `
-        <div class="card">
-          <h2 class="section-title">Spiele</h2>
-          <p class="empty-state">Spiele-Verwaltung für den Abend folgt in Kürze.</p>
-        </div>
+        ${buildGamesTab(detail)}
         ${buildDeleteModal(detail)}
       `;
     }
@@ -5927,6 +6077,7 @@
     else if(state.view==='new') attachNewListeners();
     else if(state.view==='detail') attachDetailListeners();
     else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
+    else if(state.view==='gameScoreDetail') attachGameScoreDetailListeners();
 
     applyReadOnlyLockToView();
   }
@@ -8188,6 +8339,11 @@
     });
     const tabSpieleBtn = document.getElementById('tab-spiele-btn');
     if(tabSpieleBtn) tabSpieleBtn.addEventListener('click', ()=>{ state.eveningTab='spiele'; render(); });
+    if(state.eveningTab==='spiele'){
+      document.querySelectorAll('[data-game-id]').forEach(row=>{
+        row.addEventListener('click', ()=>{ goToGameScoreDetail(row.dataset.gameId); });
+      });
+    }
     const notesTextarea = document.getElementById('evening-notes-textarea');
     if(notesTextarea && !notesTextarea.readOnly){
       let saveTimer = null;
@@ -8277,6 +8433,25 @@
     });
     const noBtn = document.getElementById('confirm-delete-evening-no');
     if(noBtn) noBtn.addEventListener('click', ()=>{ state.confirmDeleteEveningId=null; render(); });
+  }
+
+  function attachGameScoreDetailListeners(){
+    const detail = state.currentEveningDetail;
+    const closed = !!(detail && detail.closed) || !canEditEvening(detail);
+    if(!closed){
+      document.querySelectorAll('#game-score-list .fine-detail-row').forEach(row=>{
+        row.addEventListener('click', (e)=>{
+          if(e.target.closest('.game-score-minus-btn')) return;
+          adjustGameScore(row.dataset.seatId, 1);
+        });
+      });
+      document.querySelectorAll('.game-score-minus-btn').forEach(btn=>{
+        btn.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          adjustGameScore(btn.dataset.seatId, -1);
+        });
+      });
+    }
   }
 
   function attachPersonFineDetailListeners(){
