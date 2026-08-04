@@ -62,6 +62,7 @@
     box-sizing:border-box;
   }
   .header-brand{display:flex; flex-direction:column; gap:2px; padding:0; margin:0; text-align:left;}
+  .header-brand-name{font-family:var(--font-display); font-size:22px; font-weight:700; color:#fff; margin:0; letter-spacing:-0.01em;}
   .brand-logo{height:46px; width:auto; display:block;}
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
   .header-back-btn{background:none; border:none; padding:6px; margin:0 0 0 -6px; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
@@ -540,9 +541,20 @@
 
   .seating-diagram{width:100%; height:auto; display:block; max-width:520px; margin:0 auto;}
   .seating-template-preview{max-width:280px; margin:4px auto 18px; padding:12px; background:var(--surface); border:1px solid var(--muted); border-radius:8px;}
-  .club-logo-row{display:flex; align-items:center; gap:16px; margin-bottom:18px;}
-  .club-logo-preview{width:72px; height:72px; object-fit:contain; border:1px solid var(--muted); border-radius:8px; background:var(--surface); flex-shrink:0;}
-  .club-logo-actions{display:flex; flex-direction:column; gap:6px;}
+  .club-logo-row{display:flex; align-items:center; gap:18px; margin-bottom:6px;}
+  .club-logo-avatar{
+    width:88px; height:88px; border-radius:16px; flex-shrink:0; overflow:hidden;
+    background:var(--wood); display:flex; align-items:center; justify-content:center;
+  }
+  .club-logo-img{width:100%; height:100%; object-fit:cover; display:block;}
+  .club-logo-initials{font-family:var(--font-display); font-size:28px; font-weight:700; color:#fff; letter-spacing:0.02em;}
+  .club-logo-actions{display:flex; flex-direction:column; align-items:flex-start; gap:8px;}
+  .btn-logo-action{
+    background:var(--surface); color:var(--ink); border:2px solid var(--ink); padding:8px 16px;
+    font-family:var(--font-body); font-weight:700; font-size:13px; border-radius:8px; cursor:pointer;
+  }
+  .btn-logo-action:hover{background:var(--bg);}
+  .btn-logo-action:disabled{opacity:0.45; cursor:not-allowed;}
   .seating-template-preview .seating-diagram{max-width:100%;}
   @media (prefers-reduced-motion:no-preference){
     .reveal-group{animation:reveal .35s ease backwards;}
@@ -710,6 +722,14 @@
   let CURRENT_CLUB_DATA = null;
   const CLUB_NAME_FALLBACK = 'Kegelclub';
   function clubDisplayName(){ return (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.name) || CLUB_NAME_FALLBACK; }
+  // Initialen aus dem Clubnamen (max. 2 Buchstaben) als Avatar-Fallback, solange kein Logo
+  // hochgeladen ist - übliches Muster (Slack, Notion, ...) statt eines generischen Platzhalterbilds.
+  function clubInitials(name){
+    const parts = String(name||'').trim().split(/\s+/).filter(Boolean);
+    if(parts.length===0) return '?';
+    if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
+    return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
+  }
   function clubRef(){ return doc(db, 'clubs', CURRENT_CLUB_ID); }
   function clubMembersCollection(){ return collection(db, 'clubs', CURRENT_CLUB_ID, 'members'); }
   function clubMemberDocRef(id){ return doc(db, 'clubs', CURRENT_CLUB_ID, 'members', id); }
@@ -764,7 +784,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.5';
+  const APP_VERSION = '1.1.6';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2594,15 +2614,20 @@
         <input type="date" id="club-founded" value="${club.foundedOn || ''}"${disabledAttr}>
         <label>Logo</label>
         <div class="club-logo-row">
-          <img src="${club.logoUrl || LOGO_DATA_URI}" alt="Clublogo" class="club-logo-preview" id="club-logo-preview">
+          <div class="club-logo-avatar" id="club-logo-avatar">
+            ${club.logoUrl
+              ? `<img src="${escapeHtml(club.logoUrl)}" alt="Clublogo" class="club-logo-img" id="club-logo-preview">`
+              : `<span class="club-logo-initials" id="club-logo-preview">${escapeHtml(clubInitials(club.name))}</span>`}
+          </div>
           ${readOnly ? '' : `
             <div class="club-logo-actions">
-              <button type="button" class="btn-secondary" id="club-logo-pick-btn">Bild auswählen</button>
+              <button type="button" class="btn-logo-action" id="club-logo-pick-btn">${club.logoUrl ? 'Ändern' : 'Bild hochladen'}</button>
+              ${club.logoUrl ? `<button type="button" class="btn-danger-text" id="club-logo-remove-btn">Entfernen</button>` : ''}
               <input type="file" id="club-logo-file-input" accept="image/*" hidden>
-              <p class="form-error" id="club-logo-error"></p>
             </div>
           `}
         </div>
+        <p class="form-error" id="club-logo-error"></p>
       </div>
       <div class="card">
         <h2 class="section-title">Sitzplan</h2>
@@ -5425,13 +5450,18 @@
     if(state.view==='main'){
       // Keine Klick-Funktion mehr (Logo wurde bisher als Link zurück zur Übersicht
       // dargestellt - da es nur auf der Übersicht selbst angezeigt wird, hatte der Klick
-      // ohnehin keinen Effekt). sr-only-Titel mit Clubnamen bleibt für Screenreader erhalten.
-      const logoSrc = (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.logoUrl) || LOGO_DATA_URI;
+      // ohnehin keinen Effekt). Ohne hochgeladenes Logo wird der Clubname als Text angezeigt
+      // (kein generisches Platzhalterbild mehr) - der sr-only-Titel bleibt daneben trotzdem für
+      // Screenreader erhalten, auch wenn der Name bei fehlendem Logo sichtbar doppelt vorkäme;
+      // das ist ok, da er dann optisch identisch mit dem sichtbaren Text ist.
+      const logoUrl = CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.logoUrl;
+      const brandInnerHtml = logoUrl
+        ? `<h1 class="sr-only">${escapeHtml(clubDisplayName())}</h1><img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(clubDisplayName())} Kegelclub" class="brand-logo">`
+        : `<h1 class="header-brand-name">${escapeHtml(clubDisplayName())}</h1>`;
       return `<header class="app-header">
         <div class="app-header-top">
           <div class="header-brand">
-            <h1 class="sr-only">${clubDisplayName()}</h1>
-            <img src="${logoSrc}" alt="${clubDisplayName()} Kegelclub" class="brand-logo">
+            ${brandInnerHtml}
           </div>
         </div>
       </header>`;
@@ -5896,13 +5926,15 @@
       document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
     });
 
-    // Logo-Upload: lädt sofort beim Auswählen hoch (kein Zwischenstand, kein separater
-    // Speichern-Schritt nötig) - anders als die übrigen Felder, die erst per "Speichern"-Button
-    // committed werden. Vereinfacht die Handhabung, da es hier kein sinnvolles "Abbrechen" gibt
-    // (die Datei ist ausgewählt oder nicht) und ein Logo-Wechsel keine Validierung braucht.
+    // Logo-Upload/-Entfernen: wirkt sofort beim Auswählen bzw. Klick (kein Zwischenstand, kein
+    // separater Speichern-Schritt) - anders als die übrigen Felder, die erst per
+    // "Speichern"-Button committed werden. Nach Upload/Entfernen wird die ganze Seite neu
+    // gerendert (render()), da sich dabei sowohl der Avatar-Inhalt (Bild <-> Initialen) als
+    // auch die Buttons (Ändern/Entfernen erscheint erst, wenn ein Logo gesetzt ist) ändern -
+    // gezieltes DOM-Update wäre hier fehleranfälliger als ein einfacher Re-Render.
     const logoPickBtn = document.getElementById('club-logo-pick-btn');
+    const logoRemoveBtn = document.getElementById('club-logo-remove-btn');
     const logoFileInput = document.getElementById('club-logo-file-input');
-    const logoPreview = document.getElementById('club-logo-preview');
     const logoErrEl = document.getElementById('club-logo-error');
     if(logoPickBtn && logoFileInput){
       logoPickBtn.addEventListener('click', ()=> logoFileInput.click());
@@ -5917,13 +5949,28 @@
           await saveClub({ logoUrl });
           CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), logoUrl };
           markFetched('clubData');
-          if(logoPreview) logoPreview.src = logoUrl;
+          render();
         }catch(e){
-          if(logoErrEl) logoErrEl.textContent = 'Logo konnte nicht hochgeladen werden. Bitte erneut versuchen.';
-        }finally{
           logoPickBtn.disabled = false;
-          logoPickBtn.textContent = 'Bild auswählen';
+          logoPickBtn.textContent = (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.logoUrl) ? 'Ändern' : 'Bild hochladen';
           logoFileInput.value = '';
+          if(logoErrEl) logoErrEl.textContent = 'Logo konnte nicht hochgeladen werden. Bitte erneut versuchen.';
+        }
+      });
+    }
+    if(logoRemoveBtn){
+      logoRemoveBtn.addEventListener('click', async ()=>{
+        if(logoErrEl) logoErrEl.textContent = '';
+        logoRemoveBtn.disabled = true;
+        try{
+          await saveClub({ logoUrl: deleteField() });
+          CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}) };
+          delete CURRENT_CLUB_DATA.logoUrl;
+          markFetched('clubData');
+          render();
+        }catch(e){
+          logoRemoveBtn.disabled = false;
+          if(logoErrEl) logoErrEl.textContent = 'Logo konnte nicht entfernt werden. Bitte erneut versuchen.';
         }
       });
     }
