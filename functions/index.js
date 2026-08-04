@@ -1284,10 +1284,12 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
 
   const adminAuth = getAuth();
   let userRecord;
+  let accountAlreadyExisted = true;
   try {
     userRecord = await adminAuth.getUserByEmail(email);
   } catch (e) {
     // Nutzer existiert noch nicht -> Account anlegen (ohne Passwort, das setzt das Mitglied selbst).
+    accountAlreadyExisted = false;
     userRecord = await adminAuth.createUser({ email, emailVerified: false });
   }
 
@@ -1329,13 +1331,18 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
     });
   }
 
-  const resetLink = await adminAuth.generatePasswordResetLink(email, {
-    url: HOSTING_URL,
-    handleCodeInApp: false,
-  });
-
   const resend = new Resend(resendApiKey.value());
-  const html = `
+  let html;
+  let subject;
+  if (accountAlreadyExisted) {
+    html = buildAddedToClubEmailHtml(name, clubName);
+    subject = `Du wurdest zu ${clubName} hinzugefügt`;
+  } else {
+    const resetLink = await adminAuth.generatePasswordResetLink(email, {
+      url: HOSTING_URL,
+      handleCodeInApp: false,
+    });
+    html = `
     <div style="font-family:sans-serif; color:#161616; max-width:480px;">
       <p>Hallo ${escapeHtml(name || '')},</p>
       <p>du wurdest eingeladen, dich in der Kegelbuch-App von ${escapeHtml(clubName)} anzumelden.</p>
@@ -1348,12 +1355,14 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
       <p>Kegelgruß,<br>${escapeHtml(clubName)}</p>
     </div>
   `;
+    subject = `Einladung: ${clubName} Kegelbuch`;
+  }
 
   try {
     await resend.emails.send({
       from: FROM_ADDRESS,
       to: email,
-      subject: `Einladung: ${clubName} Kegelbuch`,
+      subject,
       html,
     });
   } catch (err) {
@@ -1378,6 +1387,19 @@ function slugifyClubName(name) {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // übrige Akzente entfernen
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'club';
+}
+
+// Für Accounts, die bereits existieren (z.B. schon Mitglied in einem anderen Club) - kein
+// Passwort-Link, da bereits ein Passwort gesetzt ist. Reine Info-Mail.
+function buildAddedToClubEmailHtml(name, clubName) {
+  return `
+    <div style="font-family:sans-serif; color:#161616; max-width:480px;">
+      <p>Hallo ${escapeHtml(name || '')},</p>
+      <p>du wurdest dem Kegelclub "${escapeHtml(clubName)}" hinzugefügt.</p>
+      <p>Du kannst dich mit deiner bestehenden E-Mail-Adresse und deinem bisherigen Passwort in der App anmelden und den Club dort auswählen.</p>
+      <p>Kegelgruß,<br>${escapeHtml(clubName)}</p>
+    </div>
+  `;
 }
 
 function buildClubInviteEmailHtml(name, clubName) {
@@ -1451,9 +1473,11 @@ exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
   // (gleiche Logik wie in inviteMember, hier eigenständig gehalten - siehe Notiz oben).
   const adminAuth = getAuth();
   let userRecord;
+  let accountAlreadyExisted = true;
   try {
     userRecord = await adminAuth.getUserByEmail(member.email);
   } catch (e) {
+    accountAlreadyExisted = false;
     userRecord = await adminAuth.createUser({ email: member.email, emailVerified: false });
   }
   const existingClaims = userRecord.customClaims || {};
@@ -1466,18 +1490,25 @@ exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
     });
   }
 
-  const resetLink = await adminAuth.generatePasswordResetLink(member.email, {
-    url: HOSTING_URL,
-    handleCodeInApp: false,
-  });
-  const html = buildClubInviteEmailHtml(member.firstName, clubData.name).replace('RESET_LINK_PLACEHOLDER', resetLink);
+  let html;
+  if (accountAlreadyExisted) {
+    html = buildAddedToClubEmailHtml(member.firstName, clubData.name);
+  } else {
+    const resetLink = await adminAuth.generatePasswordResetLink(member.email, {
+      url: HOSTING_URL,
+      handleCodeInApp: false,
+    });
+    html = buildClubInviteEmailHtml(member.firstName, clubData.name).replace('RESET_LINK_PLACEHOLDER', resetLink);
+  }
 
   const resend = new Resend(resendApiKey.value());
   try {
     await resend.emails.send({
       from: FROM_ADDRESS,
       to: member.email,
-      subject: `Dein neuer Kegelclub "${clubData.name}" wurde angelegt`,
+      subject: accountAlreadyExisted
+        ? `Du wurdest zu ${clubData.name} hinzugefügt`
+        : `Dein neuer Kegelclub "${clubData.name}" wurde angelegt`,
       html,
     });
   } catch (err) {
