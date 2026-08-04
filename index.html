@@ -516,6 +516,9 @@
   .round-mark-given-btn svg{width:18px; height:18px;}
   .round-mark-given-btn:hover{border-color:var(--felt); color:var(--felt);}
   .round-mark-given-btn.confirmed{background:var(--felt); border-color:var(--felt); color:#fff;}
+  .round-undo-given-btn{flex-shrink:0; width:30px; height:30px; border-radius:50%; border:1.5px solid var(--line); background:var(--surface); color:var(--muted); display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; transition:background .2s ease, border-color .2s ease, color .2s ease;}
+  .round-undo-given-btn svg{width:15px; height:15px;}
+  .round-undo-given-btn:hover{border-color:var(--wine); color:var(--wine);}
   .round-given-check{flex-shrink:0; width:22px; height:22px; color:var(--muted);}
   .rounds-given-toggle{display:flex; align-items:center; justify-content:space-between; width:100%; background:none; border:none; padding:14px 2px 8px; cursor:pointer; font-family:var(--font-body); border-top:1px solid var(--line); margin-top:4px;}
   .rounds-given-toggle-label{font-weight:700; color:var(--muted); font-size:14px;}
@@ -747,7 +750,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.122';
+  const APP_VERSION = '1.0.123';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4128,7 +4131,7 @@
             <span class="round-entry-name">${escapeHtml(e.name)}</span>
             <span class="round-entry-badge">${escapeHtml(e.fineName)}</span>
           </span>
-          <svg class="round-given-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
+          ${closed ? `<svg class="round-given-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>` : `<button type="button" class="round-undo-given-btn" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" aria-label="Rückgängig machen" title="Rückgängig machen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>`}
         </div>
       `;
     }
@@ -4161,6 +4164,18 @@
     if(!detail.roundsGivenBySeat[seatId]) detail.roundsGivenBySeat[seatId] = {};
     const current = detail.roundsGivenBySeat[seatId][fineId] || [];
     if(!current.includes(instanceIndex)) detail.roundsGivenBySeat[seatId][fineId] = [...current, instanceIndex];
+    render();
+    await saveEveningSeatFinesAndIndex(detail, seatId);
+  }
+
+  // Macht eine als "gegeben" markierte Runden-Instanz wieder rückgängig (z.B. bei Fehlklick):
+  // entfernt den Index aus roundsGivenBySeat[seatId][fineId], die Instanz landet danach wieder
+  // in den offenen Runden.
+  async function unmarkRoundGiven(seatId, fineId, instanceIndex){
+    const detail = state.currentEveningDetail;
+    if(!detail.roundsGivenBySeat || !detail.roundsGivenBySeat[seatId]) return;
+    const current = detail.roundsGivenBySeat[seatId][fineId] || [];
+    detail.roundsGivenBySeat[seatId][fineId] = current.filter(i=>i!==instanceIndex);
     render();
     await saveEveningSeatFinesAndIndex(detail, seatId);
   }
@@ -5658,6 +5673,7 @@
     // Runden) - NICHT pauschal alle .btn-secondary, da darunter auch reine "Abbrechen"/
     // "Schließen"-Buttons in Modals sind, die weiterhin bedienbar bleiben müssen.
     document.querySelectorAll('#app .round-mark-given-btn').forEach(btn=>{ btn.disabled = true; });
+    document.querySelectorAll('#app .round-undo-given-btn').forEach(btn=>{ btn.disabled = true; });
     // RSVP-Buttons (Zusage/Absage/Vielleicht zu Terminen) schreiben direkt über rsvpsStore.save(),
     // sind aber weder .btn-primary noch <input> - eigene Klasse, daher separat behandelt.
     document.querySelectorAll('#app .rsvp-btn').forEach(btn=>{ btn.disabled = true; });
@@ -7649,6 +7665,15 @@
           if(row) row.classList.add('fading-out');
           setTimeout(()=>{ markRoundGiven(seatId, fineId, instanceIndex); }, 350);
         }, 300);
+      });
+    });
+    document.querySelectorAll('.round-undo-given-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        if(btn.disabled) return;
+        const { seatId, fineId } = btn.dataset;
+        const instanceIndex = parseInt(btn.dataset.instanceIndex, 10);
+        btn.disabled = true;
+        unmarkRoundGiven(seatId, fineId, instanceIndex);
       });
     });
     const roundsGivenToggleBtn = document.getElementById('rounds-given-toggle-btn');
