@@ -730,7 +730,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.111';
+  const APP_VERSION = '1.0.112';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -909,6 +909,7 @@
     // Token geladen ist (nie versehentlich zu viele Rechte in der kurzen Ladezeit anzeigen).
     currentUserRole: 'Mitglied',
     currentRecurringId: null,
+    currentSavingsPotId: null,
     currentFineId: null,
     currentGameId: null,
     currentMemberStats: {},
@@ -1823,6 +1824,11 @@
     state.view = 'recurringDetail';
     render();
   }
+  function goToSavingsPotDetail(existingPot){
+    state.currentSavingsPotId = existingPot ? existingPot.id : null;
+    state.view = 'savingsPotDetail';
+    render();
+  }
   async function goToFinesManagement(){
     state.view = 'finesManagement';
     if(!isFresh('finesCatalog')) renderLoading('Strafen werden geladen…');
@@ -1954,6 +1960,7 @@
     else if(state.view==='fineDetail') goToFinesManagement();
     else if(state.view==='gameDetail') goToGamesManagement();
     else if(state.view==='recurringDetail') goToFinanceManagement();
+    else if(state.view==='savingsPotDetail') goToFinanceManagement();
     else if(state.view==='eventDetail') goBackFromEventDetail();
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
@@ -2281,6 +2288,25 @@
     `;
   }
 
+  function viewSavingsPotDetail(){
+    const p = state.financeSavingsPots.find(x=>x.id===state.currentSavingsPotId);
+    const isEdit = !!p;
+    return `
+      <div class="card">
+        <label for="pot-name">Bezeichnung</label>
+        <input type="text" id="pot-name" placeholder="z. B. Weihnachtsfeier" value="${isEdit?escapeHtml(p.name):''}">
+        <label for="pot-target">Sparziel (€)</label>
+        <input type="number" id="pot-target" min="0" step="0.01" placeholder="0,00" value="${isEdit?p.targetAmount.toFixed(2):''}">
+        <label for="pot-date">Zieldatum</label>
+        <input type="date" id="pot-date" value="${isEdit?p.targetDate:''}">
+        <label for="pot-start">Startbetrag (€, optional)</label>
+        <input type="number" id="pot-start" min="0" step="0.01" placeholder="0,00" value="${(isEdit && p.startAmount)?p.startAmount.toFixed(2):''}">
+        <p class="form-error" id="pot-detail-error"></p>
+        <button type="button" class="btn-primary" id="save-pot-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+      </div>
+    `;
+  }
+
   // Plan-Katalog: Anzeigename, Preis und Funktionsumfang je Plan. Bewusst zentral gehalten - wird
   // sowohl für die kompakte Statusanzeige in der Clubverwaltung als auch für die volle
   // Plan-Auswahlseite (viewSubscriptionPlans()) verwendet, damit Preise/Features nur an einer
@@ -2553,16 +2579,13 @@
   }
 
   function savingsPotRowHtml(p){
-    return `<div class="member-row-full" data-id="${p.id}">
+    return `<div class="member-row-full member-row-clickable" data-id="${p.id}">
       <div class="member-row">
         <span class="fine-row-info">
           <span class="fine-row-name">${escapeHtml(p.name)}</span>
           <span class="transaction-meta">Ziel: ${fmtEuro(p.targetAmount)} bis ${formatDateDE(p.targetDate)}</span>
         </span>
-        <span class="row-actions">
-          <button type="button" class="icon-btn edit-pot-btn" data-id="${p.id}" aria-label="Bearbeiten">✎</button>
-          <button type="button" class="icon-btn delete-pot-btn" data-id="${p.id}" aria-label="Löschen">✕</button>
-        </span>
+        <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </div>
     </div>`;
   }
@@ -2994,6 +3017,7 @@
     if(state.view==='transactionDetail') return 'transactionDetail:'+(state.currentTransactionId||'new');
     if(state.view==='memberDetail') return 'memberDetail:'+(state.currentMemberId||'new');
     if(state.view==='recurringDetail') return 'recurringDetail:'+(state.currentRecurringId||'new');
+    if(state.view==='savingsPotDetail') return 'savingsPotDetail:'+(state.currentSavingsPotId||'new');
     if(state.view==='fineDetail') return 'fineDetail:'+(state.currentFineId||'new');
     if(state.view==='gameDetail') return 'gameDetail:'+(state.currentGameId||'new');
     if(state.view==='eventDetail') return 'eventDetail:'+(state.calendarEditingOccurrence ? state.calendarEditingOccurrence.seriesId+':'+state.calendarEditingOccurrence.occurrenceDate : 'new');
@@ -3039,6 +3063,7 @@
     else if(state.view==='gamesManagement') body = viewGamesManagement();
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='recurringDetail') body = viewRecurringDetail();
+    else if(state.view==='savingsPotDetail') body = viewSavingsPotDetail();
     else if(state.view==='finance') body = viewFinance();
     else if(state.view==='calendar') body = viewCalendar();
     else if(state.view==='eventManagement') body = viewEventManagement();
@@ -3069,7 +3094,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-fine-overflow-menu','header-fine-overflow-btn'], ['header-game-overflow-menu','header-game-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-pot-overflow-menu','header-pot-overflow-btn'], ['header-fine-overflow-menu','header-fine-overflow-btn'], ['header-game-overflow-menu','header-game-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -4883,6 +4908,7 @@
     else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='recurringDetail') title = state.currentRecurringId ? 'Buchung bearbeiten' : 'Monatliche Buchung hinzufügen';
+    else if(state.view==='savingsPotDetail') title = state.currentSavingsPotId ? 'Spartopf bearbeiten' : 'Spartopf hinzufügen';
     else if(state.view==='finance') title = 'Finanzen';
     else if(state.view==='calendar') title = 'Kalender';
     else if(state.view==='eventManagement') title = 'Terminverwaltung';
@@ -5092,6 +5118,17 @@
       </div>
     ` : '';
 
+    const savingsPotOverflowHtml = (state.view==='savingsPotDetail' && state.currentSavingsPotId) ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-pot-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-pot-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-pot-btn">Spartopf löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const fineOverflowHtml = (state.view==='fineDetail' && state.currentFineId && canManageMembers()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-fine-overflow-btn" aria-label="Weitere Optionen">
@@ -5132,7 +5169,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${fineOverflowHtml}${gameOverflowHtml}${calOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${savingsPotOverflowHtml}${fineOverflowHtml}${gameOverflowHtml}${calOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -5214,6 +5251,7 @@
     else if(state.view==='gamesManagement') attachGamesManagementListeners();
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
     else if(state.view==='recurringDetail') attachRecurringDetailListeners();
+    else if(state.view==='savingsPotDetail') attachSavingsPotDetailListeners();
     else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='calendar') attachCalendarListeners();
     else if(state.view==='eventManagement') attachEventManagementListeners();
@@ -5634,6 +5672,51 @@
     });
   }
 
+  function attachSavingsPotDetailListeners(){
+    const p = state.financeSavingsPots.find(x=>x.id===state.currentSavingsPotId);
+
+    const overflowBtn = document.getElementById('header-pot-overflow-btn');
+    const overflowMenu = document.getElementById('header-pot-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
+    }
+    const deleteBtn = document.getElementById('header-delete-pot-btn');
+    if(deleteBtn) deleteBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      if(p) showDeleteSavingsPotModal(p);
+    });
+
+    const saveBtn = document.getElementById('save-pot-detail-btn');
+    if(!saveBtn) return;
+    saveBtn.addEventListener('click', async ()=>{
+      const errEl = document.getElementById('pot-detail-error');
+      const name = document.getElementById('pot-name').value.trim();
+      const targetRaw = document.getElementById('pot-target').value.replace(',', '.');
+      const targetAmount = parseFloat(targetRaw);
+      const targetDate = document.getElementById('pot-date').value;
+      const startRaw = document.getElementById('pot-start').value.replace(',', '.');
+      const startAmount = startRaw==='' ? 0 : parseFloat(startRaw);
+
+      if(!name){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+      if(isNaN(targetAmount) || targetAmount<=0){ errEl.textContent='Bitte ein gültiges Sparziel angeben.'; return; }
+      if(!targetDate){ errEl.textContent='Bitte ein Zieldatum angeben.'; return; }
+      if(isNaN(startAmount) || startAmount<0){ errEl.textContent='Bitte einen gültigen Startbetrag angeben.'; return; }
+
+      saveBtn.disabled = true; saveBtn.textContent = p ? 'Speichert…' : 'Wird hinzugefügt…';
+
+      if(p){
+        p.name=name; p.targetAmount=Math.round(targetAmount*100)/100; p.targetDate=targetDate; p.startAmount=Math.round(startAmount*100)/100;
+      }else{
+        state.financeSavingsPots.push({id:uid('pot'), name, targetAmount:Math.round(targetAmount*100)/100, targetDate, startAmount:Math.round(startAmount*100)/100});
+      }
+      await setClubJSON('finance-savings-pots', state.financeSavingsPots);
+      goToFinanceManagement();
+    });
+  }
+
   function attachFinesManagementListeners(){
     document.querySelectorAll('#fines-list-container .row-clickable[data-id], #runden-list-container .row-clickable[data-id]').forEach(row=>{
       row.addEventListener('click', (e)=>{
@@ -5810,20 +5893,15 @@
     });
     const openAddRecurringBtn = document.getElementById('header-add-recurring-btn');
     if(openAddRecurringBtn) openAddRecurringBtn.addEventListener('click', ()=>goToRecurringDetail(null));
-    document.querySelectorAll('.edit-pot-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const p = state.financeSavingsPots.find(x=>x.id===b.dataset.id);
-        if(p) showSavingsPotFormModal(p);
-      });
-    });
-    document.querySelectorAll('.delete-pot-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const p = state.financeSavingsPots.find(x=>x.id===b.dataset.id);
-        if(p) showDeleteSavingsPotModal(p);
+    document.querySelectorAll('.member-row-clickable[data-id]').forEach(row=>{
+      if(!row.closest('#finance-pots-list-container')) return;
+      row.addEventListener('click', ()=>{
+        const p = state.financeSavingsPots.find(x=>x.id===row.dataset.id);
+        if(p) goToSavingsPotDetail(p);
       });
     });
     const openAddPotBtn = document.getElementById('header-add-pot-btn');
-    if(openAddPotBtn) openAddPotBtn.addEventListener('click', ()=>showSavingsPotFormModal());
+    if(openAddPotBtn) openAddPotBtn.addEventListener('click', ()=>goToSavingsPotDetail(null));
   }
 
   function attachCalendarListeners(){
@@ -6275,56 +6353,7 @@
       state.financeSavingsPots = state.financeSavingsPots.filter(x=>x.id!==p.id);
       await setClubJSON('finance-savings-pots', state.financeSavingsPots);
       closeGenericModal();
-      render();
-    });
-  }
-
-  function showSavingsPotFormModal(existingPot){
-    const isEdit = !!existingPot;
-    showModal(`
-      <h3>${isEdit ? 'Spartopf bearbeiten' : 'Spartopf hinzufügen'}</h3>
-      <label for="new-pot-name">Bezeichnung</label>
-      <input type="text" id="new-pot-name" placeholder="z. B. Weihnachtsfeier" value="${isEdit?escapeHtml(existingPot.name):''}">
-      <label for="new-pot-target">Sparziel (€)</label>
-      <input type="number" id="new-pot-target" min="0" step="0.01" placeholder="0,00" value="${isEdit?existingPot.targetAmount.toFixed(2):''}">
-      <label for="new-pot-date">Zieldatum</label>
-      <input type="date" id="new-pot-date" value="${isEdit?existingPot.targetDate:''}">
-      <label for="new-pot-start">Startbetrag (€, optional)</label>
-      <input type="number" id="new-pot-start" min="0" step="0.01" placeholder="0,00" value="${(isEdit && existingPot.startAmount)?existingPot.startAmount.toFixed(2):''}">
-      <p class="form-error" id="pot-form-error"></p>
-      <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="save-pot-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
-        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
-      </div>
-    `);
-    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    document.getElementById('new-pot-name').focus();
-    document.getElementById('save-pot-btn').addEventListener('click', async ()=>{
-      const errEl = document.getElementById('pot-form-error');
-      const name = document.getElementById('new-pot-name').value.trim();
-      const targetRaw = document.getElementById('new-pot-target').value.replace(',', '.');
-      const targetAmount = parseFloat(targetRaw);
-      const targetDate = document.getElementById('new-pot-date').value;
-      const startRaw = document.getElementById('new-pot-start').value.replace(',', '.');
-      const startAmount = startRaw==='' ? 0 : parseFloat(startRaw);
-
-      if(!name){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
-      if(isNaN(targetAmount) || targetAmount<=0){ errEl.textContent='Bitte ein gültiges Sparziel angeben.'; return; }
-      if(!targetDate){ errEl.textContent='Bitte ein Zieldatum angeben.'; return; }
-      if(isNaN(startAmount) || startAmount<0){ errEl.textContent='Bitte einen gültigen Startbetrag angeben.'; return; }
-
-      const btn = document.getElementById('save-pot-btn');
-      btn.disabled = true; btn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
-
-      if(isEdit){
-        const p = state.financeSavingsPots.find(x=>x.id===existingPot.id);
-        if(p){ p.name=name; p.targetAmount=Math.round(targetAmount*100)/100; p.targetDate=targetDate; p.startAmount=Math.round(startAmount*100)/100; }
-      }else{
-        state.financeSavingsPots.push({id:uid('pot'), name, targetAmount:Math.round(targetAmount*100)/100, targetDate, startAmount:Math.round(startAmount*100)/100});
-      }
-      await setClubJSON('finance-savings-pots', state.financeSavingsPots);
-      closeGenericModal();
-      render();
+      goToFinanceManagement();
     });
   }
 
