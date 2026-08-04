@@ -805,7 +805,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.24';
+  const APP_VERSION = '1.1.25';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4336,7 +4336,7 @@
   // erscheinen hier bewusst nicht - die laufen weiterhin über die Geldstrafen (siehe
   // showAddGeldstrafeModal), Punkte gibt es nur für Punkte-/Gruppenspiele.
   function buildGamesTab(detail){
-    const relevantGames = (state.gamesCatalog||[]).filter(g=> g.type==='punktspiel' || g.type==='group');
+    const relevantGames = (detail.gamesCatalogSnapshot||[]).filter(g=> g.type==='punktspiel' || g.type==='group');
     if(relevantGames.length===0){
       return `
         <div class="card">
@@ -4707,7 +4707,7 @@
   function viewGameScoreDetail(){
     const detail = state.currentEveningDetail;
     const gameId = state.currentGameScoreId;
-    const game = (state.gamesCatalog||[]).find(g=>g.id===gameId);
+    const game = (detail.gamesCatalogSnapshot||[]).find(g=>g.id===gameId);
     const closed = !!detail.closed || !canEditEvening(detail);
     const occupiedSeats = detail.seating.filter(s=>s.name && !s.invalid);
     if(!game){
@@ -4824,11 +4824,11 @@
 
   async function showAddGeldstrafeModal(existingAdHoc){
     const isEdit = !!existingAdHoc;
-    try{ state.gamesCatalog = await getClubJSON('games-catalog', state.gamesCatalog); }catch(e){}
     // Nur Spiele der Art "Geldspiel" werden hier zur Auswahl angeboten (siehe gameTypeLabel()) -
     // Gruppen-/Punktespiele haben keinen direkten Geldbezug und gehören nicht in diesen
-    // Dialog.
-    const moneyGames = state.gamesCatalog.filter(g=>g.type==='geldspiel');
+    // Dialog. Kommt aus dem Snapshot des Abends (siehe gamesCatalogSnapshot) - spätere
+    // Änderungen in der Spieleverwaltung dürfen diesen Abend nicht mehr beeinflussen.
+    const moneyGames = (state.currentEveningDetail.gamesCatalogSnapshot||[]).filter(g=>g.type==='geldspiel');
     const matchingGame = isEdit ? moneyGames.find(g=>g.name===existingAdHoc.name) : null;
     const showCustom = isEdit && !matchingGame;
     const gameOptionsHtml = moneyGames.map(g=>`<option value="${escapeHtml(g.id)}"${matchingGame && matchingGame.id===g.id ? ' selected' : ''}>${escapeHtml(g.name)}</option>`).join('');
@@ -5222,13 +5222,14 @@
 
   async function showBulkAddFineModal(){
     const detail = state.currentEveningDetail;
-    try{ state.gamesCatalog = await getClubJSON('games-catalog', state.gamesCatalog); }catch(e){}
     const fullCatalog = (detail.finesCatalogSnapshot || []).filter(f=>!isFremdstrafeType(f.type));
     // Strafen (Geldbetrag) und Runden (kein Geldbetrag) werden im Dropdown als eigene Gruppen
     // dargestellt - analog zur Trennung in der Strafenverwaltung (viewFinesManagement).
     const catalog = fullCatalog.filter(f=>f.type!=='runde');
     const roundsCatalog = fullCatalog.filter(f=>f.type==='runde');
-    const games = state.gamesCatalog.filter(g=>g.type==='geldspiel');
+    // Spiele kommen aus dem Snapshot des Abends (siehe gamesCatalogSnapshot), nicht aus dem
+    // aktuellen Katalog - analog zu finesCatalogSnapshot.
+    const games = (detail.gamesCatalogSnapshot||[]).filter(g=>g.type==='geldspiel');
     if(catalog.length===0 && roundsCatalog.length===0 && games.length===0){
       showModal(`
         <h3>Strafen hinzufügen</h3>
@@ -5765,7 +5766,8 @@
     else if(state.view==='detail' && state.currentEveningDetail) title = `Kegelabend vom ${formatDateShortDE(state.currentEveningDetail.date)}`;
     else if(state.view==='personFineDetail') title = `Strafen von ${state.currentFineName || ''}`;
     else if(state.view==='gameScoreDetail'){
-      const game = (state.gamesCatalog||[]).find(g=>g.id===state.currentGameScoreId);
+      const gamesForTitle = (state.currentEveningDetail && state.currentEveningDetail.gamesCatalogSnapshot) || [];
+      const game = gamesForTitle.find(g=>g.id===state.currentGameScoreId);
       title = game ? game.name : 'Punkte erfassen';
     }
 
@@ -8183,6 +8185,15 @@
     state.finesCatalog = finesCatalogAtCreation;
     markFetched('finesCatalog');
 
+    // Analog zu finesCatalogAtCreation: aktuelle Spieleliste als feste Kopie für diesen Abend
+    // übernehmen - spätere Änderungen in der Spieleverwaltung dürfen diesen Abend nicht mehr
+    // beeinflussen. Ist kein Spiel angelegt, bleibt das Snapshot-Array einfach leer - es gibt
+    // bewusst KEINEN Fallback auf einen (dann nicht vorhandenen) Katalog; für diesen Abend werden
+    // dann schlicht keine Spiele angezeigt (siehe buildGamesTab()/showAddGeldstrafeModal()/etc.).
+    const gamesCatalogAtCreation = await getClubJSON('games-catalog', state.gamesCatalog);
+    state.gamesCatalog = gamesCatalogAtCreation;
+    markFetched('gamesCatalog');
+
     const occupiedSeatIds = buildSeatPriorityOrder(seatingTemplate.perSide).slice(0, participants.length);
     const schriftfuehrerSelect = document.getElementById('schriftfuehrer-select');
     const schriftfuehrerChoice = schriftfuehrerSelect ? schriftfuehrerSelect.value : 'standard';
@@ -8291,7 +8302,7 @@
       }
     }
 
-    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, seatingTemplateId: seatingTemplate.id, seatingSideNamesSnapshot: seatingSideNamesAtCreation, carriedOverRounds };
+    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, gamesCatalogSnapshot: gamesCatalogAtCreation, seatingTemplateId: seatingTemplate.id, seatingSideNamesSnapshot: seatingSideNamesAtCreation, carriedOverRounds };
     const newIndexEntry = {id, date, ...computeEveningSummaryFields(detail)};
     await Promise.all([
       saveEveningMainDoc(detail),
