@@ -61,7 +61,7 @@
     min-height:78px;
     box-sizing:border-box;
   }
-  .header-brand{display:flex; flex-direction:column; gap:2px; background:none; border:none; padding:0; margin:0; text-align:left; cursor:pointer; font:inherit;}
+  .header-brand{display:flex; flex-direction:column; gap:2px; padding:0; margin:0; text-align:left;}
   .brand-logo{height:46px; width:auto; display:block;}
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
   .header-back-btn{background:none; border:none; padding:6px; margin:0 0 0 -6px; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; height:38px; box-sizing:border-box;}
@@ -540,6 +540,9 @@
 
   .seating-diagram{width:100%; height:auto; display:block; max-width:520px; margin:0 auto;}
   .seating-template-preview{max-width:280px; margin:4px auto 18px; padding:12px; background:var(--surface); border:1px solid var(--muted); border-radius:8px;}
+  .club-logo-row{display:flex; align-items:center; gap:16px; margin-bottom:18px;}
+  .club-logo-preview{width:72px; height:72px; object-fit:contain; border:1px solid var(--muted); border-radius:8px; background:var(--surface); flex-shrink:0;}
+  .club-logo-actions{display:flex; flex-direction:column; gap:6px;}
   .seating-template-preview .seating-diagram{max-width:100%;}
   @media (prefers-reduced-motion:no-preference){
     .reveal-group{animation:reveal .35s ease backwards;}
@@ -668,6 +671,7 @@
     verifyPasswordResetCode, confirmPasswordReset
   } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
   import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+  import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-storage.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyBghOmmLWKdjlRFtau4ecODdQA7Al8fFc4",
@@ -686,6 +690,7 @@
   });
   const auth = getAuth(firebaseApp);
   const functions = getFunctions(firebaseApp);
+  const storage = getStorage(firebaseApp);
 
   // Fester Admin-Zugang: loggt sich im Hintergrund über einen echten Firebase-Auth-Account ein,
   // damit auch der Admin unter die (später scharf geschaltete) Firestore-Regel "nur eingeloggt" fällt.
@@ -759,7 +764,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.4';
+  const APP_VERSION = '1.1.5';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1469,6 +1474,47 @@
   async function saveClub(clubData){
     await withTimeout(setDoc(clubRef(), clubData, { merge: true }), STORAGE_TIMEOUT_MS);
     invalidate('clubData');
+  }
+
+  // Verkleinert eine vom Nutzer ausgewählte Bilddatei client-seitig per Canvas auf max.
+  // 512x512 (Seitenverhältnis bleibt erhalten, kein Zuschneiden) und komprimiert sie als JPEG.
+  // Läuft komplett im Browser - keine zusätzliche Cloud Function nötig, da nur Kassenwart/
+  // Präsident/Admin überhaupt hochladen dürfen (siehe storage.rules) und ein einzelnes
+  // Club-Logo keine Vielzahl an Formaten/Größen braucht.
+  function resizeImageToBlob(file, maxSize){
+    return new Promise((resolve, reject)=>{
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = ()=>{
+        URL.revokeObjectURL(url);
+        let { width, height } = img;
+        if(width > height){
+          if(width > maxSize){ height = Math.round(height * maxSize / width); width = maxSize; }
+        } else {
+          if(height > maxSize){ width = Math.round(width * maxSize / height); height = maxSize; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(blob=>{
+          if(blob) resolve(blob); else reject(new Error('Bild konnte nicht verarbeitet werden.'));
+        }, 'image/jpeg', 0.8);
+      };
+      img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('Bild konnte nicht geladen werden.')); };
+      img.src = url;
+    });
+  }
+
+  // Lädt das verkleinerte Logo nach Storage hoch (fester Pfad pro Club, überschreibt ein
+  // vorheriges Logo) und liefert die Download-URL zum Speichern in clubs/{clubId}.logoUrl.
+  async function uploadClubLogo(file){
+    const blob = await resizeImageToBlob(file, 512);
+    const ref = storageRef(storage, `clubs/${CURRENT_CLUB_ID}/logo.jpg`);
+    await uploadBytes(ref, blob, { contentType: 'image/jpeg' });
+    return await getDownloadURL(ref);
   }
   // Listet die IDs ALLER existierenden Clubs auf, unabhängig von einem Claim - wird nur für den
   // Admin-Sonderfall in resolveActiveClub() gebraucht (Admin hat noch keinen Claim, soll aber aus
@@ -2546,6 +2592,17 @@
         <input type="text" id="club-name" placeholder="z. B. Die Pudolfs" value="${escapeHtml(club.name || '')}"${disabledAttr}>
         <label for="club-founded">Gründungsdatum</label>
         <input type="date" id="club-founded" value="${club.foundedOn || ''}"${disabledAttr}>
+        <label>Logo</label>
+        <div class="club-logo-row">
+          <img src="${club.logoUrl || LOGO_DATA_URI}" alt="Clublogo" class="club-logo-preview" id="club-logo-preview">
+          ${readOnly ? '' : `
+            <div class="club-logo-actions">
+              <button type="button" class="btn-secondary" id="club-logo-pick-btn">Bild auswählen</button>
+              <input type="file" id="club-logo-file-input" accept="image/*" hidden>
+              <p class="form-error" id="club-logo-error"></p>
+            </div>
+          `}
+        </div>
       </div>
       <div class="card">
         <h2 class="section-title">Sitzplan</h2>
@@ -5366,12 +5423,16 @@
 
   function headerHtml(){
     if(state.view==='main'){
+      // Keine Klick-Funktion mehr (Logo wurde bisher als Link zurück zur Übersicht
+      // dargestellt - da es nur auf der Übersicht selbst angezeigt wird, hatte der Klick
+      // ohnehin keinen Effekt). sr-only-Titel mit Clubnamen bleibt für Screenreader erhalten.
+      const logoSrc = (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.logoUrl) || LOGO_DATA_URI;
       return `<header class="app-header">
         <div class="app-header-top">
-          <button type="button" class="header-brand" id="logo-home-btn">
+          <div class="header-brand">
             <h1 class="sr-only">${clubDisplayName()}</h1>
-            <img src="${LOGO_DATA_URI}" alt="${clubDisplayName()} Kegelclub" class="brand-logo">
-          </button>
+            <img src="${logoSrc}" alt="${clubDisplayName()} Kegelclub" class="brand-logo">
+          </div>
         </div>
       </header>`;
     }
@@ -5721,8 +5782,6 @@
     if(navFinanceBtn) navFinanceBtn.addEventListener('click', ()=>guardClubManagementLeave(goToFinance));
     const navCalendarBtn = document.getElementById('nav-calendar-btn');
     if(navCalendarBtn) navCalendarBtn.addEventListener('click', ()=>guardClubManagementLeave(goToCalendar));
-    const logoBtn = document.getElementById('logo-home-btn');
-    if(logoBtn) logoBtn.addEventListener('click', ()=>guardClubManagementLeave(goToMain));
     const headerBackBtn = document.getElementById('header-back-btn');
     if(headerBackBtn) headerBackBtn.addEventListener('click', goBackFromHeader);
   }
@@ -5836,6 +5895,38 @@
       `);
       document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
     });
+
+    // Logo-Upload: lädt sofort beim Auswählen hoch (kein Zwischenstand, kein separater
+    // Speichern-Schritt nötig) - anders als die übrigen Felder, die erst per "Speichern"-Button
+    // committed werden. Vereinfacht die Handhabung, da es hier kein sinnvolles "Abbrechen" gibt
+    // (die Datei ist ausgewählt oder nicht) und ein Logo-Wechsel keine Validierung braucht.
+    const logoPickBtn = document.getElementById('club-logo-pick-btn');
+    const logoFileInput = document.getElementById('club-logo-file-input');
+    const logoPreview = document.getElementById('club-logo-preview');
+    const logoErrEl = document.getElementById('club-logo-error');
+    if(logoPickBtn && logoFileInput){
+      logoPickBtn.addEventListener('click', ()=> logoFileInput.click());
+      logoFileInput.addEventListener('change', async ()=>{
+        const file = logoFileInput.files && logoFileInput.files[0];
+        if(!file) return;
+        if(logoErrEl) logoErrEl.textContent = '';
+        logoPickBtn.disabled = true;
+        logoPickBtn.textContent = 'Lädt hoch…';
+        try{
+          const logoUrl = await uploadClubLogo(file);
+          await saveClub({ logoUrl });
+          CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), logoUrl };
+          markFetched('clubData');
+          if(logoPreview) logoPreview.src = logoUrl;
+        }catch(e){
+          if(logoErrEl) logoErrEl.textContent = 'Logo konnte nicht hochgeladen werden. Bitte erneut versuchen.';
+        }finally{
+          logoPickBtn.disabled = false;
+          logoPickBtn.textContent = 'Bild auswählen';
+          logoFileInput.value = '';
+        }
+      });
+    }
 
     const saveBtn = document.getElementById('save-club-btn');
     if(!saveBtn){

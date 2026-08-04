@@ -80,3 +80,33 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: '${{ steps.auth.outputs.credentials_file_path }}'
         run: npx firebase-tools deploy --only firestore:rules --project die-pudolfs --non-interactive --force
+
+  deploy-storage-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Prüft, ob sich storage.rules in diesem Push geändert hat - der Rules-Deploy läuft nur
+      # dann, damit nicht bei jedem Hosting/Functions-Push unnötig ein Rules-Deploy mitläuft.
+      - name: Check for storage.rules changes
+        id: storage-rules-changed
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rules:
+              - 'storage.rules'
+      - uses: actions/setup-node@v4
+        if: steps.storage-rules-changed.outputs.rules == 'true'
+        with:
+          node-version: '22'
+      - name: Authenticate to Google Cloud
+        id: auth
+        if: steps.storage-rules-changed.outputs.rules == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_FUNCTIONS_SERVICE_ACCOUNT }}'
+          create_credentials_file: true
+      - name: Deploy Storage Rules
+        if: steps.storage-rules-changed.outputs.rules == 'true'
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: '${{ steps.auth.outputs.credentials_file_path }}'
+        run: npx firebase-tools deploy --only storage --project die-pudolfs --non-interactive --force

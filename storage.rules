@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Fester Admin-Zugang (siehe ADMIN_EMAIL in index.html) und Rolle aus dem Custom Claim
+    // 'role' (siehe firestore.rules, gleiches Muster wie dort - syncMemberRoleClaim in
+    // functions/index.js hält den Claim synchron zum role-Feld im Mitgliedsdokument).
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'admin@die-pudolfs.internal';
+    }
+    function currentRole() {
+      return request.auth != null
+        ? (('role' in request.auth.token) ? request.auth.token.role : 'Mitglied')
+        : 'Mitglied';
+    }
+    function canManageMembers() {
+      return isAdmin() || currentRole() in ['Kassenwart', 'Präsident'];
+    }
+
+    // Club-Logo: Lesen für alle eingeloggten Nutzer (wird im Header angezeigt), Schreiben nur
+    // für Kassenwart/Präsident/Admin - dieselbe Berechtigung wie die Clubverwaltung in
+    // firestore.rules. Max. 3 MB, nur Bilddateien (Client verkleinert vorher auf 512x512, das
+    // hier ist nur ein serverseitiges Sicherheitsnetz gegen falsch programmierte/manipulierte Clients).
+    match /clubs/{clubId}/logo.{ext} {
+      allow read: if request.auth != null;
+      allow write: if canManageMembers()
+        && request.resource.size < 3 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
