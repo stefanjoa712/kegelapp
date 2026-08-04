@@ -71,11 +71,15 @@ service cloud.firestore {
     }
 
     // Mitgliederverwaltung (members/{memberId} inkl. _index-Dokument): Lesen bleibt für alle
-    // eingeloggten Nutzer offen (jeder sieht die Mitgliederliste), Schreiben (Anlegen, Ändern,
-    // Löschen) nur für Admin, Kassenwart oder Präsident.
+    // eingeloggten Nutzer offen (jeder sieht die Mitgliederliste). Anlegen/Ändern (inkl. des
+    // Setzens von archived=true) bleibt direkt über den Client möglich. Löschen ist NUR noch über
+    // die deleteOrArchiveMember Cloud Function erlaubt (Admin-SDK, umgeht Rules) - ein direktes
+    // Client-Delete würde die Referenz-Prüfung (Kegelabende/Rückstände/Kalender/Runden) umgehen
+    // und Daten verwaisen lassen, siehe findMemberReferences() in functions/index.js.
     match /clubs/{clubId}/members/{memberId} {
       allow read: if request.auth != null;
-      allow write: if canManageMembers() && !clubAccessBlocked(clubId);
+      allow create, update: if canManageMembers() && !clubAccessBlocked(clubId);
+      allow delete: if false;
     }
 
     // Alle übrigen Club-Unterdaten - unverändert offen für jeden eingeloggten Nutzer. Jede

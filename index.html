@@ -395,6 +395,8 @@
   }
 
   .form-error{color:var(--wine); font-size:13px; min-height:18px; margin:6px 0;}
+  .delete-member-reasons{margin:6px 0 14px; padding-left:20px; font-size:14px; color:var(--ink);}
+  .delete-member-reasons li{margin-bottom:4px;}
 
   .member-row{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px dashed var(--line);}
   .member-row-full{padding:9px 0; border-bottom:1px dashed var(--line); display:flex; align-items:center; gap:10px;}
@@ -784,7 +786,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.12';
+  const APP_VERSION = '1.1.13';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1322,18 +1324,10 @@
     invalidate('members');
   }
 
-  // Löscht ein Mitglied: Dokument entfernen und ID transaktional aus dem Index streichen.
-  async function deleteMember(memberId){
-    await withTimeout(runTransaction(db, async (tx)=>{
-      const indexRef = memberIndexDocRef();
-      const indexSnap = await tx.get(indexRef);
-      const index = indexSnap.exists() ? JSON.parse(indexSnap.data().value) : [];
-      tx.delete(clubMemberDocRef(memberId));
-      const newIndex = index.filter(id=>id!==memberId);
-      tx.set(indexRef, { value: JSON.stringify(newIndex) });
-    }), STORAGE_TIMEOUT_MS);
-    invalidate('members');
-  }
+  // Löschen/Archivieren läuft jetzt ausschließlich über die deleteOrArchiveMember Cloud
+  // Function (siehe showDeleteMemberModal) - die serverseitige Prüfung auf Referenzen
+  // (Kegelabende, Rückstände, Kalender, offene Runden) kann clientseitig nicht zuverlässig
+  // repliziert werden, ohne alle Kegelabende einzeln zu laden.
 
   // ---------- Kalender: Termine, Rückmeldungen und Serien-Ausnahmen ----------
   // Termine (calendar-events), Rückmeldungen (calendar-rsvps) und Serien-Ausnahmen
@@ -2923,14 +2917,21 @@
 
   function buildFinanceArrearsTab(){
     const memberIds = new Set(state.members.map(m=>m.id));
-    const memberRows = state.members.map(m=>{
+    // Aktive Mitglieder: immer eine Zeile, auch bei 0 Rückstand (dient als vollständige Übersicht).
+    const memberRows = activeMembers().map(m=>{
       const entry = state.financeArrears.find(a=>a.memberId===m.id);
       return { memberId: m.id, name: displayName(m), amount: entry ? entry.amount : 0 };
     });
-    const guestRows = state.financeArrears
-      .filter(a=> !memberIds.has(a.memberId) && a.amount>0)
-      .map(a=>({ memberId:a.memberId, name:a.name, amount:a.amount }));
-    const allRows = [...memberRows, ...guestRows].sort((a,b)=> a.name.localeCompare(b.name,'de'));
+    // Gäste UND archivierte Mitglieder mit noch offenem Rückstand: nur bei amount>0 aufgeführt,
+    // damit ein archiviertes Mitglied ohne offenen Rückstand wie gewünscht komplett verschwindet,
+    // ein Rückstand aber für den Kassenwart sichtbar/verwaltbar bleibt (siehe deleteOrArchiveMember).
+    const nonActiveRows = state.financeArrears
+      .filter(a=> (!memberIds.has(a.memberId) || (state.members.find(m=>m.id===a.memberId)||{}).archived) && a.amount>0)
+      .map(a=>{
+        const m = state.members.find(x=>x.id===a.memberId);
+        return { memberId:a.memberId, name: m ? `${displayName(m)} (archiviert)` : a.name, amount:a.amount };
+      });
+    const allRows = [...memberRows, ...nonActiveRows].sort((a,b)=> a.name.localeCompare(b.name,'de'));
     const totalDue = allRows.reduce((sum,r)=> sum + r.amount, 0);
     const rowsHtml = allRows.map(r=>`
       <div class="fines-summary-row" data-member-id="${escapeHtml(r.memberId)}">
@@ -3867,14 +3868,15 @@
   }
 
   function viewSettings(){
-    const sortedMembers = state.members.slice().sort((a,b)=> a.firstName.localeCompare(b.firstName,'de'));
-    const membersHtml = state.members.length===0
+    const visibleMembers = activeMembers();
+    const sortedMembers = visibleMembers.slice().sort((a,b)=> a.firstName.localeCompare(b.firstName,'de'));
+    const membersHtml = visibleMembers.length===0
       ? `<p class="empty-state">Noch keine Mitglieder angelegt. Füge oben rechts das erste hinzu.</p>`
       : sortedMembers.map(memberRowHtml).join('');
     return `
       <div class="card">
         <div class="settings-header-row">
-          <h2 class="section-title">Mitglieder <span class="member-count">(${state.members.length})</span></h2>
+          <h2 class="section-title">Mitglieder <span class="member-count">(${visibleMembers.length})</span></h2>
         </div>
         ${membersHtml}
       </div>
@@ -3883,6 +3885,15 @@
 
   function displayName(m){
     return (m.nickname && m.nickname.trim()) ? m.nickname.trim() : m.firstName;
+  }
+
+  // Aktive (nicht archivierte) Mitglieder - für alle Auswahllisten (neuer Kegelabend, Kalender,
+  // Sitzplan-Ergänzung, Mitgliederliste in den Einstellungen) statt state.members direkt nutzen.
+  // Archivierte Mitglieder bleiben in state.members enthalten, damit alte Kegelabende, Rückstände
+  // und Finanz-Buchungen weiterhin über ihre memberId aufgelöst werden können - sie sollen nur
+  // nicht mehr aktiv auswählbar/sichtbar sein.
+  function activeMembers(){
+    return state.members.filter(m=> !m.archived);
   }
 
   // Rückstände werden pro Mitglied bzw. Gast in einem eigenen Dokument gespeichert (siehe
@@ -3898,8 +3909,8 @@
 
   function viewNew(){
     const today = todayISO();
-    const sortedMembers = state.members.slice().sort((a,b)=> displayName(a).localeCompare(displayName(b),'de'));
-    const membersHtml = state.members.length===0
+    const sortedMembers = activeMembers().slice().sort((a,b)=> displayName(a).localeCompare(displayName(b),'de'));
+    const membersHtml = sortedMembers.length===0
       ? `<p class="empty-state">Noch keine Mitglieder angelegt. <a href="#" id="goto-settings-from-new" style="color:var(--felt); text-decoration:underline;">Jetzt in den Einstellungen anlegen</a>.</p>`
       : sortedMembers.map(m=>`
         <label class="member-check-row">
@@ -4013,7 +4024,7 @@
     const presentCount = occupied.filter(s=>!s.isGuest).length;
     const guestCount = occupied.filter(s=>s.isGuest).length;
     const absentList = detail.closed ? (detail.absentMembersFines || []) : [];
-    const absentCount = detail.closed ? absentList.length : Math.max(0, state.members.length - presentCount);
+    const absentCount = detail.closed ? absentList.length : Math.max(0, activeMembers().length - presentCount);
     let income = 0;
     occupied.forEach(s=>{ income += roundedFineTotalForSeat(detail, s.seatId); });
     absentList.forEach(a=>{ income += a.amount; });
@@ -4930,7 +4941,7 @@
       return;
     }
     const seatedNames = new Set(detail.seating.filter(s=>s.name).map(s=>s.name));
-    const availableMembers = state.members.filter(m=> !seatedNames.has(displayName(m)));
+    const availableMembers = activeMembers().filter(m=> !seatedNames.has(displayName(m)));
     const memberOptionsHtml = availableMembers.map(m=>`<option value="${m.id}">${escapeHtml(displayName(m))}</option>`).join('');
     const noMembersLeft = availableMembers.length===0;
     showModal(`
@@ -6886,21 +6897,79 @@
       openEveningDetail(existingId);
     });
   }
+  // Prüft zuerst (reiner Read, siehe checkMemberDeletable), ob das Mitglied gefahrlos gelöscht
+  // werden kann oder noch irgendwo referenziert wird (Kegelabend, Rückstand, Kalender, offene
+  // Runde) - Popup öffnet sofort mit Ladeanimation und füllt sich danach mit dem passenden Text/
+  // Button. Die eigentliche Aktion (deleteOrArchiveMember) prüft denselben Zustand serverseitig
+  // nochmal direkt vor dem Ausführen, falls sich zwischenzeitlich etwas geändert hat.
   function showDeleteMemberModal(member){
     showModal(`
       <h3>Mitglied löschen</h3>
-      <p>${escapeHtml(member.firstName)} ${escapeHtml(member.lastName)} wirklich löschen?</p>
+      <div class="modal-loading-overlay" id="delete-member-check-overlay" style="position:static; padding:24px 0;">
+        <div class="loading-spinner"></div>Wird geprüft…
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn')?.addEventListener('click', closeGenericModal);
+    checkAndRenderDeleteMemberModal(member);
+  }
+
+  const DELETE_MEMBER_REASON_LABELS = {
+    evening: 'ist an einem Kegelabend beteiligt',
+    arrears: 'hat einen offenen Rückstand',
+    calendar: 'hat eine Zu-/Absage zu einem Termin',
+    rounds: 'hat eine offene Rundenpflicht',
+  };
+
+  async function checkAndRenderDeleteMemberModal(member){
+    let result;
+    try{
+      const checkFn = httpsCallable(functions, 'checkMemberDeletable');
+      const res = await checkFn({ clubId: CURRENT_CLUB_ID, memberId: member.id });
+      result = res.data;
+    }catch(e){
+      showModal(`
+        <h3>Mitglied löschen</h3>
+        <p>Prüfung fehlgeschlagen. Bitte prüfe deine Internetverbindung.</p>
+        <div class="confirm-row-buttons">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn">Schließen</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+      return;
+    }
+    const deletable = result.deletable;
+    const reasonsHtml = !deletable && Array.isArray(result.reasons) && result.reasons.length>0
+      ? `<ul class="delete-member-reasons">${result.reasons.map(r=>`<li>${escapeHtml(DELETE_MEMBER_REASON_LABELS[r]||r)}</li>`).join('')}</ul>`
+      : '';
+    showModal(`
+      <h3>Mitglied löschen</h3>
+      ${deletable
+        ? `<p>${escapeHtml(member.firstName)} ${escapeHtml(member.lastName)} wirklich löschen?</p>`
+        : `<p>${escapeHtml(member.firstName)} ${escapeHtml(member.lastName)} kann nicht gelöscht werden, da noch Daten mit diesem Mitglied verknüpft sind:</p>${reasonsHtml}<p>Das Mitglied wird stattdessen archiviert und ist danach nirgends mehr auswählbar oder sichtbar. Vorhandene Rückstände bleiben für den Kassenwart einsehbar.</p>`
+      }
       <div class="confirm-row-buttons">
-        <button type="button" class="btn-danger" id="confirm-delete-member-modal-yes">Ja, löschen</button>
+        <button type="button" class="btn-danger" id="confirm-delete-member-modal-yes">${deletable?'Ja, löschen':'Archivieren'}</button>
         <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
       </div>
     `);
     document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
     document.getElementById('confirm-delete-member-modal-yes').addEventListener('click', async ()=>{
       const yesBtn = document.getElementById('confirm-delete-member-modal-yes');
-      yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
-      await deleteMember(member.id);
-      state.members = state.members.filter(m=>m.id!==member.id);
+      yesBtn.disabled = true; yesBtn.textContent = deletable ? 'Löscht…' : 'Archiviert…';
+      try{
+        const deleteFn = httpsCallable(functions, 'deleteOrArchiveMember');
+        const res = await deleteFn({ clubId: CURRENT_CLUB_ID, memberId: member.id });
+        if(res.data.archived){
+          const m = state.members.find(x=>x.id===member.id);
+          if(m) m.archived = true;
+        }else{
+          state.members = state.members.filter(m=>m.id!==member.id);
+        }
+      }catch(e){
+        yesBtn.disabled = false; yesBtn.textContent = deletable ? 'Ja, löschen' : 'Archivieren';
+        return;
+      }
+      invalidate('members');
       closeGenericModal();
       goToSettings();
     });
