@@ -730,7 +730,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.115';
+  const APP_VERSION = '1.0.116';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -809,17 +809,26 @@
 
   // Katalog der wählbaren Sitzplan-Templates (Tischform + Plätze pro Seite). 'shape' steuert
   // die Geometrie in buildSeatingSVG()/buildPreviewSeatingSVG() ('trapez' = zur Kegelbahn hin
-  // verjüngend wie ursprünglich, 'rechteck' = parallele Kanten). 'perSide' ersetzt die früher
-  // fest verdrahtete 6 - JEDE Stelle im Code, die Sitzplätze zählt oder aufzählt, muss die
-  // perSide-Zahl des jeweils relevanten Templates verwenden (siehe getEveningSeatingTemplate()
-  // für bestehende Abende, getClubSeatingTemplate() für neu anzulegende).
+  // verjüngend wie ursprünglich, 'rechteck' = parallele Kanten, 'rund' = ovale Form mit
+  // durchgehend gebogenen Kanten). 'perSide' ersetzt die früher fest verdrahtete 6 - JEDE Stelle
+  // im Code, die Sitzplätze zählt oder aufzählt, muss die perSide-Zahl des jeweils relevanten
+  // Templates verwenden (siehe getEveningSeatingTemplate() für bestehende Abende,
+  // getClubSeatingTemplate() für neu anzulegende). 'groupLabel' gruppiert die Templates in
+  // Dropdowns (siehe buildEveningSeatingTemplateOptionsHtml(), viewClubManagement()) - die
+  // Reihenfolge der Gruppen richtet sich nach der ersten Fundstelle in diesem Array, daher stehen
+  // Trapez-, Rechteck- und Rundtische bewusst in dieser Reihenfolge hintereinander.
   const SEATING_TEMPLATES = [
-    { id:'trapez-5',    label:'Trapeztisch mit 5 Sitzplätzen pro Seite',    shape:'trapez',   perSide:5 },
-    { id:'trapez-6',    label:'Trapeztisch mit 6 Sitzplätzen pro Seite',    shape:'trapez',   perSide:6 },
-    { id:'trapez-7',    label:'Trapeztisch mit 7 Sitzplätzen pro Seite',    shape:'trapez',   perSide:7 },
-    { id:'rechteck-5',  label:'Rechteckiger Tisch mit 5 Sitzplätzen pro Seite', shape:'rechteck', perSide:5 },
-    { id:'rechteck-6',  label:'Rechteckiger Tisch mit 6 Sitzplätzen pro Seite', shape:'rechteck', perSide:6 },
-    { id:'rechteck-7',  label:'Rechteckiger Tisch mit 7 Sitzplätzen pro Seite', shape:'rechteck', perSide:7 }
+    { id:'trapez-5',    label:'Trapeztisch mit 5 Sitzplätzen pro Seite',    shape:'trapez',   perSide:5, groupLabel:'Trapeztische' },
+    { id:'trapez-6',    label:'Trapeztisch mit 6 Sitzplätzen pro Seite',    shape:'trapez',   perSide:6, groupLabel:'Trapeztische' },
+    { id:'trapez-7',    label:'Trapeztisch mit 7 Sitzplätzen pro Seite',    shape:'trapez',   perSide:7, groupLabel:'Trapeztische' },
+    { id:'trapez-8',    label:'Trapeztisch mit 8 Sitzplätzen pro Seite',    shape:'trapez',   perSide:8, groupLabel:'Trapeztische' },
+    { id:'rechteck-5',  label:'Rechteckiger Tisch mit 5 Sitzplätzen pro Seite', shape:'rechteck', perSide:5, groupLabel:'Rechteckige Tische' },
+    { id:'rechteck-6',  label:'Rechteckiger Tisch mit 6 Sitzplätzen pro Seite', shape:'rechteck', perSide:6, groupLabel:'Rechteckige Tische' },
+    { id:'rechteck-7',  label:'Rechteckiger Tisch mit 7 Sitzplätzen pro Seite', shape:'rechteck', perSide:7, groupLabel:'Rechteckige Tische' },
+    { id:'rechteck-8',  label:'Rechteckiger Tisch mit 8 Sitzplätzen pro Seite', shape:'rechteck', perSide:8, groupLabel:'Rechteckige Tische' },
+    { id:'rund-2',      label:'Runder Tisch mit 2 Sitzplätzen pro Seite',   shape:'rund',     perSide:2, groupLabel:'Runde Tische' },
+    { id:'rund-3',      label:'Runder Tisch mit 3 Sitzplätzen pro Seite',   shape:'rund',     perSide:3, groupLabel:'Runde Tische' },
+    { id:'rund-4',      label:'Runder Tisch mit 4 Sitzplätzen pro Seite',   shape:'rund',     perSide:4, groupLabel:'Runde Tische' }
   ];
   const DEFAULT_SEATING_TEMPLATE_ID = 'trapez-6'; // entspricht dem bisherigen, fest verdrahteten Verhalten
   function getSeatingTemplateById(templateId){
@@ -843,8 +852,9 @@
 
   // Baut die <option>-Liste für die Sitzplan-Auswahl auf der "Neuer Kegelabend"-Seite
   // (#neuer-abend, siehe viewNew()): der Club-Standard steht als eigene, vorausgewählte Option
-  // oben ("Standardsitzplan (<Name des Templates>)"), alle übrigen Templates folgen darunter
-  // gruppiert unter "Verfügbare Sitzpläne". Der Wert der Standard-Option ist bewusst die
+  // oben ("Standardsitzplan (<Name des Templates>)"), alle übrigen Templates folgen darunter -
+  // gruppiert nach groupLabel (Trapez-/Rechteck-/Runde Tische, siehe SEATING_TEMPLATES) statt in
+  // einer einzigen "Verfügbare Sitzpläne"-Gruppe. Der Wert der Standard-Option ist bewusst die
   // template-id selbst (nicht ein Sonderwert wie 'standard') - so bleibt die Auswertung beim
   // Anlegen (handleConfirmNewEvening()) einheitlich: der select-Wert IST immer direkt eine
   // gültige SEATING_TEMPLATES-id, unabhängig davon, ob die Standard-Option oder eine der
@@ -852,13 +862,30 @@
   function buildEveningSeatingTemplateOptionsHtml(){
     const standardTemplate = getClubSeatingTemplate();
     const otherTemplates = SEATING_TEMPLATES.filter(t=>t.id!==standardTemplate.id);
-    const otherOptionsHtml = otherTemplates.map(t=>
-      `<option value="${t.id}">${escapeHtml(t.label)}</option>`
-    ).join('');
+    const groupsHtml = buildSeatingTemplateGroupsHtml(otherTemplates);
     return `
       <option value="${standardTemplate.id}" selected>Standardsitzplan (${escapeHtml(standardTemplate.label)})</option>
-      <optgroup label="Verfügbare Sitzpläne">${otherOptionsHtml}</optgroup>
+      ${groupsHtml}
     `;
+  }
+
+  // Baut aus einer Liste von Templates eine Reihe von <optgroup>-Blöcken, gruppiert nach
+  // groupLabel (siehe SEATING_TEMPLATES) und in der Reihenfolge, in der die Gruppen dort zuerst
+  // auftreten (also Trapez-, dann Rechteck-, dann Runde Tische). Gemeinsam genutzt von
+  // buildEveningSeatingTemplateOptionsHtml() (Neuer Kegelabend) und der Clubverwaltung
+  // (viewClubManagement()), damit beide Stellen dieselbe Gruppierung zeigen. selectedId ist
+  // optional - falls gesetzt, erhält die passende <option> das selected-Attribut (wird von der
+  // Clubverwaltung genutzt, die alle Templates flach mit aktueller Auswahl zeigt statt eine
+  // separate "Standardsitzplan"-Option davorzustellen).
+  function buildSeatingTemplateGroupsHtml(templates, selectedId){
+    const groupLabels = [];
+    templates.forEach(t=>{ if(!groupLabels.includes(t.groupLabel)) groupLabels.push(t.groupLabel); });
+    return groupLabels.map(groupLabel=>{
+      const optionsHtml = templates.filter(t=>t.groupLabel===groupLabel).map(t=>
+        `<option value="${t.id}"${t.id===selectedId?' selected':''}>${escapeHtml(t.label)}</option>`
+      ).join('');
+      return `<optgroup label="${escapeHtml(groupLabel)}">${optionsHtml}</optgroup>`;
+    }).join('');
   }
 
   // Baut die SEATS-Struktur dynamisch aus den Seitenbezeichnungen UND der Plätze-pro-Seite-Zahl
@@ -2409,9 +2436,7 @@
     const disabledAttr = readOnly ? ' disabled' : '';
     const sideNames = getSeatingSideNames();
     const currentTemplate = getClubSeatingTemplate();
-    const templateOptionsHtml = SEATING_TEMPLATES.map(t=>
-      `<option value="${t.id}"${t.id===currentTemplate.id?' selected':''}>${escapeHtml(t.label)}</option>`
-    ).join('');
+    const templateOptionsHtml = buildSeatingTemplateGroupsHtml(SEATING_TEMPLATES, currentTemplate.id);
     const standardSeatId = getStandardSchriftfuehrerSeatId();
     const standardSeatOptionsHtml = buildSeats(currentTemplate).map(seat=>
       `<option value="${seat.id}"${seat.id===standardSeatId?' selected':''}>${escapeHtml(seat.label)}</option>`
@@ -4782,10 +4807,12 @@
     const tableBottomY = tableTopY + n*rowSpacing;
     const W = 760, H = tableBottomY + 50;
     // Trapezform (zur Kegelbahn hin verjüngend, wie ursprünglich) vs. rechteckige Form (parallele
-    // Kanten, gleicher Abstand zur Mittelachse oben wie unten).
+    // Kanten) vs. runde/ovale Form (parallele Kanten wie beim Rechteck, aber mit nach außen
+    // gewölbten Längsseiten statt geraden Linien, siehe tablePath unten).
     const topLX = 230, topRX = 530;
-    const botLX = template.shape==='rechteck' ? topLX : 300;
-    const botRX = template.shape==='rechteck' ? topRX : 460;
+    const botLX = template.shape==='trapez' ? 300 : topLX;
+    const botRX = template.shape==='trapez' ? 460 : topRX;
+    const ovalBulge = 46; // wie weit sich die Längsseiten beim Rundtisch nach außen wölben
     const chairW = 188, chairH = 122, outward = 128;
 
     const sideNames = getEveningSideNames(detail);
@@ -4856,7 +4883,12 @@
     for(let i=0;i<n;i++) chairsHtml += chairGroup('saal-'+(i+1), 'left', i);
     for(let i=0;i<n;i++) chairsHtml += chairGroup('kneipe-'+(i+1), 'right', i);
 
-    const tablePath = `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
+    // Bei 'rund' wölben sich beide Längsseiten (links: topLX/botLX, rechts: topRX/botRX) über
+    // eine kubische Bézierkurve nach außen, statt als gerade Linie zu verlaufen wie bei Trapez
+    // und Rechteck - das ergibt die ovale Form eines Rundtischs.
+    const tablePath = template.shape==='rund'
+      ? `M${topLX},${tableTopY} L${topRX},${tableTopY} C${topRX+ovalBulge},${tableTopY} ${topRX+ovalBulge},${tableBottomY} ${botRX},${tableBottomY} L${botLX},${tableBottomY} C${botLX-ovalBulge},${tableBottomY} ${topLX-ovalBulge},${tableTopY} ${topLX},${tableTopY} Z`
+      : `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
 
     return `<svg class="seating-diagram" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sitzplan des Kegelabends">
       <path class="table-shape" d="${tablePath}" />
@@ -4878,8 +4910,9 @@
     const tableBottomY = tableTopY + n*rowSpacing;
     const W = 460, H = tableBottomY + 30;
     const topLX = 140, topRX = 320;
-    const botLX = template.shape==='rechteck' ? topLX : 175;
-    const botRX = template.shape==='rechteck' ? topRX : 285;
+    const botLX = template.shape==='trapez' ? 175 : topLX;
+    const botRX = template.shape==='trapez' ? 285 : topRX;
+    const ovalBulge = 28; // wie weit sich die Längsseiten beim Rundtisch nach außen wölben (skaliert mit der kleineren Vorschaugröße)
     const chairW = 112, chairH = 72, outward = 76;
 
     const sideNames = getSeatingSideNames();
@@ -4908,7 +4941,9 @@
     for(let i=0;i<n;i++) chairsHtml += chairGroup('left', i, shortLabels.left);
     for(let i=0;i<n;i++) chairsHtml += chairGroup('right', i, shortLabels.right);
 
-    const tablePath = `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
+    const tablePath = template.shape==='rund'
+      ? `M${topLX},${tableTopY} L${topRX},${tableTopY} C${topRX+ovalBulge},${tableTopY} ${topRX+ovalBulge},${tableBottomY} ${botRX},${tableBottomY} L${botLX},${tableBottomY} C${botLX-ovalBulge},${tableBottomY} ${topLX-ovalBulge},${tableTopY} ${topLX},${tableTopY} Z`
+      : `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
 
     return `<svg class="seating-diagram seating-diagram-preview" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vorschau des Sitzplans">
       <path class="table-shape" d="${tablePath}" />
