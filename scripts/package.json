@@ -1,0 +1,8 @@
+{
+  "name": "kegelapp-migration-scripts",
+  "description": "Einmalige Migrations-/Wartungsscripts, getrennt von functions/ (kein Deploy, nur lokal/manuell ausgeführt).",
+  "private": true,
+  "dependencies": {
+    "firebase-admin": "^12.6.0"
+  }
+}

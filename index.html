@@ -759,7 +759,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.2';
+  const APP_VERSION = '1.1.3';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -972,6 +972,7 @@
     financeArrears:[],
     financeTab:'umsaetze',
     currentArrearsName:'',
+    currentArrearsMemberId:null,
     currentTransactionId:null,
     financeRecurring:[],
     financeSavingsPots:[],
@@ -1611,13 +1612,13 @@
   function getRsvpsForOccurrence(seriesId, occurrenceDate){
     return state.calendarRsvps.filter(r=> r.seriesId===seriesId && r.occurrenceDate===occurrenceDate);
   }
-  function getRsvpStatusFor(seriesId, occurrenceDate, memberName){
-    const entry = state.calendarRsvps.find(r=> r.seriesId===seriesId && r.occurrenceDate===occurrenceDate && r.memberName===memberName);
+  function getRsvpStatusFor(seriesId, occurrenceDate, memberId){
+    const entry = state.calendarRsvps.find(r=> r.seriesId===seriesId && r.occurrenceDate===occurrenceDate && r.memberId===memberId);
     return entry ? entry.status : null;
   }
-  async function setRsvpStatus(seriesId, occurrenceDate, memberName, status){
-    let entry = state.calendarRsvps.find(r=> r.seriesId===seriesId && r.occurrenceDate===occurrenceDate && r.memberName===memberName);
-    if(!entry){ entry = {id:uid('rsvp'), seriesId, occurrenceDate, memberName}; state.calendarRsvps.push(entry); }
+  async function setRsvpStatus(seriesId, occurrenceDate, memberId, status){
+    let entry = state.calendarRsvps.find(r=> r.seriesId===seriesId && r.occurrenceDate===occurrenceDate && r.memberId===memberId);
+    if(!entry){ entry = {id:uid('rsvp'), seriesId, occurrenceDate, memberId}; state.calendarRsvps.push(entry); }
     entry.status = status;
     await saveCalendarRsvp(entry);
   }
@@ -1626,7 +1627,7 @@
     const groups = { accepted:[], tentative:[], declined:[], pending:[] };
     state.members.forEach(m=>{
       const name = displayName(m);
-      const status = getRsvpStatusFor(seriesId, occurrenceDate, name);
+      const status = getRsvpStatusFor(seriesId, occurrenceDate, m.id);
       if(status==='accepted') groups.accepted.push(name);
       else if(status==='tentative') groups.tentative.push(name);
       else if(status==='declined') groups.declined.push(name);
@@ -1833,12 +1834,12 @@
   // (im Verhältnis zu allen Abenden in diesem Jahr).
 
   // Liest die vorab aggregierte Statistik (ein einziges Dokument statt aller Abende einzeln).
-  async function computeMemberAttendanceStats(memberName){
+  async function computeMemberAttendanceStats(memberId){
     let raw;
     try{ raw = await getClubJSONOrThrow('attendance-stats', {totalsByYear:{}, attendanceByMember:{}}); }
     catch(e){ raw = {totalsByYear:{}, attendanceByMember:{}}; }
     const totalsByYear = raw.totalsByYear || {};
-    const attendedByYear = (raw.attendanceByMember && raw.attendanceByMember[memberName]) || {};
+    const attendedByYear = (raw.attendanceByMember && raw.attendanceByMember[memberId]) || {};
     const stats = {};
     Object.keys(totalsByYear).forEach(year=>{
       stats[year] = { attended: attendedByYear[year]||0, total: totalsByYear[year] };
@@ -1853,7 +1854,7 @@
     if(!member){ render(); return; }
     renderLoading('Statistik wird geladen…');
     try{
-      state.currentMemberStats = await computeMemberAttendanceStats(displayName(member));
+      state.currentMemberStats = await computeMemberAttendanceStats(member.id);
     }catch(e){
       state.currentMemberStats = {};
     }
@@ -2038,8 +2039,11 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToFinance);
     }
   }
-  function goToArrearsDetail(name){
-    state.currentArrearsName = name;
+  function goToArrearsDetail(memberId){
+    state.currentArrearsMemberId = memberId;
+    const member = state.members.find(m=>m.id===memberId);
+    const entry = state.financeArrears.find(a=>a.memberId===memberId);
+    state.currentArrearsName = member ? displayName(member) : (entry ? entry.name : '');
     state.view = 'arrearsDetail';
     render();
   }
@@ -2827,19 +2831,18 @@
   }
 
   function buildFinanceArrearsTab(){
-    const memberNames = new Set(state.members.map(m=>displayName(m)));
+    const memberIds = new Set(state.members.map(m=>m.id));
     const memberRows = state.members.map(m=>{
-      const name = displayName(m);
-      const entry = state.financeArrears.find(a=>a.name===name);
-      return { name, amount: entry ? entry.amount : 0 };
+      const entry = state.financeArrears.find(a=>a.memberId===m.id);
+      return { memberId: m.id, name: displayName(m), amount: entry ? entry.amount : 0 };
     });
     const guestRows = state.financeArrears
-      .filter(a=> !memberNames.has(a.name) && a.amount>0)
-      .map(a=>({ name:a.name, amount:a.amount }));
+      .filter(a=> !memberIds.has(a.memberId) && a.amount>0)
+      .map(a=>({ memberId:a.memberId, name:a.name, amount:a.amount }));
     const allRows = [...memberRows, ...guestRows].sort((a,b)=> a.name.localeCompare(b.name,'de'));
     const totalDue = allRows.reduce((sum,r)=> sum + r.amount, 0);
     const rowsHtml = allRows.map(r=>`
-      <div class="fines-summary-row" data-name="${escapeHtml(r.name)}">
+      <div class="fines-summary-row" data-member-id="${escapeHtml(r.memberId)}">
         <span class="fines-summary-name">${escapeHtml(r.name)}</span>
         <span class="fines-summary-amount ${r.amount>0?'amount-due':'amount-clear'}">${fmtEuro(r.amount)}</span>
       </div>
@@ -3017,8 +3020,8 @@
       ? `<p class="empty-state">Keine Termine an diesem Tag.</p>`
       : birthdaysHtml + anniversaryHtml + selectedEvents.map(ev=>{
         const groups = categorizeRsvps(ev.seriesId, ev.occurrenceDate);
-        const currentName = getCurrentMemberName();
-        const ownStatus = currentName ? getRsvpStatusFor(ev.seriesId, ev.occurrenceDate, currentName) : null;
+        const currentId = getCurrentMemberId();
+        const ownStatus = currentId ? getRsvpStatusFor(ev.seriesId, ev.occurrenceDate, currentId) : null;
         const summaryHtml = state.members.length>0 ? `
           <div class="cal-event-rsvp-summary">
             <span>Rückmeldungen:</span>
@@ -3174,7 +3177,7 @@
   function historySignature(){
     if(state.view==='personFineDetail' && state.currentEveningDetail) return 'personFine:'+state.currentEveningDetail.id+':'+state.currentFineSeatId;
     if(state.view==='detail' && state.currentEveningDetail) return 'detail:'+state.currentEveningDetail.id;
-    if(state.view==='arrearsDetail') return 'arrearsDetail:'+encodeURIComponent(state.currentArrearsName);
+    if(state.view==='arrearsDetail') return 'arrearsDetail:'+encodeURIComponent(state.currentArrearsMemberId||'');
     if(state.view==='transactionDetail') return 'transactionDetail:'+(state.currentTransactionId||'new');
     if(state.view==='memberDetail') return 'memberDetail:'+(state.currentMemberId||'new');
     if(state.view==='recurringDetail') return 'recurringDetail:'+(state.currentRecurringId||'new');
@@ -3337,7 +3340,7 @@
           }
         }
       }else if(sig.startsWith('arrearsDetail:')){
-        const name = decodeURIComponent(sig.slice('arrearsDetail:'.length));
+        const memberId = decodeURIComponent(sig.slice('arrearsDetail:'.length));
         if(state.financeAccounts.length===0 && state.financeArrears.length===0){
           try{
             const [accounts, transactions, arrears] = await Promise.all([
@@ -3353,7 +3356,10 @@
             markFetched('financeArrears');
           }catch(e){}
         }
-        state.currentArrearsName = name;
+        state.currentArrearsMemberId = memberId;
+        const member = state.members.find(m=>m.id===memberId);
+        const entry = state.financeArrears.find(a=>a.memberId===memberId);
+        state.currentArrearsName = member ? displayName(member) : (entry ? entry.name : '');
         state.view = 'arrearsDetail';
         render();
       }else if(sig.startsWith('transactionDetail:')){
@@ -3576,6 +3582,16 @@
     return member ? displayName(member) : null;
   }
 
+  // ID-Pendant zu getCurrentMemberName() - maßgeblich für alle sicherheits- und
+  // datenrelevanten Vergleiche (Bearbeitungsrechte, RSVP-Zuordnung, Termin-Ersteller). Der
+  // Name bleibt nur noch für reine Anzeigezwecke (z.B. Vorbelegung von Freitextfeldern) im Einsatz.
+  function getCurrentMemberId(){
+    const user = auth.currentUser;
+    if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
+    const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
+    return member ? member.id : null;
+  }
+
   // Bearbeitungsrecht für einen KONKRETEN Kegelabend: Kassenwart/Admin dürfen immer, außerdem
   // die Person, die für DIESEN Abend als Schriftführer benannt wurde (kann sich von Abend zu
   // Abend unterscheiden, siehe Schriftführer-Dropdown beim Anlegen). Alle anderen Mitglieder
@@ -3584,9 +3600,9 @@
   function canEditEvening(detail){
     if(canManageFinances()) return true;
     if(!detail) return false;
-    const myName = getCurrentMemberName();
-    if(!myName) return false;
-    return detail.seating.some(s=> s.isSchriftfuehrer && s.name===myName);
+    const myId = getCurrentMemberId();
+    if(!myId) return false;
+    return detail.seating.some(s=> s.isSchriftfuehrer && s.memberId===myId);
   }
 
   function buildOwnArrearsCardHtml(){
@@ -3594,8 +3610,7 @@
     if(!user || !user.email || user.email===ADMIN_EMAIL) return '';
     const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
     if(!member) return '';
-    const name = displayName(member);
-    const entry = state.financeArrears.find(a=>a.name===name);
+    const entry = state.financeArrears.find(a=>a.memberId===member.id);
     const amount = entry ? entry.amount : 0;
     const canPayViaPaypal = amount>0 && !!getPaypalUsername();
     const isDue = amount>0;
@@ -3780,21 +3795,14 @@
   }
 
   // Rückstände werden pro Mitglied bzw. Gast in einem eigenen Dokument gespeichert (siehe
-  // arrearsStore weiter oben). Als Dokument-ID dient möglichst die Mitglieds-ID, damit eine
-  // spätere Umbenennung (z.B. neuer Spitzname) den Rückstand nicht "verwaist" lässt - nur wenn
-  // kein passendes Mitglied gefunden wird (Gast, oder ehemaliges Mitglied ohne aktuellen
-  // Datensatz), dient der Name selbst als Fallback-ID. Der Name kommt bei Gästen aus einem freien
-  // Texteingabefeld - Schrägstriche würden den Firestore-Dokumentpfad sprengen (nicht erlaubt),
-  // und Leerzeichen/Sonderzeichen sind zwar technisch zulässig, machen die ID aber unnötig
-  // fragil für Werkzeuge, die den Pfad selbst in eine URL einsetzen (z.B. das Migrations-Script) -
-  // deshalb wird alles außer Buchstaben/Ziffern/Bindestrich/Unterstrich durch '_' ersetzt.
-  function resolveArrearsDocId(name){
-    const member = state.members.find(m=> displayName(m)===name);
-    if(member) return member.id;
-    const transliterated = name
-      .replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue').replace(/ß/g,'ss')
-      .replace(/Ä/g,'Ae').replace(/Ö/g,'Oe').replace(/Ü/g,'Ue');
-    return 'guest-' + transliterated.replace(/[^a-zA-Z0-9_-]/g, '_');
+  // arrearsStore weiter oben). Als Dokument-ID dient IMMER die memberId (echte Mitglieds-ID bei
+  // Mitgliedern, generierte 'guest-<uuid>' bei Gästen, siehe seat.memberId) - seit dem
+  // ID-Umbau (Migrationsscript scripts/migrate-to-member-ids.js) gibt es keine namensbasierte
+  // Auflösung mehr. Eine spätere Umbenennung (z.B. neuer Spitzname) "verwaist" den Rückstand
+  // dadurch nicht mehr, und zwei Mitglieder mit gleichem Anzeigenamen können sich nicht mehr
+  // denselben Rückstand teilen.
+  function resolveArrearsDocId(memberId){
+    return memberId;
   }
 
   function viewNew(){
@@ -4130,9 +4138,9 @@
     // werden. Nur Personen, die an DIESEM Abend auch tatsächlich sitzen (occupied), werden
     // berücksichtigt - carryOverOpenRoundsFromPool() filtert das bereits beim Anlegen, hier
     // zusätzlich defensiv, falls sich die Besetzung nachträglich ändert.
-    const occupiedNames = new Set(occupied.map(s=>s.name));
+    const occupiedMemberIds = new Set(occupied.map(s=>s.memberId));
     carriedOver.forEach(c=>{
-      if(!occupiedNames.has(c.name)) return;
+      if(!occupiedMemberIds.has(c.memberId)) return;
       entries.push({
         seatId: null,
         fineId: c.fineId,
@@ -4327,12 +4335,12 @@
     renderLoading('Kegelabend wird geladen…');
     try{
       const detail = await getEveningDetail(eveningId);
-      if(!detail){ goToArrearsDetail(state.currentArrearsName); return; }
+      if(!detail){ goToArrearsDetail(state.currentArrearsMemberId); return; }
       state.currentEveningDetail = detail;
       const seat = detail.seating.find(s=>s.seatId===seatId);
       goToPersonFineDetail(seatId, seat ? seat.name : state.currentArrearsName);
     }catch(e){
-      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', ()=>goToArrearsDetail(state.currentArrearsName));
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', ()=>goToArrearsDetail(state.currentArrearsMemberId));
     }
   }
 
@@ -4787,6 +4795,7 @@
     const newSeat = detail.seating.find(s=>s.seatId===newSeatId);
     newSeat.name = oldSeat.name;
     newSeat.isGuest = oldSeat.isGuest;
+    newSeat.memberId = oldSeat.memberId;
     newSeat.addedLater = oldSeat.addedLater;
     if(oldSeat.invalid!==undefined) newSeat.invalid = oldSeat.invalid;
     if(oldSeat.invalidAmount!==undefined) newSeat.invalidAmount = oldSeat.invalidAmount;
@@ -4794,6 +4803,7 @@
 
     delete oldSeat.name;
     delete oldSeat.isGuest;
+    delete oldSeat.memberId;
     delete oldSeat.addedLater;
     delete oldSeat.invalid;
     delete oldSeat.invalidAmount;
@@ -4855,26 +4865,28 @@
     selectEl.addEventListener('change', ()=>{ guestWrap.style.display = selectEl.value==='__guest__' ? '' : 'none'; });
     document.getElementById('confirm-add-attendee-btn').addEventListener('click', async ()=>{
       const errEl = document.getElementById('add-attendee-error');
-      let name, isGuest;
+      let name, isGuest, memberId;
       if(selectEl.value==='__guest__'){
         name = document.getElementById('add-attendee-guest-name').value.trim();
         if(!name){ errEl.textContent='Bitte einen Namen angeben.'; return; }
         isGuest = true;
+        memberId = uid('guest');
       }else{
         const member = availableMembers.find(m=>m.id===selectEl.value);
         if(!member){ errEl.textContent='Bitte eine Person auswählen.'; return; }
         name = displayName(member);
         isGuest = false;
+        memberId = member.id;
       }
       const btn = document.getElementById('confirm-add-attendee-btn');
       btn.disabled = true; btn.textContent = 'Wird hinzugefügt…';
       const seat = detail.seating.find(s=>s.seatId===seatId);
-      if(seat){ seat.name = name; seat.isGuest = isGuest; seat.addedLater = true; }
+      if(seat){ seat.name = name; seat.isGuest = isGuest; seat.memberId = memberId; seat.addedLater = true; }
       // Offene Runden dieser Person aus dem zentralen Pool übernehmen (siehe
       // carryOverOpenRoundsFromPool()) - analog zum "Offene Runden übernehmen"-Toggle beim
       // Anlegen eines neuen Abends, hier aber immer automatisch (kein Toggle nötig, da die
       // Aktion ohnehin nur diese eine, gerade hinzugefügte Person betrifft).
-      const newlyCarried = await carryOverOpenRoundsFromPool(new Set([name]));
+      const newlyCarried = await carryOverOpenRoundsFromPool(new Set([memberId]));
       if(newlyCarried.length>0){
         detail.carriedOverRounds = [...(detail.carriedOverRounds||[]), ...newlyCarried];
       }
@@ -6586,8 +6598,8 @@
     if(tabRueckstaendeBtn) tabRueckstaendeBtn.addEventListener('click', ()=>{ state.financeTab='rueckstaende'; render(); });
     const tabSpartoepfeBtn = document.getElementById('finance-tab-spartoepfe-btn');
     if(tabSpartoepfeBtn) tabSpartoepfeBtn.addEventListener('click', ()=>{ state.financeTab='spartoepfe'; render(); });
-    document.querySelectorAll('#app .fines-summary-row[data-name]').forEach(row=>{
-      row.addEventListener('click', ()=>{ goToArrearsDetail(row.dataset.name); });
+    document.querySelectorAll('#app .fines-summary-row[data-member-id]').forEach(row=>{
+      row.addEventListener('click', ()=>{ goToArrearsDetail(row.dataset.memberId); });
     });
   }
 
@@ -6922,9 +6934,9 @@
   }
 
   function isEventCreator(baseEvent){
-    const currentName = getCurrentMemberName();
-    if(!baseEvent || !baseEvent.createdBy) return true; // Alte Termine ohne Ersteller: jeder darf bearbeiten
-    return !!currentName && currentName===baseEvent.createdBy;
+    const currentId = getCurrentMemberId();
+    if(!baseEvent || !baseEvent.createdById) return true; // Alte Termine ohne Ersteller: jeder darf bearbeiten
+    return !!currentId && currentId===baseEvent.createdById;
   }
 
   function rsvpStatusIcon(status, grey){
@@ -6942,10 +6954,10 @@
   }
 
   function buildRsvpSectionHtml(occurrence){
-    const currentName = getCurrentMemberName();
-    const currentStatus = currentName ? getRsvpStatusFor(occurrence.seriesId, occurrence.occurrenceDate, currentName) : null;
+    const currentId = getCurrentMemberId();
+    const currentStatus = currentId ? getRsvpStatusFor(occurrence.seriesId, occurrence.occurrenceDate, currentId) : null;
     const groups = categorizeRsvps(occurrence.seriesId, occurrence.occurrenceDate);
-    const rsvpButtonsHtml = currentName ? `
+    const rsvpButtonsHtml = currentId ? `
       <div class="card">
         <h2 class="section-title">Deine Rückmeldung</h2>
         <div class="rsvp-btn-row">
@@ -7073,10 +7085,10 @@
 
     document.querySelectorAll('.rsvp-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
-        const currentName = getCurrentMemberName();
-        if(!currentName || !occurrence) return;
+        const currentId = getCurrentMemberId();
+        if(!currentId || !occurrence) return;
         btn.disabled = true;
-        await setRsvpStatus(occurrence.seriesId, occurrence.occurrenceDate, currentName, btn.dataset.status);
+        await setRsvpStatus(occurrence.seriesId, occurrence.occurrenceDate, currentId, btn.dataset.status);
         render();
       });
     });
@@ -7121,11 +7133,12 @@
         if(!isEdit){
           const newId = uid('cal');
           const creatorName = getCurrentMemberName();
-          const newEvent = {id:newId, title, location, start, end, recurrence, recurrenceEndDate: recurrenceEndDate||undefined, createdBy: creatorName};
+          const creatorId = getCurrentMemberId();
+          const newEvent = {id:newId, title, location, start, end, recurrence, recurrenceEndDate: recurrenceEndDate||undefined, createdBy: creatorName, createdById: creatorId};
           state.calendarEvents.push(newEvent);
           await saveCalendarEvent(newEvent);
-          if(creatorName){
-            await setRsvpStatus(newId, startDateOnly, creatorName, 'accepted');
+          if(creatorId){
+            await setRsvpStatus(newId, startDateOnly, creatorId, 'accepted');
           }
         }else if(!isSeriesOccurrence){
           const base = state.calendarEvents.find(e=>e.id===occurrence.seriesId);
@@ -7176,6 +7189,7 @@
   function showDeleteTransactionModal(transaction){
     const isFromArrears = !!transaction.fromArrears;
     const arrearsName = transaction.arrearsName || (transaction.description.includes(' – ') ? transaction.description.split(' – ').pop() : null);
+    const arrearsMemberId = transaction.arrearsMemberId || null;
     showModal(`
       <h3>Umsatz löschen</h3>
       <p>„${escapeHtml(transaction.description)}" wirklich löschen?</p>
@@ -7192,10 +7206,16 @@
       state.financeTransactions = state.financeTransactions.filter(t=>t.id!==transaction.id);
 
       const saves = [deleteTransaction(transaction.id)];
-      if(isFromArrears && arrearsName){
-        let entry = state.financeArrears.find(a=>a.name===arrearsName);
-        if(!entry){ entry = {id: resolveArrearsDocId(arrearsName), name:arrearsName, amount:0, history:[]}; state.financeArrears.push(entry); }
-        if(!entry.id) entry.id = resolveArrearsDocId(arrearsName);
+      // arrearsMemberId ist bei allen seit dem ID-Umbau erfassten Zahlungen gesetzt. Für
+      // Alttransaktionen (vor der Migration, ohne arrearsMemberId) wird hier einmalig noch per
+      // Name auf ein aktuelles Mitglied aufgelöst - reiner Fallback für Bestandsdaten, keine
+      // dauerhafte Namensauflösung mehr.
+      const resolvedMemberId = arrearsMemberId || (arrearsName ? (state.members.find(m=>displayName(m)===arrearsName)||{}).id : null);
+      if(isFromArrears && resolvedMemberId){
+        let entry = state.financeArrears.find(a=>a.memberId===resolvedMemberId);
+        if(!entry){ entry = {id: resolveArrearsDocId(resolvedMemberId), memberId: resolvedMemberId, name:arrearsName, amount:0, history:[]}; state.financeArrears.push(entry); }
+        if(!entry.id) entry.id = resolveArrearsDocId(resolvedMemberId);
+        if(!entry.memberId) entry.memberId = resolvedMemberId;
         if(!entry.history) entry.history = [];
         const addBack = Math.abs(transaction.amount);
         entry.amount = Math.round((entry.amount + addBack)*100)/100;
@@ -7211,8 +7231,8 @@
     });
   }
 
-  function getArrearsEntry(name){
-    return state.financeArrears.find(a=>a.name===name) || null;
+  function getArrearsEntry(memberId){
+    return state.financeArrears.find(a=>a.memberId===memberId) || null;
   }
 
   function historyEntryLabel(entry){
@@ -7222,8 +7242,8 @@
   }
 
   function viewArrearsDetail(){
-    const name = state.currentArrearsName;
-    const entry = getArrearsEntry(name);
+    const memberId = state.currentArrearsMemberId;
+    const entry = getArrearsEntry(memberId);
     const amount = entry ? entry.amount : 0;
     const history = (entry && entry.history) ? entry.history.slice().sort((a,b)=>{
       const dateCompare = b.date.localeCompare(a.date);
@@ -7283,8 +7303,9 @@
   }
 
   function showCorrectArrearsModal(){
+    const memberId = state.currentArrearsMemberId;
     const name = state.currentArrearsName;
-    const entry = getArrearsEntry(name);
+    const entry = getArrearsEntry(memberId);
     const amount = entry ? entry.amount : 0;
     showModal(`
       <h3>Rückstand korrigieren</h3>
@@ -7311,9 +7332,10 @@
       btn.disabled = true; btn.textContent = 'Speichert…';
 
       const rounded = Math.round(newAmount*100)/100;
-      let e = getArrearsEntry(name);
-      if(!e){ e = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; state.financeArrears.push(e); }
-      if(!e.id) e.id = resolveArrearsDocId(name);
+      let e = getArrearsEntry(memberId);
+      if(!e){ e = {id: resolveArrearsDocId(memberId), memberId, name, amount:0, history:[]}; state.financeArrears.push(e); }
+      if(!e.id) e.id = resolveArrearsDocId(memberId);
+      if(!e.memberId) e.memberId = memberId;
       if(!e.history) e.history = [];
       const delta = Math.round((rounded - e.amount)*100)/100;
       e.amount = rounded;
@@ -7352,8 +7374,9 @@
     });
     const confirmPaymentBtn = document.getElementById('confirm-arrears-payment-btn');
     if(confirmPaymentBtn) confirmPaymentBtn.addEventListener('click', async ()=>{
+      const memberId = state.currentArrearsMemberId;
       const name = state.currentArrearsName;
-      const entry = getArrearsEntry(name);
+      const entry = getArrearsEntry(memberId);
       const currentAmount = entry ? entry.amount : 0;
       const errEl = document.getElementById('arrears-payment-error');
       const amountRaw = document.getElementById('arrears-payment-amount').value.replace(',', '.');
@@ -7366,12 +7389,13 @@
       confirmPaymentBtn.disabled = true; confirmPaymentBtn.textContent = 'Wird bestätigt…';
 
       const rounded = Math.round(paidAmount*100)/100;
-      const newTx = {id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded, fromArrears:true, arrearsName: name, createdAt: Date.now()};
+      const newTx = {id:uid('tx'), accountId, description:`${bookingText} – ${name}`, date, amount: rounded, fromArrears:true, arrearsName: name, arrearsMemberId: memberId, createdAt: Date.now()};
       state.financeTransactions.push(newTx);
 
       let e = entry;
-      if(!e){ e = {id: resolveArrearsDocId(name), name, amount:0, history:[]}; state.financeArrears.push(e); }
-      if(!e.id) e.id = resolveArrearsDocId(name);
+      if(!e){ e = {id: resolveArrearsDocId(memberId), memberId, name, amount:0, history:[]}; state.financeArrears.push(e); }
+      if(!e.id) e.id = resolveArrearsDocId(memberId);
+      if(!e.memberId) e.memberId = memberId;
       if(!e.history) e.history = [];
       const before = e.amount;
       e.amount = Math.max(0, Math.round((e.amount - rounded)*100)/100);
@@ -7576,13 +7600,13 @@
   // direkt aus dem Pool entfernt (statt nur markiert) - das ist der zentrale Vorteil ggü. der
   // früheren Instanz-Tracking-Lösung: kein Durchsuchen vergangener Abende mehr nötig, der Pool
   // IST bereits die vollständige, flache Liste aller offenen Rundenpflichten.
-  async function carryOverOpenRoundsFromPool(participantNames){
+  async function carryOverOpenRoundsFromPool(participantMemberIds){
     const carried = [];
     await updateOpenRoundsPool(serverPool=>{
       const remaining = [];
       serverPool.forEach(entry=>{
-        if(participantNames.has(entry.name)){
-          carried.push({ id: uid('cr'), fineId: entry.fineId, fineName: entry.fineName, name: entry.name, given: false, sourceEveningId: entry.sourceEveningId, sourceDate: entry.sourceDate });
+        if(participantMemberIds.has(entry.memberId)){
+          carried.push({ id: uid('cr'), fineId: entry.fineId, fineName: entry.fineName, name: entry.name, memberId: entry.memberId, given: false, sourceEveningId: entry.sourceEveningId, sourceDate: entry.sourceDate });
         }else{
           remaining.push(entry);
         }
@@ -7598,8 +7622,8 @@
     const checkedIds = Array.from(document.querySelectorAll('.member-checkbox:checked')).map(cb=>cb.dataset.id);
     const selectedMembers = state.members.filter(m=>checkedIds.includes(m.id));
     const participants = [
-      ...selectedMembers.map(m=>({name:displayName(m), isGuest:false})),
-      ...currentGuests.map(g=>({name:g.name, isGuest:true}))
+      ...selectedMembers.map(m=>({name:displayName(m), isGuest:false, memberId:m.id})),
+      ...currentGuests.map(g=>({name:g.name, isGuest:true, memberId:uid('guest')}))
     ];
     const errEl = document.getElementById('form-error');
     const btn = document.getElementById('confirm-btn');
@@ -7707,12 +7731,8 @@
     }else if(schriftfuehrerChoice.startsWith('name:')){
       // Konkrete Person gewählt: bleibt auf ihrem zufällig verlosten Platz, wird dort nur markiert.
       const chosenMemberId = schriftfuehrerChoice.slice('name:'.length);
-      const chosenMember = state.members.find(m=>m.id===chosenMemberId);
-      if(chosenMember){
-        const chosenName = displayName(chosenMember);
-        const foundSeatId = occupiedSeatIds.find((seatId, i)=> !shuffledParticipants[i].isGuest && shuffledParticipants[i].name===chosenName);
-        if(foundSeatId) schriftfuehrerSeatId = foundSeatId;
-      }
+      const foundSeatId = occupiedSeatIds.find((seatId, i)=> !shuffledParticipants[i].isGuest && shuffledParticipants[i].memberId===chosenMemberId);
+      if(foundSeatId) schriftfuehrerSeatId = foundSeatId;
     }
 
     // Seitenbezeichnungen werden HIER EINMALIG als fester Snapshot übernommen - analog zu
@@ -7725,6 +7745,7 @@
       return {
         seatId:seat.id, section:seat.section, label:seat.label,
         name: p ? p.name : null, isGuest: p ? p.isGuest : false,
+        memberId: p ? p.memberId : null,
         isSchriftfuehrer: seat.id===schriftfuehrerSeatId
       };
     });
@@ -7734,10 +7755,10 @@
     // (analog zu finesCatalogSnapshot) - siehe getEveningSeatingTemplate()/getEveningSideNames():
     // ein späterer Wechsel des Club-Templates bzw. der Seitenbezeichnungen darf die Darstellung
     // dieses bereits angelegten Abends nicht rückwirkend verändern.
-    const participantNames = new Set(participants.map(p=>p.name));
+    const participantMemberIds = new Set(participants.map(p=>p.memberId));
     const carryOverCheckbox = document.getElementById('carry-over-rounds-checkbox');
     const carryOverEnabled = !carryOverCheckbox || carryOverCheckbox.checked;
-    const carriedOverRounds = carryOverEnabled ? await carryOverOpenRoundsFromPool(participantNames) : [];
+    const carriedOverRounds = carryOverEnabled ? await carryOverOpenRoundsFromPool(participantMemberIds) : [];
 
     const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, seatingTemplateId: seatingTemplate.id, seatingSideNamesSnapshot: seatingSideNamesAtCreation, carriedOverRounds };
     const newIndexEntry = {id, date, ...computeEveningSummaryFields(detail)};

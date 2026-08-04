@@ -115,7 +115,7 @@ function computeOpenRoundEntriesServer(detail) {
       const givenIndices = new Set(givenMap[fine.id] || []);
       for (let i = 0; i < count; i++) {
         if (givenIndices.has(i)) continue;
-        entries.push({ name: seat.name, fineId: fine.id, fineName: fine.name });
+        entries.push({ name: seat.name, memberId: seat.memberId, fineId: fine.id, fineName: fine.name });
       }
     });
   });
@@ -386,12 +386,12 @@ function formatDateDEServer(iso) {
 
 // Sammelt alle Empfänger (Anwesende + Abwesende mit Durchschnittsbetrag) mit gepflegter E-Mail.
 function collectRecipientNames(detail, members) {
-  const names = [];
-  detail.seating.filter(s => s.name && !s.isGuest).forEach(s => { names.push(s.name); });
-  (detail.absentMembersFines || []).forEach(a => { names.push(a.name); });
+  const entries = [];
+  detail.seating.filter(s => s.name && !s.isGuest).forEach(s => { entries.push({ name: s.name, memberId: s.memberId }); });
+  (detail.absentMembersFines || []).forEach(a => { entries.push({ name: a.name, memberId: a.memberId }); });
   const result = [];
-  names.forEach(name => {
-    const member = members.find(m => displayName(m) === name);
+  entries.forEach(({ name, memberId }) => {
+    const member = members.find(m => m.id === memberId);
     if (member && member.email) result.push({ name, email: member.email });
   });
   return result;
@@ -438,7 +438,7 @@ async function handleEveningClosed(clubId, after, docId) {
   });
 
   (after.absentMembersFines || []).forEach(a => {
-    const member = members.find(m => displayName(m) === a.name);
+    const member = members.find(m => m.id === a.memberId);
     if (member && member.email) {
       recipients.push({
         email: member.email,
@@ -533,16 +533,12 @@ function computeEveningSummaryFields(detail, memberCount) {
   return { presentCount, guestCount, absentCount, income };
 }
 
-// ID-Auflösung für Rückstands-Dokumente: bevorzugt die Mitglieds-ID, damit eine spätere
-// Umbenennung den Rückstand nicht "verwaist" lässt. Identisch zur Client-Funktion
+// ID-Auflösung für Rückstands-Dokumente: seit dem ID-Umbau ist die memberId (echte
+// Mitglieds-ID oder generierte 'guest-<uuid>', siehe seat.memberId) immer schon die
+// Dokument-ID - keine Namensauflösung mehr nötig. Identisch zur Client-Funktion
 // resolveArrearsDocId in index.html.
-function resolveArrearsDocIdServer(name, members) {
-  const member = members.find(m => displayName(m) === name);
-  if (member) return member.id;
-  const transliterated = name
-    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
-    .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue');
-  return 'guest-' + transliterated.replace(/[^a-zA-Z0-9_-]/g, '_');
+function resolveArrearsDocIdServer(memberId) {
+  return memberId;
 }
 
 // Serverseitiges Äquivalent zu updateAttendanceStatsForEvening in index.html - aktualisiert die
@@ -561,11 +557,11 @@ async function updateAttendanceStatsForEveningServer(clubRef, detail, direction)
   const newTotal = (stats.totalsByYear[year] || 0) + direction;
   if (newTotal > 0) stats.totalsByYear[year] = newTotal; else delete stats.totalsByYear[year];
 
-  const presentMemberNames = new Set(detail.seating.filter(s => s.name && !s.isGuest).map(s => s.name));
-  presentMemberNames.forEach(name => {
-    if (!stats.attendanceByMember[name]) stats.attendanceByMember[name] = {};
-    const newCount = (stats.attendanceByMember[name][year] || 0) + direction;
-    if (newCount > 0) stats.attendanceByMember[name][year] = newCount; else delete stats.attendanceByMember[name][year];
+  const presentMemberIds = new Set(detail.seating.filter(s => s.name && !s.isGuest).map(s => s.memberId));
+  presentMemberIds.forEach(memberId => {
+    if (!stats.attendanceByMember[memberId]) stats.attendanceByMember[memberId] = {};
+    const newCount = (stats.attendanceByMember[memberId][year] || 0) + direction;
+    if (newCount > 0) stats.attendanceByMember[memberId][year] = newCount; else delete stats.attendanceByMember[memberId][year];
   });
   await statsRef.set({ value: JSON.stringify(stats) });
 }
@@ -618,7 +614,7 @@ exports.closeEvening = onCall({}, async (request) => {
   detail.skipNotificationEmail = !!skipNotificationEmail;
 
   const presentSeats = detail.seating.filter(s => s.name && !s.isGuest);
-  const presentNames = new Set(presentSeats.map(s => s.name));
+  const presentMemberIds = new Set(presentSeats.map(s => s.memberId));
   const avgRounded = averageOfTotalsRounded(validPresentMemberTotals(detail));
 
   // Invalide markierte Personen: Durchschnitt jetzt fest einfrieren.
@@ -626,8 +622,8 @@ exports.closeEvening = onCall({}, async (request) => {
     if (s.invalid && s.invalidAmount === undefined) s.invalidAmount = avgRounded;
   });
 
-  const absentMembers = members.filter(m => !presentNames.has(displayName(m)));
-  detail.absentMembersFines = absentMembers.map(m => ({ name: displayName(m), amount: avgRounded }));
+  const absentMembers = members.filter(m => !presentMemberIds.has(m.id));
+  detail.absentMembersFines = absentMembers.map(m => ({ name: displayName(m), memberId: m.id, amount: avgRounded }));
   detail.closed = true;
 
   // Aktuelle Rückstände laden (arrears-Subcollection, ein Dokument pro Person).
@@ -642,23 +638,34 @@ exports.closeEvening = onCall({}, async (request) => {
   // braucht.
   const priorArrearsSnapshot = {};
   detail.seating.filter(s => s.name).forEach(s => {
-    const existing = arrears.find(a => a.name === s.name);
-    priorArrearsSnapshot[s.name] = existing ? existing.amount : 0;
+    const existing = arrears.find(a => a.memberId === s.memberId);
+    priorArrearsSnapshot[s.memberId] = existing ? existing.amount : 0;
   });
   detail.absentMembersFines.forEach(a => {
-    if (priorArrearsSnapshot[a.name] === undefined) {
-      const existing = arrears.find(x => x.name === a.name);
-      priorArrearsSnapshot[a.name] = existing ? existing.amount : 0;
+    if (priorArrearsSnapshot[a.memberId] === undefined) {
+      const existing = arrears.find(x => x.memberId === a.memberId);
+      priorArrearsSnapshot[a.memberId] = existing ? existing.amount : 0;
     }
   });
   detail.priorArrearsSnapshot = priorArrearsSnapshot;
 
   const touchedArrearsEntries = [];
-  function addToArrears(name, amount, seatId) {
+  function addToArrears(name, memberId, amount, seatId) {
     if (!amount) return;
-    let entry = arrears.find(a => a.name === name);
-    if (!entry) { entry = { id: resolveArrearsDocIdServer(name, members), name, amount: 0, history: [] }; arrears.push(entry); }
-    if (!entry.id) entry.id = resolveArrearsDocIdServer(name, members);
+    // Absicherung gegen die Deploy/Migration-Reihenfolge: Sitzplätze aus VOR dem ID-Umbau
+    // angelegten Abenden haben noch keine memberId (siehe scripts/migrate-to-member-ids.js).
+    // Ohne memberId würde hier sonst ein Sammel-Dokument mit der Firestore-ID 'undefined'
+    // entstehen, in dem sich mehrere Personen einen Rückstand teilen - lieber überspringen
+    // und den Betrag verwerfen, als Daten unbemerkt zu vermischen. Nach erfolgter Migration
+    // tritt dieser Fall nicht mehr auf.
+    if (!memberId) {
+      console.error(`addToArrears: keine memberId für '${name}' - Eintrag übersprungen (Migration noch nicht gelaufen?)`);
+      return;
+    }
+    let entry = arrears.find(a => a.memberId === memberId);
+    if (!entry) { entry = { id: resolveArrearsDocIdServer(memberId), memberId, name, amount: 0, history: [] }; arrears.push(entry); }
+    if (!entry.id) entry.id = resolveArrearsDocIdServer(memberId);
+    if (!entry.memberId) entry.memberId = memberId;
     if (!entry.history) entry.history = [];
     entry.amount = Math.round((entry.amount + amount) * 100) / 100;
     entry.history.push({
@@ -669,9 +676,9 @@ exports.closeEvening = onCall({}, async (request) => {
     if (!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
   }
   detail.seating.filter(s => s.name).forEach(s => {
-    addToArrears(s.name, roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)), s.seatId);
+    addToArrears(s.name, s.memberId, roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)), s.seatId);
   });
-  detail.absentMembersFines.forEach(a => { addToArrears(a.name, a.amount); });
+  detail.absentMembersFines.forEach(a => { addToArrears(a.name, a.memberId, a.amount); });
 
   // Index-Eintrag (evenings-index, liegt unter clubs/{clubId}/data/evenings-index) aktualisieren -
   // dieselbe Kennzahlen-Logik wie computeEveningSummaryFields im Client.
@@ -701,7 +708,7 @@ exports.closeEvening = onCall({}, async (request) => {
     openRoundEntries.forEach(e => {
       poolEntries.push({
         id: `or-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-        name: e.name, fineId: e.fineId, fineName: e.fineName,
+        name: e.name, memberId: e.memberId, fineId: e.fineId, fineName: e.fineName,
         sourceEveningId: detail.id, sourceDate: detail.date,
       });
     });
@@ -742,11 +749,16 @@ exports.closeEvening = onCall({}, async (request) => {
 // beim Aufrufer einheitlich über einen Batch, analog zu closeEvening.
 function reverseArrearsForEveningServer(detail, arrears, members, noteText) {
   const touchedArrearsEntries = [];
-  function subtractFromArrears(name, amount) {
+  function subtractFromArrears(name, memberId, amount) {
     if (!amount) return;
-    let entry = arrears.find(a => a.name === name);
-    if (!entry) { entry = { id: resolveArrearsDocIdServer(name, members), name, amount: 0, history: [] }; arrears.push(entry); }
-    if (!entry.id) entry.id = resolveArrearsDocIdServer(name, members);
+    if (!memberId) {
+      console.error(`subtractFromArrears: keine memberId für '${name}' - Eintrag übersprungen (Migration noch nicht gelaufen?)`);
+      return;
+    }
+    let entry = arrears.find(a => a.memberId === memberId);
+    if (!entry) { entry = { id: resolveArrearsDocIdServer(memberId), memberId, name, amount: 0, history: [] }; arrears.push(entry); }
+    if (!entry.id) entry.id = resolveArrearsDocIdServer(memberId);
+    if (!entry.memberId) entry.memberId = memberId;
     if (!entry.history) entry.history = [];
     // Der ursprüngliche "Strafen"-Eintrag dieses Abends verweist auf die Sitzplatz-Strafen - die
     // sind jetzt veraltet (Abend wird wieder geöffnet/gelöscht), daher den Link kappen.
@@ -761,9 +773,9 @@ function reverseArrearsForEveningServer(detail, arrears, members, noteText) {
     if (!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
   }
   detail.seating.filter(s => s.name).forEach(s => {
-    subtractFromArrears(s.name, roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
+    subtractFromArrears(s.name, s.memberId, roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
   });
-  (detail.absentMembersFines || []).forEach(a => { subtractFromArrears(a.name, a.amount); });
+  (detail.absentMembersFines || []).forEach(a => { subtractFromArrears(a.name, a.memberId, a.amount); });
   return touchedArrearsEntries;
 }
 
