@@ -759,7 +759,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.3';
+  const APP_VERSION = '1.1.4';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3032,7 +3032,7 @@
         ` : '';
         return `
         <div class="cal-event-row" data-series-id="${ev.seriesId}" data-occurrence-date="${ev.occurrenceDate}">
-          ${currentName ? `<span class="cal-event-own-status" title="Deine Rückmeldung">${rsvpStatusIcon(ownStatus)}</span>` : ''}
+          ${currentId ? `<span class="cal-event-own-status" title="Deine Rückmeldung">${rsvpStatusIcon(ownStatus)}</span>` : ''}
           <div class="cal-event-main">
             <div class="cal-event-title">${escapeHtml(ev.title)}</div>
             ${ev.location ? `<div class="cal-event-meta">${escapeHtml(ev.location)}</div>` : ''}
