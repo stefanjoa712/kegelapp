@@ -95,6 +95,33 @@ function fineTotalForSeat(detail, seatId) {
 
 // Drei Bereiche - exakt wie auf der Strafenseite pro Person in der App.
 
+// Ermittelt alle NOCH OFFENEN Runden-Instanzen eines Abends (Pendant zu computeRoundEntries im
+// Client, aber ohne Sitzplatz-Reihenfolge - die ist nur für die Anzeige relevant, nicht für den
+// Pool-Übertrag). Wird ausschließlich beim Abschließen eines Abends aufgerufen (closeEvening),
+// um die noch offenen Runden in den zentralen Pool (open-rounds-pool) zu verschieben - bereits
+// gegebene Runden fließen bewusst NICHT mit ein, sie sind bereits erledigt.
+function computeOpenRoundEntriesServer(detail) {
+  const catalog = detail.finesCatalogSnapshot || [];
+  const roundFines = catalog.filter(f => f.type === 'runde' || f.type === 'fremdstrafe_runde');
+  if (roundFines.length === 0) return [];
+  const occupied = detail.seating.filter(s => s.name);
+  const entries = [];
+  occupied.forEach(seat => {
+    const seatEntries = (detail.finesBySeat && detail.finesBySeat[seat.seatId]) || {};
+    const givenMap = (detail.roundsGivenBySeat && detail.roundsGivenBySeat[seat.seatId]) || {};
+    roundFines.forEach(fine => {
+      const count = seatEntries[fine.id] || 0;
+      if (count <= 0) return;
+      const givenIndices = new Set(givenMap[fine.id] || []);
+      for (let i = 0; i < count; i++) {
+        if (givenIndices.has(i)) continue;
+        entries.push({ name: seat.name, fineId: fine.id, fineName: fine.name });
+      }
+    });
+  });
+  return entries;
+}
+
 function buildCatalogLines(detail, seatId) {
   const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
   const catalog = detail.finesCatalogSnapshot || [];
@@ -331,11 +358,13 @@ async function enrichEveningWithSeatFines(clubId, detail) {
   const snaps = await seatsRef.get();
   detail.finesBySeat = {};
   detail.adHocFinesBySeat = {};
+  detail.roundsGivenBySeat = {};
   snaps.forEach(snap => {
     let seatData;
     try { seatData = JSON.parse(snap.data().value); } catch (e) { return; }
     if (seatData.finesBySeat) detail.finesBySeat[snap.id] = seatData.finesBySeat;
     if (seatData.adHocFinesBySeat) detail.adHocFinesBySeat[snap.id] = seatData.adHocFinesBySeat;
+    if (seatData.roundsGivenBySeat) detail.roundsGivenBySeat[snap.id] = seatData.roundsGivenBySeat;
   });
   return detail;
 }
@@ -656,14 +685,39 @@ exports.closeEvening = onCall({}, async (request) => {
   const summaryFields = computeEveningSummaryFields(detail, members.length);
   if (idx >= 0) eveningsIndex[idx] = { ...eveningsIndex[idx], closed: true, ...summaryFields };
 
-  // Alle Schreibvorgänge (Hauptdokument, Index, jeder betroffene Rückstands-Eintrag) in EINEM
-  // atomaren Batch - entweder alles oder nichts, kein Teilfehler-Risiko wie bei einem einfachen
-  // Promise.all. Firestore erlaubt bis zu 500 Schreiboperationen pro Batch, das reicht für jeden
-  // realistischen Kegelclub-Abend deutlich.
-  const { finesBySeat, adHocFinesBySeat, ...mainFields } = detail;
+  // Noch offene Runden (nicht "gegeben") wandern beim Abschließen in den zentralen Pool
+  // (clubs/{clubId}/data/open-rounds-pool) - von dort werden sie beim Anlegen eines neuen Abends
+  // gelesen (siehe carryOverOpenRoundsFromPool im Client), statt bei jedem neuen Abend alle
+  // vergangenen Abende einzeln durchsuchen zu müssen. Bereits gegebene Runden fließen NICHT mit
+  // ein - sie sind erledigt und werden beim Abschluss verworfen.
+  const openRoundsRef = clubRef.collection('data').doc('open-rounds-pool');
+  const openRoundEntries = computeOpenRoundEntriesServer(detail);
+  let poolEntries = [];
+  if (openRoundEntries.length > 0) {
+    const poolSnap = await openRoundsRef.get();
+    if (poolSnap.exists) {
+      try { poolEntries = JSON.parse(poolSnap.data().value || '[]'); } catch (e) { poolEntries = []; }
+    }
+    openRoundEntries.forEach(e => {
+      poolEntries.push({
+        id: `or-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        name: e.name, fineId: e.fineId, fineName: e.fineName,
+        sourceEveningId: detail.id, sourceDate: detail.date,
+      });
+    });
+  }
+
+  // Alle Schreibvorgänge (Hauptdokument, Index, Runden-Pool, jeder betroffene Rückstands-Eintrag)
+  // in EINEM atomaren Batch - entweder alles oder nichts, kein Teilfehler-Risiko wie bei einem
+  // einfachen Promise.all. Firestore erlaubt bis zu 500 Schreiboperationen pro Batch, das reicht
+  // für jeden realistischen Kegelclub-Abend deutlich.
+  const { finesBySeat, adHocFinesBySeat, roundsGivenBySeat, ...mainFields } = detail;
   const batch = db.batch();
   batch.set(eveningRef, { value: JSON.stringify(mainFields) });
   batch.set(dataRef, { value: JSON.stringify(eveningsIndex) });
+  if (openRoundEntries.length > 0) {
+    batch.set(openRoundsRef, { value: JSON.stringify(poolEntries) });
+  }
   touchedArrearsEntries.forEach(entry => {
     batch.set(clubRef.collection('arrears').doc(entry.id), { value: JSON.stringify(entry) });
   });
@@ -798,10 +852,42 @@ exports.reopenEvening = onCall({}, async (request) => {
   const summaryFields = computeEveningSummaryFields(detail, members.length);
   if (idx >= 0) eveningsIndex[idx] = { ...eveningsIndex[idx], closed: false, ...summaryFields };
 
-  const { finesBySeat, adHocFinesBySeat, ...mainFields } = detail;
+  // Beim Abschließen (siehe closeEvening) wanderten die damals offenen Runden dieses Abends in
+  // den zentralen Pool (open-rounds-pool) - bei einer Wiedereröffnung leben sie wieder direkt am
+  // Abend (roundsGivenBySeat/finesBySeat), müssen also aus dem Pool entfernt werden, sonst gäbe
+  // es die Rundenpflicht doppelt (einmal im Pool, einmal wieder aktiv im Abend).
+  //
+  // Sonderfall: eine dieser Runden könnte inzwischen von einem SPÄTEREN Abend bereits übernommen
+  // worden sein (liegt dann nicht mehr im Pool, sondern in dessen carriedOverRounds) - in diesem
+  // Fall würde die Wiedereröffnung die Runde ein zweites Mal aktiv machen (einmal hier, einmal im
+  // übernehmenden Abend). Das wird VOR jeder Schreibaktion geprüft und bei Konflikt abgebrochen,
+  // damit der Nutzer bewusst entscheiden kann (z.B. den übernehmenden Abend zuerst korrigieren).
+  const openRoundsRef = clubRef.collection('data').doc('open-rounds-pool');
+  const poolSnap = await openRoundsRef.get();
+  let poolEntries = [];
+  if (poolSnap.exists) {
+    try { poolEntries = JSON.parse(poolSnap.data().value || '[]'); } catch (e) { poolEntries = []; }
+  }
+  const entriesFromThisEvening = poolEntries.filter(e => e.sourceEveningId === detail.id);
+  const expectedOpenCount = computeOpenRoundEntriesServer(detail).length;
+  // Wenn beim Abschluss mehr offene Runden in den Pool wanderten, als jetzt noch im Pool auf
+  // diesen Abend verweisen, wurde mindestens eine davon bereits übernommen (aus dem Pool entfernt
+  // und in carriedOverRounds eines anderen Abends verschoben) - dann abbrechen.
+  if (expectedOpenCount > 0 && entriesFromThisEvening.length < expectedOpenCount) {
+    throw new HttpsError('failed-precondition', 'Mindestens eine offene Runde dieses Abends wurde bereits von einem späteren Abend übernommen. Bitte zuerst dort prüfen, bevor dieser Abend wieder geöffnet wird.');
+  }
+  const poolChanged = entriesFromThisEvening.length > 0;
+  if (poolChanged) {
+    poolEntries = poolEntries.filter(e => e.sourceEveningId !== detail.id);
+  }
+
+  const { finesBySeat, adHocFinesBySeat, roundsGivenBySeat, ...mainFields } = detail;
   const batch = db.batch();
   batch.set(eveningRef, { value: JSON.stringify(mainFields) });
   batch.set(dataRef, { value: JSON.stringify(eveningsIndex) });
+  if (poolChanged) {
+    batch.set(openRoundsRef, { value: JSON.stringify(poolEntries) });
+  }
   const arrearsSetIds = [];
   const arrearsDeleteIds = [];
   touchedArrearsEntries.forEach(entry => {
@@ -882,6 +968,36 @@ exports.deleteEvening = onCall({}, async (request) => {
   }
   eveningsIndex = eveningsIndex.filter(e => e.id !== eveningId);
 
+  // Pool-Bereinigung (open-rounds-pool):
+  // 1) War dieser Abend abgeschlossen, liegen seine damals offenen Runden im Pool - der Abend
+  //    verschwindet komplett, diese Rundenpflichten werden bewusst NICHT irgendwo anders
+  //    wiederhergestellt (siehe Absprache: "Pflicht komplett verworfen, Abend ist weg").
+  // 2) Hatte dieser Abend selbst offene Runden aus dem Pool übernommen (carriedOverRounds), die
+  //    noch nicht gegeben wurden, müssen diese zurück in den Pool - sonst ginge die Pflicht
+  //    verloren, nur weil der übernehmende Abend gelöscht wird.
+  const openRoundsRef = clubRef.collection('data').doc('open-rounds-pool');
+  const poolSnap = await openRoundsRef.get();
+  let poolEntries = [];
+  if (poolSnap.exists) {
+    try { poolEntries = JSON.parse(poolSnap.data().value || '[]'); } catch (e) { poolEntries = []; }
+  }
+  let poolChanged = false;
+  if (wasClosed) {
+    const filtered = poolEntries.filter(e => e.sourceEveningId !== eveningId);
+    if (filtered.length !== poolEntries.length) { poolEntries = filtered; poolChanged = true; }
+  }
+  const openCarriedToReturn = (detail.carriedOverRounds || []).filter(c => !c.given && c.sourceEveningId);
+  if (openCarriedToReturn.length > 0) {
+    openCarriedToReturn.forEach(c => {
+      poolEntries.push({
+        id: `or-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        name: c.name, fineId: c.fineId, fineName: c.fineName,
+        sourceEveningId: c.sourceEveningId, sourceDate: c.sourceDate,
+      });
+    });
+    poolChanged = true;
+  }
+
   // Alle Sitzplatz-Unterdokumente + Hauptdokument löschen, Index aktualisieren, betroffene
   // Rückstände korrigieren - alles in einem Batch.
   const seatsSnap = await eveningRef.collection('seats').get();
@@ -889,6 +1005,9 @@ exports.deleteEvening = onCall({}, async (request) => {
   seatsSnap.forEach(seatDoc => { batch.delete(seatDoc.ref); });
   batch.delete(eveningRef);
   batch.set(dataRef, { value: JSON.stringify(eveningsIndex) });
+  if (poolChanged) {
+    batch.set(openRoundsRef, { value: JSON.stringify(poolEntries) });
+  }
   const arrearsSetIds = [];
   const arrearsDeleteIds = [];
   touchedArrearsEntries.forEach(entry => {

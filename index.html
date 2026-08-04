@@ -501,11 +501,32 @@
   .adhoc-fine-row:last-child{border-bottom:none;}
   .muted{color:var(--muted); font-size:13px; margin:0;}
 
-  .round-entry-row{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 2px; border-bottom:1px dashed var(--line);}
+  .round-entry-row{display:flex; align-items:center; gap:12px; padding:12px 2px; border-bottom:1px dashed var(--line); transition:opacity .35s ease, transform .35s ease, max-height .35s ease; max-height:80px; overflow:hidden;}
   .round-entry-row:last-child{border-bottom:none;}
-  .round-entry-row.given{color:var(--muted);}
-  .round-entry-name{flex:1; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .round-mark-given-btn{flex-shrink:0; padding:8px 14px !important; font-size:13px !important;}
+  .round-entry-row.fading-out{opacity:0; transform:translateX(12px); max-height:0; padding-top:0; padding-bottom:0; border-bottom-color:transparent;}
+  .round-entry-row.given{padding:9px 2px;}
+  .round-avatar{flex-shrink:0; width:34px; height:34px; border-radius:50%; background:var(--tint); color:var(--brass); font-family:var(--font-display); font-weight:700; font-size:14px; display:flex; align-items:center; justify-content:center;}
+  .round-entry-row.given .round-avatar{background:var(--line); color:var(--muted);}
+  .round-entry-main{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;}
+  .round-entry-name{font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink);}
+  .round-entry-row.given .round-entry-name{color:var(--muted); font-weight:600;}
+  .round-entry-badge{display:inline-block; align-self:flex-start; background:var(--tint); color:var(--brass); font-size:12px; font-weight:700; padding:2px 8px; border-radius:20px;}
+  .round-entry-row.given .round-entry-badge{background:transparent; color:var(--muted); padding:0; font-weight:600;}
+  .round-carried-tag{font-weight:600; font-style:italic; opacity:.85;}
+  .round-mark-given-btn{flex-shrink:0; width:34px; height:34px; border-radius:50%; border:1.5px solid var(--line); background:var(--surface); color:var(--muted); display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; transition:background .2s ease, border-color .2s ease, color .2s ease;}
+  .round-mark-given-btn svg{width:18px; height:18px;}
+  .round-mark-given-btn:hover{border-color:var(--felt); color:var(--felt);}
+  .round-mark-given-btn.confirmed{background:var(--felt); border-color:var(--felt); color:#fff;}
+  .round-undo-given-btn{flex-shrink:0; width:30px; height:30px; border-radius:50%; border:1.5px solid var(--line); background:var(--surface); color:var(--muted); display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; transition:background .2s ease, border-color .2s ease, color .2s ease;}
+  .round-undo-given-btn svg{width:15px; height:15px;}
+  .round-undo-given-btn:hover{border-color:var(--wine); color:var(--wine);}
+  .round-given-check{flex-shrink:0; width:22px; height:22px; color:var(--muted);}
+  .rounds-given-toggle{display:flex; align-items:center; justify-content:space-between; width:100%; background:none; border:none; padding:14px 2px 8px; cursor:pointer; font-family:var(--font-body); border-top:1px solid var(--line); margin-top:4px;}
+  .rounds-given-toggle-label{font-weight:700; color:var(--muted); font-size:14px;}
+  .rounds-given-toggle-chevron{color:var(--muted); transition:transform .2s ease;}
+  .rounds-given-toggle.open .rounds-given-toggle-chevron{transform:rotate(180deg);}
+  .rounds-given-list{overflow:hidden; transition:max-height .3s ease;}
+  .rounds-given-list.collapsed{max-height:0;}
 
   .hint{background:var(--tint); border:1px solid var(--brass); color:var(--ink); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:6px;}
 
@@ -730,7 +751,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.119';
+  const APP_VERSION = '1.1.0';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3810,6 +3831,12 @@
           </optgroup>
         </select>
       </div>
+      <div class="card">
+        <label class="member-check-row" style="cursor:pointer;">
+          <input type="checkbox" id="carry-over-rounds-checkbox" checked>
+          <span>Offene Runden von vergangenen Abenden übernehmen</span>
+        </label>
+      </div>
       <div class="card" style="text-align:center;">
         <div class="seat-counter" id="seat-counter">0 / ${getClubSeatingTemplate().perSide*2} Plätze belegt</div>
         <div class="form-error" id="form-error"></div>
@@ -3901,6 +3928,28 @@
       console.error('Konnte evenings-index nicht vom Server laden, nutze lokalen Stand als Fallback', e);
       return state.eveningsIndex;
     }
+  }
+
+  // Zentraler Pool für offene Rundenpflichten (clubs/{clubId}/data/open-rounds-pool), analog zu
+  // evenings-index. Wird von der closeEvening Cloud Function befüllt (siehe functions/index.js)
+  // und beim Anlegen eines neuen Abends gelesen/geleert (siehe carryOverOpenRoundsFromPool()).
+  // IMMER vom Server lesen (nicht aus einem lokalen State-Cache) - aus demselben Grund wie bei
+  // evenings-index: der Pool wird auch serverseitig (Cloud Functions) verändert, ein veralteter
+  // Client-Stand dürfte diese Änderungen niemals überschreiben.
+  async function getOpenRoundsPoolFromServer(){
+    try{
+      const snap = await withTimeout(getDocFromServer(clubDocRef('open-rounds-pool')), STORAGE_TIMEOUT_MS);
+      return snap.exists() ? JSON.parse(snap.data().value) : [];
+    }catch(e){
+      console.error('Konnte open-rounds-pool nicht vom Server laden', e);
+      return [];
+    }
+  }
+  async function updateOpenRoundsPool(mutatorFn){
+    const serverPool = await getOpenRoundsPoolFromServer();
+    const newPool = mutatorFn(serverPool);
+    await setClubJSON('open-rounds-pool', newPool);
+    return newPool;
   }
 
   // ZENTRALER Schreib-Helper für ALLE Änderungen an evenings-index (anlegen, löschen,
@@ -4028,10 +4077,18 @@
   // abhakbar). Wird die zugrunde liegende Strafe reduziert, filtert computeRoundEntries
   // automatisch die dann nicht mehr existierenden Indizes (>= neuer count) heraus; die
   // eigentliche Bereinigung von roundsGivenBySeat passiert zusätzlich in adjustFineCount.
+  // Ermittelt alle Runden-Instanzen eines Abends für die Anzeige im Runden-Tab. Ein offener Abend
+  // zeigt seine offenen Runden ganz normal (abhakbar) - erst beim ABSCHLIESSEN (closeEvening,
+  // Cloud Function) wandern die dann noch offenen Runden serverseitig in den zentralen Pool
+  // (clubs/{clubId}/data/open-rounds-pool, siehe carryOverOpenRoundsFromPool()). Ab dann bleiben
+  // sie hier nur noch informativ sichtbar (kein "Gegeben"-Button mehr, siehe closed-Check in
+  // buildRoundsTab) - das ist bewusst eine Doppel-Anzeige: informativ im alten, abhakbar im neuen
+  // Abend, der sie aus dem Pool übernommen hat (carried:true, siehe unten).
   function computeRoundEntries(detail){
     const catalog = detail.finesCatalogSnapshot || [];
     const roundFines = catalog.filter(f=> f.type==='runde' || f.type==='fremdstrafe_runde');
-    if(roundFines.length===0) return [];
+    const carriedOver = detail.carriedOverRounds || [];
+    if(roundFines.length===0 && carriedOver.length===0) return [];
     const bySeatId = {};
     detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
     const perSide = getEveningSeatingTemplate(detail).perSide;
@@ -4054,9 +4111,29 @@
             name: seat.name,
             fineName: fine.name,
             given: givenIndices.has(i),
-            instanceIndex: i
+            instanceIndex: i,
+            carried: false
           });
         }
+      });
+    });
+    // Übernommene Runden aus dem zentralen Pool (siehe carryOverOpenRoundsFromPool()) - eigener
+    // Datentopf ohne Bezug zu finesBySeat, damit keine Fremdstrafe-Beträge erneut ausgelöst
+    // werden. Nur Personen, die an DIESEM Abend auch tatsächlich sitzen (occupied), werden
+    // berücksichtigt - carryOverOpenRoundsFromPool() filtert das bereits beim Anlegen, hier
+    // zusätzlich defensiv, falls sich die Besetzung nachträglich ändert.
+    const occupiedNames = new Set(occupied.map(s=>s.name));
+    carriedOver.forEach(c=>{
+      if(!occupiedNames.has(c.name)) return;
+      entries.push({
+        seatId: null,
+        fineId: c.fineId,
+        name: c.name,
+        fineName: c.fineName,
+        given: !!c.given,
+        instanceIndex: c.id,
+        carried: true,
+        sourceDate: c.sourceDate || null
       });
     });
     return entries;
@@ -4079,42 +4156,101 @@
     }
     const openEntries = entries.filter(e=>!e.given);
     const givenEntries = entries.filter(e=>e.given);
+
+    function initialsFor(name){
+      const member = (state.members||[]).find(m=> displayName(m)===name);
+      if(member && member.firstName && member.lastName){
+        return (member.firstName[0]+member.lastName[0]).toUpperCase();
+      }
+      const parts = String(name||'').trim().split(/\s+/).filter(Boolean);
+      if(parts.length===0) return '?';
+      if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
+      return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
+    }
+
     function openRowHtml(e){
       return `
-        <div class="round-entry-row" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}">
-          <span class="round-entry-name">${escapeHtml(e.name)} (${escapeHtml(e.fineName)})</span>
-          ${closed ? '' : `<button type="button" class="btn-secondary round-mark-given-btn" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}">Gegeben</button>`}
+        <div class="round-entry-row" data-seat-id="${e.seatId||''}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" data-carried="${e.carried?'1':'0'}">
+          <span class="round-avatar">${escapeHtml(initialsFor(e.name))}</span>
+          <span class="round-entry-main">
+            <span class="round-entry-name">${escapeHtml(e.name)}</span>
+            <span class="round-entry-badge">${escapeHtml(e.fineName)}${e.carried ? ` <span class="round-carried-tag">· übernommen vom ${e.sourceDate ? escapeHtml(formatDateShortDE(e.sourceDate)) : '?'}</span>` : ''}</span>
+          </span>
+          ${closed ? '' : `<button type="button" class="round-mark-given-btn" data-seat-id="${e.seatId||''}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" data-carried="${e.carried?'1':'0'}" aria-label="Als gegeben markieren" title="Als gegeben markieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg></button>`}
         </div>
       `;
     }
     function givenRowHtml(e){
       return `
         <div class="round-entry-row given">
-          <span class="round-entry-name">${escapeHtml(e.name)} (${escapeHtml(e.fineName)})</span>
+          <span class="round-avatar">${escapeHtml(initialsFor(e.name))}</span>
+          <span class="round-entry-main">
+            <span class="round-entry-name">${escapeHtml(e.name)}</span>
+            <span class="round-entry-badge">${escapeHtml(e.fineName)}${e.carried ? ` <span class="round-carried-tag">· übernommen vom ${e.sourceDate ? escapeHtml(formatDateShortDE(e.sourceDate)) : '?'}</span>` : ''}</span>
+          </span>
+          ${closed ? `<svg class="round-given-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>` : `<button type="button" class="round-undo-given-btn" data-seat-id="${e.seatId||''}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" data-carried="${e.carried?'1':'0'}" aria-label="Rückgängig machen" title="Rückgängig machen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>`}
         </div>
       `;
     }
+    const givenIsOpen = !!state.roundsGivenSectionOpen;
     return `
       <div class="card">
         <h2 class="section-title">Runden <span class="member-count">(${openEntries.length} offen)</span></h2>
-        ${openEntries.length===0 ? `<p class="empty-state">Alle Runden wurden gegeben.</p>` : openEntries.map(openRowHtml).join('')}
+        ${openEntries.length===0 && givenEntries.length===0 ? `<p class="empty-state">Alle Runden wurden gegeben.</p>` : ''}
+        <div id="rounds-open-list">
+          ${openEntries.map(openRowHtml).join('')}
+        </div>
+        ${givenEntries.length>0 ? `
+          <button type="button" class="rounds-given-toggle${givenIsOpen ? ' open' : ''}" id="rounds-given-toggle-btn">
+            <span class="rounds-given-toggle-label">Gegeben (${givenEntries.length})</span>
+            <svg class="rounds-given-toggle-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="rounds-given-list${givenIsOpen ? '' : ' collapsed'}" id="rounds-given-list">
+            ${givenEntries.map(givenRowHtml).join('')}
+          </div>
+        ` : ''}
       </div>
-      ${givenEntries.length>0 ? `
-      <div class="card">
-        <h2 class="section-title">Gegebene Runden <span class="member-count">(${givenEntries.length})</span></h2>
-        ${givenEntries.map(givenRowHtml).join('')}
-      </div>` : ''}
     `;
   }
 
   // Markiert eine einzelne Runden-Instanz als gegeben. Jede Zeile ist unabhängig: der Index der
   // angeklickten Instanz wird zur Liste in roundsGivenBySeat[seatId][fineId] hinzugefügt.
-  async function markRoundGiven(seatId, fineId, instanceIndex){
+  // "carried"-Instanzen (aus carryOverOpenRoundsFromPool() übernommene Runden ohne Geldbetrag,
+  // siehe computeRoundEntries) liegen in detail.carriedOverRounds statt in
+  // finesBySeat/roundsGivenBySeat und werden deshalb separat behandelt (eigenes carriedRoundId
+  // statt seatId+fineId+instanceIndex).
+  async function markRoundGiven(seatId, fineId, instanceIndex, carried){
     const detail = state.currentEveningDetail;
+    if(carried){
+      const entry = (detail.carriedOverRounds||[]).find(c=>c.id===instanceIndex);
+      if(entry) entry.given = true;
+      render();
+      await saveEveningMainDoc(detail);
+      return;
+    }
     if(!detail.roundsGivenBySeat) detail.roundsGivenBySeat = {};
     if(!detail.roundsGivenBySeat[seatId]) detail.roundsGivenBySeat[seatId] = {};
     const current = detail.roundsGivenBySeat[seatId][fineId] || [];
     if(!current.includes(instanceIndex)) detail.roundsGivenBySeat[seatId][fineId] = [...current, instanceIndex];
+    render();
+    await saveEveningSeatFinesAndIndex(detail, seatId);
+  }
+
+  // Macht eine als "gegeben" markierte Runden-Instanz wieder rückgängig (z.B. bei Fehlklick):
+  // entfernt den Index aus roundsGivenBySeat[seatId][fineId], die Instanz landet danach wieder
+  // in den offenen Runden. Siehe markRoundGiven() zum carried-Sonderfall.
+  async function unmarkRoundGiven(seatId, fineId, instanceIndex, carried){
+    const detail = state.currentEveningDetail;
+    if(carried){
+      const entry = (detail.carriedOverRounds||[]).find(c=>c.id===instanceIndex);
+      if(entry) entry.given = false;
+      render();
+      await saveEveningMainDoc(detail);
+      return;
+    }
+    if(!detail.roundsGivenBySeat || !detail.roundsGivenBySeat[seatId]) return;
+    const current = detail.roundsGivenBySeat[seatId][fineId] || [];
+    detail.roundsGivenBySeat[seatId][fineId] = current.filter(i=>i!==instanceIndex);
     render();
     await saveEveningSeatFinesAndIndex(detail, seatId);
   }
@@ -4726,6 +4862,14 @@
       btn.disabled = true; btn.textContent = 'Wird hinzugefügt…';
       const seat = detail.seating.find(s=>s.seatId===seatId);
       if(seat){ seat.name = name; seat.isGuest = isGuest; seat.addedLater = true; }
+      // Offene Runden dieser Person aus dem zentralen Pool übernehmen (siehe
+      // carryOverOpenRoundsFromPool()) - analog zum "Offene Runden übernehmen"-Toggle beim
+      // Anlegen eines neuen Abends, hier aber immer automatisch (kein Toggle nötig, da die
+      // Aktion ohnehin nur diese eine, gerade hinzugefügte Person betrifft).
+      const newlyCarried = await carryOverOpenRoundsFromPool(new Set([name]));
+      if(newlyCarried.length>0){
+        detail.carriedOverRounds = [...(detail.carriedOverRounds||[]), ...newlyCarried];
+      }
       updateEveningIndexSummary(detail);
       const summary = computeEveningSummaryFields(detail);
       await Promise.all([
@@ -5612,6 +5756,7 @@
     // Runden) - NICHT pauschal alle .btn-secondary, da darunter auch reine "Abbrechen"/
     // "Schließen"-Buttons in Modals sind, die weiterhin bedienbar bleiben müssen.
     document.querySelectorAll('#app .round-mark-given-btn').forEach(btn=>{ btn.disabled = true; });
+    document.querySelectorAll('#app .round-undo-given-btn').forEach(btn=>{ btn.disabled = true; });
     // RSVP-Buttons (Zusage/Absage/Vielleicht zu Terminen) schreiben direkt über rsvpsStore.save(),
     // sind aber weder .btn-primary noch <input> - eigene Klasse, daher separat behandelt.
     document.querySelectorAll('#app .rsvp-btn').forEach(btn=>{ btn.disabled = true; });
@@ -5901,6 +6046,7 @@
       state.confirmDeleteEveningId = null;
       state.mainError = '';
       state.eveningTab = 'sitzplan';
+      state.roundsGivenSectionOpen = false;
       state.view = 'detail';
       render();
     }catch(e){
@@ -7409,6 +7555,35 @@
     });
   }
 
+  // Übernimmt offene Runden aus dem zentralen Pool (clubs/{clubId}/data/open-rounds-pool) in den
+  // neu angelegten Abend, aber NUR für Personen, die auch tatsächlich an diesem neuen Abend
+  // teilnehmen. Landet in einem separaten Feld (carriedOverRounds statt finesBySeat), damit bei
+  // "Fremdstrafe + Runde" kein zweiter Geldbetrag entsteht - hier geht es rein um die
+  // Rundenpflicht.
+  //
+  // Der Pool wird ausschließlich von der closeEvening Cloud Function befüllt - ein noch nicht
+  // abgeschlossener Abend hat also nie Einträge im Pool, und ein NICHT abgeschlossener Abend kann
+  // dadurch selbst nie Quelle einer Übernahme sein (entspricht der Vorgabe: Runden werden erst
+  // beim Abschließen "final" und für andere Abende sichtbar). Übernommene Einträge werden hier
+  // direkt aus dem Pool entfernt (statt nur markiert) - das ist der zentrale Vorteil ggü. der
+  // früheren Instanz-Tracking-Lösung: kein Durchsuchen vergangener Abende mehr nötig, der Pool
+  // IST bereits die vollständige, flache Liste aller offenen Rundenpflichten.
+  async function carryOverOpenRoundsFromPool(participantNames){
+    const carried = [];
+    await updateOpenRoundsPool(serverPool=>{
+      const remaining = [];
+      serverPool.forEach(entry=>{
+        if(participantNames.has(entry.name)){
+          carried.push({ id: uid('cr'), fineId: entry.fineId, fineName: entry.fineName, name: entry.name, given: false, sourceEveningId: entry.sourceEveningId, sourceDate: entry.sourceDate });
+        }else{
+          remaining.push(entry);
+        }
+      });
+      return remaining;
+    });
+    return carried;
+  }
+
   async function handleConfirmNewEvening(){
     const dateInput = document.getElementById('date-input');
     const date = (dateInput && dateInput.value) ? dateInput.value : todayISO();
@@ -7540,7 +7715,12 @@
     // (analog zu finesCatalogSnapshot) - siehe getEveningSeatingTemplate()/getEveningSideNames():
     // ein späterer Wechsel des Club-Templates bzw. der Seitenbezeichnungen darf die Darstellung
     // dieses bereits angelegten Abends nicht rückwirkend verändern.
-    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, seatingTemplateId: seatingTemplate.id, seatingSideNamesSnapshot: seatingSideNamesAtCreation };
+    const participantNames = new Set(participants.map(p=>p.name));
+    const carryOverCheckbox = document.getElementById('carry-over-rounds-checkbox');
+    const carryOverEnabled = !carryOverCheckbox || carryOverCheckbox.checked;
+    const carriedOverRounds = carryOverEnabled ? await carryOverOpenRoundsFromPool(participantNames) : [];
+
+    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, seatingTemplateId: seatingTemplate.id, seatingSideNamesSnapshot: seatingSideNamesAtCreation, carriedOverRounds };
     const newIndexEntry = {id, date, ...computeEveningSummaryFields(detail)};
     await Promise.all([
       saveEveningMainDoc(detail),
@@ -7592,10 +7772,33 @@
     if(tabRundenBtn) tabRundenBtn.addEventListener('click', ()=>{ state.eveningTab='runden'; render(); });
     document.querySelectorAll('.round-mark-given-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
-        const { seatId, fineId } = btn.dataset;
-        const instanceIndex = parseInt(btn.dataset.instanceIndex, 10);
-        markRoundGiven(seatId, fineId, instanceIndex);
+        if(btn.disabled) return;
+        const { seatId, fineId, carried } = btn.dataset;
+        const isCarried = carried==='1';
+        const instanceIndex = isCarried ? btn.dataset.instanceIndex : parseInt(btn.dataset.instanceIndex, 10);
+        btn.disabled = true;
+        btn.classList.add('confirmed');
+        const row = btn.closest('.round-entry-row');
+        setTimeout(()=>{
+          if(row) row.classList.add('fading-out');
+          setTimeout(()=>{ markRoundGiven(seatId, fineId, instanceIndex, isCarried); }, 350);
+        }, 300);
       });
+    });
+    document.querySelectorAll('.round-undo-given-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        if(btn.disabled) return;
+        const { seatId, fineId, carried } = btn.dataset;
+        const isCarried = carried==='1';
+        const instanceIndex = isCarried ? btn.dataset.instanceIndex : parseInt(btn.dataset.instanceIndex, 10);
+        btn.disabled = true;
+        unmarkRoundGiven(seatId, fineId, instanceIndex, isCarried);
+      });
+    });
+    const roundsGivenToggleBtn = document.getElementById('rounds-given-toggle-btn');
+    if(roundsGivenToggleBtn) roundsGivenToggleBtn.addEventListener('click', ()=>{
+      state.roundsGivenSectionOpen = !state.roundsGivenSectionOpen;
+      render();
     });
     const tabSpieleBtn = document.getElementById('tab-spiele-btn');
     if(tabSpieleBtn) tabSpieleBtn.addEventListener('click', ()=>{ state.eveningTab='spiele'; render(); });
@@ -7662,6 +7865,10 @@
 
       showModalLoadingOverlay('Abend wird gelöscht…');
       try{
+        // Pool-Bereinigung (offene, aus dem Pool übernommene Runden zurückgeben; bei einem
+        // abgeschlossenen Abend auch dessen eigene, im Pool liegende offene Runden verwerfen)
+        // passiert serverseitig in der deleteEvening Cloud Function - siehe dort. Ein
+        // zusätzlicher Client-Aufruf hier würde die Rückgabe doppelt ausführen.
         const deleteEveningFn = httpsCallable(functions, 'deleteEvening');
         await deleteEveningFn({ clubId: CURRENT_CLUB_ID, eveningId: id });
       }catch(e){
