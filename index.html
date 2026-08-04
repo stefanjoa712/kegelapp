@@ -787,7 +787,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.14';
+  const APP_VERSION = '1.1.15';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -6957,6 +6957,7 @@
     document.getElementById('confirm-delete-member-modal-yes').addEventListener('click', async ()=>{
       const yesBtn = document.getElementById('confirm-delete-member-modal-yes');
       yesBtn.disabled = true; yesBtn.textContent = deletable ? 'Löscht…' : 'Archiviert…';
+      showModalLoadingOverlay(deletable ? 'Mitglied wird gelöscht…' : 'Mitglied wird archiviert…');
       try{
         const deleteFn = httpsCallable(functions, 'deleteOrArchiveMember');
         const res = await deleteFn({ clubId: CURRENT_CLUB_ID, memberId: member.id });
@@ -6967,6 +6968,7 @@
           state.members = state.members.filter(m=>m.id!==member.id);
         }
       }catch(e){
+        hideModalLoadingOverlay();
         yesBtn.disabled = false; yesBtn.textContent = deletable ? 'Ja, löschen' : 'Archivieren';
         return;
       }
