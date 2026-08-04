@@ -730,7 +730,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.113';
+  const APP_VERSION = '1.0.114';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -910,6 +910,7 @@
     currentUserRole: 'Mitglied',
     currentRecurringId: null,
     currentSavingsPotId: null,
+    currentFinanceAccountId: null,
     currentFineId: null,
     currentGameId: null,
     currentMemberStats: {},
@@ -1829,6 +1830,11 @@
     state.view = 'savingsPotDetail';
     render();
   }
+  function goToFinanceAccountDetail(existingAccount){
+    state.currentFinanceAccountId = existingAccount ? existingAccount.id : null;
+    state.view = 'financeAccountDetail';
+    render();
+  }
   async function goToFinesManagement(){
     state.view = 'finesManagement';
     if(!isFresh('finesCatalog')) renderLoading('Strafen werden geladen…');
@@ -1961,6 +1967,7 @@
     else if(state.view==='gameDetail') goToGamesManagement();
     else if(state.view==='recurringDetail') goToFinanceManagement();
     else if(state.view==='savingsPotDetail') goToFinanceManagement();
+    else if(state.view==='financeAccountDetail') goToFinanceManagement();
     else if(state.view==='eventDetail') goBackFromEventDetail();
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
@@ -2241,7 +2248,7 @@
   }
 
   function financeAccountRowHtml(acc){
-    return `<div class="member-row draggable-row" data-id="${acc.id}">
+    return `<div class="member-row draggable-row row-clickable" data-id="${acc.id}">
       <span class="fine-row-info">
         <span class="drag-handle" aria-label="Verschieben">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
@@ -2250,8 +2257,7 @@
       </span>
       <span class="row-actions">
         <span class="fine-row-amount">${fmtEuro(acc.startBalance)}</span>
-        <button type="button" class="icon-btn edit-finance-account-btn" data-id="${acc.id}" aria-label="Bearbeiten">✎</button>
-        <button type="button" class="icon-btn delete-finance-account-btn" data-id="${acc.id}" aria-label="Löschen">✕</button>
+        <svg class="cal-event-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </span>
     </div>`;
   }
@@ -2303,6 +2309,23 @@
         <input type="number" id="pot-start" min="0" step="0.01" placeholder="0,00" value="${(isEdit && p.startAmount)?p.startAmount.toFixed(2):''}">
         <p class="form-error" id="pot-detail-error"></p>
         <button type="button" class="btn-primary" id="save-pot-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+      </div>
+    `;
+  }
+
+  function viewFinanceAccountDetail(){
+    const acc = state.financeAccounts.find(x=>x.id===state.currentFinanceAccountId);
+    const isEdit = !!acc;
+    return `
+      <div class="card">
+        <label for="finance-acc-name">Bezeichnung</label>
+        <input type="text" id="finance-acc-name" placeholder="z. B. Vereinskasse" value="${isEdit?escapeHtml(acc.name):''}">
+        <label for="finance-acc-balance">Start-Kontostand (€)</label>
+        <input type="number" id="finance-acc-balance" min="0" step="0.01" placeholder="0,00"
+          value="${isEdit?acc.startBalance.toFixed(2):''}"${isEdit?' readonly disabled':''}>
+        ${isEdit ? `<p class="hint" style="margin-top:-6px;">Der Start-Kontostand kann nachträglich nicht mehr geändert werden.</p>` : ''}
+        <p class="form-error" id="finance-acc-detail-error"></p>
+        <button type="button" class="btn-primary" id="save-finance-acc-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
       </div>
     `;
   }
@@ -3018,6 +3041,7 @@
     if(state.view==='memberDetail') return 'memberDetail:'+(state.currentMemberId||'new');
     if(state.view==='recurringDetail') return 'recurringDetail:'+(state.currentRecurringId||'new');
     if(state.view==='savingsPotDetail') return 'savingsPotDetail:'+(state.currentSavingsPotId||'new');
+    if(state.view==='financeAccountDetail') return 'financeAccountDetail:'+(state.currentFinanceAccountId||'new');
     if(state.view==='fineDetail') return 'fineDetail:'+(state.currentFineId||'new');
     if(state.view==='gameDetail') return 'gameDetail:'+(state.currentGameId||'new');
     if(state.view==='eventDetail') return 'eventDetail:'+(state.calendarEditingOccurrence ? state.calendarEditingOccurrence.seriesId+':'+state.calendarEditingOccurrence.occurrenceDate : 'new');
@@ -3064,6 +3088,7 @@
     else if(state.view==='financeManagement') body = viewFinanceManagement();
     else if(state.view==='recurringDetail') body = viewRecurringDetail();
     else if(state.view==='savingsPotDetail') body = viewSavingsPotDetail();
+    else if(state.view==='financeAccountDetail') body = viewFinanceAccountDetail();
     else if(state.view==='finance') body = viewFinance();
     else if(state.view==='calendar') body = viewCalendar();
     else if(state.view==='eventManagement') body = viewEventManagement();
@@ -3094,7 +3119,7 @@
 
   // Einmaliger globaler Listener (nicht pro Render), schließt Overflow-Menüs bei Klick außerhalb.
   document.addEventListener('click', (e)=>{
-    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-pot-overflow-menu','header-pot-overflow-btn'], ['header-fine-overflow-menu','header-fine-overflow-btn'], ['header-game-overflow-menu','header-game-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
+    [['header-overflow-menu','header-overflow-btn'], ['header-person-overflow-menu','header-person-overflow-btn'], ['header-arrears-overflow-menu','header-arrears-overflow-btn'], ['header-tx-overflow-menu','header-tx-overflow-btn'], ['header-event-overflow-menu','header-event-overflow-btn'], ['header-member-overflow-menu','header-member-overflow-btn'], ['header-club-overflow-menu','header-club-overflow-btn'], ['header-recurring-overflow-menu','header-recurring-overflow-btn'], ['header-pot-overflow-menu','header-pot-overflow-btn'], ['header-finance-acc-overflow-menu','header-finance-acc-overflow-btn'], ['header-fine-overflow-menu','header-fine-overflow-btn'], ['header-game-overflow-menu','header-game-overflow-btn'], ['header-cal-overflow-menu','header-cal-overflow-btn']].forEach(([menuId,btnId])=>{
       const menu = document.getElementById(menuId);
       const btn = document.getElementById(btnId);
       if(menu && !menu.hidden && e.target!==btn && !menu.contains(e.target) && !(btn && btn.contains(e.target))){
@@ -4909,6 +4934,7 @@
     else if(state.view==='financeManagement') title = 'Finanzverwaltung';
     else if(state.view==='recurringDetail') title = state.currentRecurringId ? 'Buchung bearbeiten' : 'Monatliche Buchung hinzufügen';
     else if(state.view==='savingsPotDetail') title = state.currentSavingsPotId ? 'Spartopf bearbeiten' : 'Spartopf hinzufügen';
+    else if(state.view==='financeAccountDetail') title = state.currentFinanceAccountId ? 'Konto bearbeiten' : 'Konto/Kasse hinzufügen';
     else if(state.view==='finance') title = 'Finanzen';
     else if(state.view==='calendar') title = 'Kalender';
     else if(state.view==='eventManagement') title = 'Terminverwaltung';
@@ -5129,6 +5155,17 @@
       </div>
     ` : '';
 
+    const financeAccountOverflowHtml = (state.view==='financeAccountDetail' && state.currentFinanceAccountId) ? `
+      <div class="header-overflow-wrap">
+        <button type="button" class="header-icon-btn" id="header-finance-acc-overflow-btn" aria-label="Weitere Optionen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+        </button>
+        <div class="header-overflow-menu" id="header-finance-acc-overflow-menu" hidden>
+          <button type="button" class="header-overflow-item" id="header-delete-finance-acc-btn">Konto löschen</button>
+        </div>
+      </div>
+    ` : '';
+
     const fineOverflowHtml = (state.view==='fineDetail' && state.currentFineId && canManageMembers()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-fine-overflow-btn" aria-label="Weitere Optionen">
@@ -5169,7 +5206,7 @@
           </svg>
         </button>
         <h1 class="header-title">${escapeHtml(title)}</h1>
-        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${savingsPotOverflowHtml}${fineOverflowHtml}${gameOverflowHtml}${calOverflowHtml}
+        ${detailHeaderExtrasHtml}${addFineBtnHtml}${calTodayBtnHtml}${settingsAddBtnHtml}${arrearsOverflowHtml}${txOverflowHtml}${eventOverflowHtml}${memberOverflowHtml}${clubOverflowHtml}${recurringOverflowHtml}${savingsPotOverflowHtml}${financeAccountOverflowHtml}${fineOverflowHtml}${gameOverflowHtml}${calOverflowHtml}
       </div>
       ${tabsHtml}
     </header>`;
@@ -5252,6 +5289,7 @@
     else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
     else if(state.view==='recurringDetail') attachRecurringDetailListeners();
     else if(state.view==='savingsPotDetail') attachSavingsPotDetailListeners();
+    else if(state.view==='financeAccountDetail') attachFinanceAccountDetailListeners();
     else if(state.view==='finance') attachFinanceListeners();
     else if(state.view==='calendar') attachCalendarListeners();
     else if(state.view==='eventManagement') attachEventManagementListeners();
@@ -5717,6 +5755,51 @@
     });
   }
 
+  function attachFinanceAccountDetailListeners(){
+    const acc = state.financeAccounts.find(x=>x.id===state.currentFinanceAccountId);
+    const isEdit = !!acc;
+
+    const overflowBtn = document.getElementById('header-finance-acc-overflow-btn');
+    const overflowMenu = document.getElementById('header-finance-acc-overflow-menu');
+    if(overflowBtn && overflowMenu){
+      overflowBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        overflowMenu.hidden = !overflowMenu.hidden;
+      });
+    }
+    const deleteBtn = document.getElementById('header-delete-finance-acc-btn');
+    if(deleteBtn) deleteBtn.addEventListener('click', ()=>{
+      if(overflowMenu) overflowMenu.hidden = true;
+      if(acc) showDeleteFinanceAccountModal(acc);
+    });
+
+    const saveBtn = document.getElementById('save-finance-acc-detail-btn');
+    if(!saveBtn) return;
+    saveBtn.addEventListener('click', async ()=>{
+      const errEl = document.getElementById('finance-acc-detail-error');
+      const name = document.getElementById('finance-acc-name').value.trim();
+      if(!name){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+
+      saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
+
+      if(isEdit){
+        const a = state.financeAccounts.find(x=>x.id===acc.id);
+        if(a){ a.name=name; }
+      }else{
+        const balanceRaw = document.getElementById('finance-acc-balance').value.replace(',', '.');
+        const startBalance = parseFloat(balanceRaw);
+        if(isNaN(startBalance)){
+          errEl.textContent='Bitte einen gültigen Start-Kontostand angeben.';
+          saveBtn.disabled = false; saveBtn.textContent = 'Hinzufügen';
+          return;
+        }
+        state.financeAccounts.push({id:uid('acc'), name, startBalance: Math.round(startBalance*100)/100});
+      }
+      await setClubJSON('finance-accounts', state.financeAccounts);
+      goToFinanceManagement();
+    });
+  }
+
   function attachFinesManagementListeners(){
     document.querySelectorAll('#fines-list-container .row-clickable[data-id], #runden-list-container .row-clickable[data-id]').forEach(row=>{
       row.addEventListener('click', (e)=>{
@@ -5861,20 +5944,16 @@
   }
 
   function attachFinanceManagementListeners(){
-    document.querySelectorAll('.edit-finance-account-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const a = state.financeAccounts.find(x=>x.id===b.dataset.id);
-        if(a) showFinanceAccountFormModal(a);
-      });
-    });
-    document.querySelectorAll('.delete-finance-account-btn').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const a = state.financeAccounts.find(x=>x.id===b.dataset.id);
-        if(a) showDeleteFinanceAccountModal(a);
+    document.querySelectorAll('#finance-accounts-list-container .row-clickable[data-id]').forEach(row=>{
+      row.addEventListener('click', (e)=>{
+        // Klicks auf den Drag-Handle sollen nur sortieren, nicht zusätzlich navigieren.
+        if(e.target.closest('.drag-handle')) return;
+        const a = state.financeAccounts.find(x=>x.id===row.dataset.id);
+        if(a) goToFinanceAccountDetail(a);
       });
     });
     const openAddFinanceBtn = document.getElementById('header-add-finance-account-btn');
-    if(openAddFinanceBtn) openAddFinanceBtn.addEventListener('click', ()=>showFinanceAccountFormModal());
+    if(openAddFinanceBtn) openAddFinanceBtn.addEventListener('click', ()=>goToFinanceAccountDetail(null));
     setupDragReorder('finance-accounts-list-container', async (newIdOrder)=>{
       const byId = {};
       state.financeAccounts.forEach(a=>{ byId[a.id]=a; });
@@ -6313,7 +6392,7 @@
       state.financeAccounts = state.financeAccounts.filter(a=>a.id!==acc.id);
       await setClubJSON('finance-accounts', state.financeAccounts);
       closeGenericModal();
-      render();
+      goToFinanceManagement();
     });
   }
 
@@ -6626,49 +6705,6 @@
       }else{
         await performSave();
       }
-    });
-  }
-
-  function showFinanceAccountFormModal(existingAccount){
-    const isEdit = !!existingAccount;
-    showModal(`
-      <h3>${isEdit ? 'Konto bearbeiten' : 'Konto/Kasse hinzufügen'}</h3>
-      <label for="new-finance-name">Bezeichnung</label>
-      <input type="text" id="new-finance-name" placeholder="z. B. Vereinskasse" value="${isEdit?escapeHtml(existingAccount.name):''}">
-      <label for="new-finance-balance">Start-Kontostand (€)</label>
-      <input type="number" id="new-finance-balance" min="0" step="0.01" placeholder="0,00"
-        value="${isEdit?existingAccount.startBalance.toFixed(2):''}"${isEdit?' readonly disabled':''}>
-      ${isEdit ? `<p class="hint" style="margin-top:-6px;">Der Start-Kontostand kann nachträglich nicht mehr geändert werden.</p>` : ''}
-      <p class="form-error" id="finance-form-error"></p>
-      <div class="confirm-row-buttons">
-        <button type="button" class="btn-primary" id="add-finance-account-btn">${isEdit?'Speichern':'Hinzufügen'}</button>
-        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
-      </div>
-    `);
-    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
-    document.getElementById('new-finance-name').focus();
-    document.getElementById('add-finance-account-btn').addEventListener('click', async ()=>{
-      const name = document.getElementById('new-finance-name').value.trim();
-      const errEl = document.getElementById('finance-form-error');
-      if(!name){ if(errEl) errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
-      const submitBtn = document.getElementById('add-finance-account-btn');
-      submitBtn.disabled = true; submitBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
-      if(isEdit){
-        const a = state.financeAccounts.find(x=>x.id===existingAccount.id);
-        if(a){ a.name=name; }
-      }else{
-        const balanceRaw = document.getElementById('new-finance-balance').value.replace(',', '.');
-        const startBalance = parseFloat(balanceRaw);
-        if(isNaN(startBalance)){
-          if(errEl) errEl.textContent='Bitte einen gültigen Start-Kontostand angeben.';
-          submitBtn.disabled = false; submitBtn.textContent = 'Hinzufügen';
-          return;
-        }
-        state.financeAccounts.push({id:uid('acc'), name, startBalance: Math.round(startBalance*100)/100});
-      }
-      await setClubJSON('finance-accounts', state.financeAccounts);
-      closeGenericModal();
-      render();
     });
   }
 
