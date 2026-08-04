@@ -730,7 +730,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.118';
+  const APP_VERSION = '1.0.119';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1862,6 +1862,63 @@
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', goToClubManagement);
     }
   }
+
+  // Modulweite Referenz auf die "hat sich etwas geändert?"-Prüfung der Clubverwaltung (siehe
+  // attachClubManagementListeners()). null, solange die Clubverwaltung nicht aktiv ist oder der
+  // Nutzer keine Bearbeitungsrechte hat (dann existiert kein Speichern-Button, siehe dort).
+  let clubMgmtDirtyCheck = null;
+  function hasUnsavedClubManagementChanges(){
+    return state.view==='clubManagement' && typeof clubMgmtDirtyCheck==='function' && clubMgmtDirtyCheck();
+  }
+
+  // Zentraler Wächter für JEDE Navigation, die die Clubverwaltung verlässt (Header-Zurück-Button,
+  // Bottom-Nav, Logo, Browser-Zurück/Wisch-Geste - siehe goBackFromHeader(), attachGlobalNavListeners()
+  // und den popstate-Handler). Gibt es ungespeicherte Änderungen, wird proceedFn NICHT sofort
+  // ausgeführt, sondern erst nach einer Entscheidung im Popup (Speichern/Verwerfen/Abbrechen).
+  // Ohne ungespeicherte Änderungen (oder außerhalb der Clubverwaltung) läuft proceedFn direkt durch.
+  function guardClubManagementLeave(proceedFn){
+    if(!hasUnsavedClubManagementChanges()){ proceedFn(); return; }
+    showUnsavedClubChangesPrompt(proceedFn);
+  }
+
+  // Zeigt das Bestätigungs-Popup für ungespeicherte Änderungen in der Clubverwaltung.
+  // "Speichern" versucht saveClubManagementForm() und navigiert nur bei Erfolg weiter (bei einem
+  // Validierungs- oder Netzwerkfehler bleibt der Nutzer auf der Seite, der Fehler steht bereits
+  // im Formular); "Verwerfen" navigiert ohne Speichern weiter; "Abbrechen" schließt nur das Popup.
+  function showUnsavedClubChangesPrompt(proceedFn){
+    showModal(`
+      <h3>Ungespeicherte Änderungen</h3>
+      <p>Du hast Änderungen in der Clubverwaltung vorgenommen, die noch nicht gespeichert sind. Möchtest du sie vor dem Verlassen speichern?</p>
+      <p class="form-error" id="unsaved-club-changes-error"></p>
+      <div class="confirm-row-buttons" style="margin-top:14px;">
+        <button type="button" class="btn-secondary" id="unsaved-club-discard-btn" style="flex:1;">Verwerfen</button>
+        <button type="button" class="btn-primary" id="unsaved-club-save-btn" style="flex:1;">Speichern</button>
+      </div>
+      <button type="button" class="btn-secondary" id="modal-cancel-btn" style="width:100%; margin-top:10px;">Abbrechen</button>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('unsaved-club-discard-btn').addEventListener('click', ()=>{
+      closeGenericModal();
+      clubMgmtDirtyCheck = null;
+      proceedFn();
+    });
+    document.getElementById('unsaved-club-save-btn').addEventListener('click', async (e)=>{
+      const btn = e.currentTarget;
+      const errEl = document.getElementById('unsaved-club-changes-error');
+      btn.disabled = true; btn.textContent = 'Speichert…';
+      const ok = await saveClubManagementForm();
+      if(ok){
+        closeGenericModal();
+        proceedFn();
+      }else{
+        // saveClubManagementForm() schreibt den konkreten Fehler bereits in #club-form-error
+        // (im Hintergrund, das Popup verdeckt es) - hier reicht ein allgemeiner Hinweis, der
+        // den Nutzer zum Abbrechen und Nachschauen im Formular anleitet.
+        btn.disabled = false; btn.textContent = 'Speichern';
+        if(errEl) errEl.textContent = 'Speichern fehlgeschlagen. Bitte prüfe deine Eingaben oder Internetverbindung.';
+      }
+    });
+  }
   // Öffnet die Plan-Auswahlseite ("Abonnement anpassen") - nutzt dieselben Club-Stammdaten wie
   // die Clubverwaltung (CURRENT_CLUB_DATA), lädt daher nichts zusätzlich nach. Zugriff ist an
   // dieselbe Berechtigung wie die Clubverwaltung geknüpft (siehe canManageMembers()) - wird
@@ -2010,7 +2067,7 @@
     else goToCalendar();
   }
 
-  function goBackFromHeader(){
+  function goBackFromHeaderInner(){
     if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
     else if(state.view==='subscriptionPlans') goToClubManagement();
     else if(state.view==='memberDetail') goToSettings();
@@ -2022,6 +2079,9 @@
     else if(state.view==='eventDetail') goBackFromEventDetail();
     else if(state.view==='personFineDetail' || state.view==='arrearsDetail' || state.view==='transactionDetail'){ history.back(); }
     else goToMain();
+  }
+  function goBackFromHeader(){
+    guardClubManagementLeave(goBackFromHeaderInner);
   }
   function goToNew(){
     currentGuests = [];
@@ -3178,8 +3238,18 @@
   });
 
   window.addEventListener('popstate', (event)=>{
-    isPopstateNavigation = true;
     const sig = (event.state && event.state.sig) || 'main';
+    // Verlässt der Nutzer per Browser-Zurück/Wisch-Geste die Clubverwaltung mit ungespeicherten
+    // Änderungen, hat der Browser die History-Position bereits gewechselt, bevor dieser Handler
+    // läuft. Die Position wird deshalb sofort wieder auf #clubverwaltung vorgeschoben (pushState)
+    // und stattdessen das Popup gezeigt; bestätigt/verwirft der Nutzer, wird die eigentliche
+    // Ziel-Navigation (inkl. echtem history.back()) nachträglich ausgeführt.
+    if(state.view==='clubManagement' && hasUnsavedClubManagementChanges()){
+      history.pushState({sig:'clubManagement'}, '', hashFor('clubManagement'));
+      showUnsavedClubChangesPrompt(()=>{ history.back(); });
+      return;
+    }
+    isPopstateNavigation = true;
     (async ()=>{
       if(sig==='settingsMenu'){
         goToSettingsMenu();
@@ -5478,17 +5548,17 @@
   // ---------- Event-Listener ----------
   function attachGlobalNavListeners(){
     const navOverviewBtn = document.getElementById('nav-overview-btn');
-    if(navOverviewBtn) navOverviewBtn.addEventListener('click', goToMain);
+    if(navOverviewBtn) navOverviewBtn.addEventListener('click', ()=>guardClubManagementLeave(goToMain));
     const navTodayBtn = document.getElementById('nav-today-btn');
-    if(navTodayBtn) navTodayBtn.addEventListener('click', goToTodayEvening);
+    if(navTodayBtn) navTodayBtn.addEventListener('click', ()=>guardClubManagementLeave(goToTodayEvening));
     const navSettingsBtn = document.getElementById('nav-settings-btn');
-    if(navSettingsBtn) navSettingsBtn.addEventListener('click', goToSettingsMenu);
+    if(navSettingsBtn) navSettingsBtn.addEventListener('click', ()=>guardClubManagementLeave(goToSettingsMenu));
     const navFinanceBtn = document.getElementById('nav-finance-btn');
-    if(navFinanceBtn) navFinanceBtn.addEventListener('click', goToFinance);
+    if(navFinanceBtn) navFinanceBtn.addEventListener('click', ()=>guardClubManagementLeave(goToFinance));
     const navCalendarBtn = document.getElementById('nav-calendar-btn');
-    if(navCalendarBtn) navCalendarBtn.addEventListener('click', goToCalendar);
+    if(navCalendarBtn) navCalendarBtn.addEventListener('click', ()=>guardClubManagementLeave(goToCalendar));
     const logoBtn = document.getElementById('logo-home-btn');
-    if(logoBtn) logoBtn.addEventListener('click', goToMain);
+    if(logoBtn) logoBtn.addEventListener('click', ()=>guardClubManagementLeave(goToMain));
     const headerBackBtn = document.getElementById('header-back-btn');
     if(headerBackBtn) headerBackBtn.addEventListener('click', goBackFromHeader);
   }
@@ -5572,7 +5642,7 @@
     });
 
     const manageSubBtn = document.getElementById('manage-subscription-btn');
-    if(manageSubBtn) manageSubBtn.addEventListener('click', goToSubscriptionPlans);
+    if(manageSubBtn) manageSubBtn.addEventListener('click', ()=>guardClubManagementLeave(goToSubscriptionPlans));
 
     // Info-Popup für den Standardplatz Schriftführer - vor dem readOnly-Return angehängt,
     // damit die Erklärung auch für Nutzer ohne Bearbeitungsrechte verfügbar bleibt.
@@ -5603,19 +5673,27 @@
     });
 
     const saveBtn = document.getElementById('save-club-btn');
-    if(!saveBtn) return;
+    if(!saveBtn){
+      // Read-Only-Nutzer sehen keinen Speichern-Button und können nichts ändern - die
+      // ungespeichert-Prüfung beim Verlassen ist für sie daher gegenstandslos.
+      clubMgmtDirtyCheck = null;
+      return;
+    }
 
     // Änderungs-Erkennung: Speichern-Button ist nur aktiv, wenn sich mind. ein Feld
-    // gegenüber dem geladenen Stand unterscheidet.
+    // gegenüber dem geladenen Stand unterscheidet. clubMgmtDirtyCheck ist eine modulweite
+    // Referenz auf dieselbe Prüfung, damit guardClubManagementLeave() (siehe unten) beim
+    // Verlassen der Seite unabhängig von diesem Closure darauf zugreifen kann.
     const clubFieldIds = ['club-name','club-founded','club-paypal','club-iban','club-account-holder','club-seating-left','club-seating-right','club-seating-template','club-standard-seat'];
     const initialClubValues = {};
     clubFieldIds.forEach(id=>{ const el = document.getElementById(id); if(el) initialClubValues[id] = el.value; });
+    const isDirty = ()=> clubFieldIds.some(id=>{
+      const el = document.getElementById(id);
+      return el && el.value !== initialClubValues[id];
+    });
+    clubMgmtDirtyCheck = isDirty;
     const updateSaveBtnState = ()=>{
-      const changed = clubFieldIds.some(id=>{
-        const el = document.getElementById(id);
-        return el && el.value !== initialClubValues[id];
-      });
-      saveBtn.disabled = !changed;
+      saveBtn.disabled = !isDirty();
     };
     clubFieldIds.forEach(id=>{
       const el = document.getElementById(id);
@@ -5646,69 +5724,82 @@
     }
 
     saveBtn.addEventListener('click', async ()=>{
-      const errEl = document.getElementById('club-form-error');
-      const name = document.getElementById('club-name').value.trim();
-      const foundedOn = document.getElementById('club-founded').value;
-      const paypalName = document.getElementById('club-paypal').value.trim();
-      const iban = document.getElementById('club-iban').value.replace(/\s+/g,'').toUpperCase();
-      const accountHolder = document.getElementById('club-account-holder').value.trim();
-      const seatingLeft = document.getElementById('club-seating-left').value.trim() || DEFAULT_SEATING_SIDE_NAMES.left;
-      const seatingRight = document.getElementById('club-seating-right').value.trim() || DEFAULT_SEATING_SIDE_NAMES.right;
-      const seatingTemplateId = document.getElementById('club-seating-template').value;
-      const standardSeatId = document.getElementById('club-standard-seat').value;
-
-      if(!name){ errEl.textContent = 'Bitte einen Clubnamen angeben.'; return; }
-      if(!foundedOn){ errEl.textContent = 'Bitte ein Gründungsdatum angeben.'; return; }
-      // Grobe Formatprüfung (Länderkürzel + Prüfziffer + Rest, insgesamt 15-34 Zeichen wie im
-      // SEPA-Raum üblich) - keine vollständige IBAN-Prüfsummenvalidierung (Modulo-97), aber
-      // reicht, um grobe Tippfehler vor dem Speichern abzufangen.
-      if(iban && !/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(iban)){
-        errEl.textContent = 'IBAN sieht ungültig aus. Bitte prüfen.';
-        return;
-      }
-      if(iban && !accountHolder){
-        errEl.textContent = 'Bitte einen Kontoinhaber für die IBAN angeben.';
-        return;
-      }
-
-      saveBtn.disabled = true; saveBtn.textContent = 'Speichert…';
-      try{
-        // Die Club-ID (Dokument-Pfad) bleibt unverändert, nur die Stammdaten selbst werden
-        // aktualisiert - siehe saveClub()/clubRef() weiter oben. saveClub() nutzt merge:true,
-        // daher muss ein geleertes PayPal-/IBAN-/Kontoinhaber-Feld explizit per deleteField()
-        // entfernt werden - ein einfaches Weglassen des Felds im Payload würde es serverseitig
-        // NICHT löschen.
-        // Kürzel (z.B. 'L'/'R') werden hier einmalig aus den Bezeichnungen berechnet und
-        // mitgespeichert, damit sie beim Anzeigen des Sitzplans nicht bei jedem Aufruf neu
-        // berechnet werden müssen (siehe computeSeatingShortLabels()/getSeatingShortLabels()).
-        const seatingShortLabels = computeSeatingShortLabels(seatingLeft, seatingRight);
-        const clubUpdate = {
-          name, foundedOn,
-          paypalName: paypalName ? paypalName : deleteField(),
-          iban: iban ? iban : deleteField(),
-          accountHolder: accountHolder ? accountHolder : deleteField(),
-          seatingSideNames: { left: seatingLeft, right: seatingRight },
-          seatingShortLabels,
-          seatingTemplateId,
-          standardSchriftfuehrerSeatId: standardSeatId,
-        };
-        await saveClub(clubUpdate);
-        CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), name, foundedOn };
-        if(paypalName){ CURRENT_CLUB_DATA.paypalName = paypalName; } else { delete CURRENT_CLUB_DATA.paypalName; }
-        if(iban){ CURRENT_CLUB_DATA.iban = iban; } else { delete CURRENT_CLUB_DATA.iban; }
-        if(accountHolder){ CURRENT_CLUB_DATA.accountHolder = accountHolder; } else { delete CURRENT_CLUB_DATA.accountHolder; }
-        CURRENT_CLUB_DATA.seatingSideNames = { left: seatingLeft, right: seatingRight };
-        CURRENT_CLUB_DATA.seatingShortLabels = seatingShortLabels;
-        CURRENT_CLUB_DATA.seatingTemplateId = seatingTemplateId;
-        CURRENT_CLUB_DATA.standardSchriftfuehrerSeatId = standardSeatId;
-        markFetched('clubData');
-        applyClubBranding();
-        render();
-      }catch(e){
-        errEl.textContent = 'Speichern fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
-        saveBtn.disabled = false; saveBtn.textContent = 'Speichern';
-      }
+      const ok = await saveClubManagementForm();
+      if(ok) render();
     });
+  }
+
+  // Kapselt die eigentliche Speicherlogik der Clubverwaltung, damit sie sowohl vom
+  // Speichern-Button als auch vom "Ungespeicherte Änderungen"-Popup (siehe
+  // guardClubManagementLeave()) aus aufgerufen werden kann. Gibt true bei Erfolg zurück,
+  // false bei Validierungsfehler oder fehlgeschlagenem Speichern - der Aufrufer entscheidet
+  // anhand des Rückgabewerts, ob die anschließende Navigation stattfinden darf.
+  async function saveClubManagementForm(){
+    const saveBtn = document.getElementById('save-club-btn');
+    const errEl = document.getElementById('club-form-error');
+    const name = document.getElementById('club-name').value.trim();
+    const foundedOn = document.getElementById('club-founded').value;
+    const paypalName = document.getElementById('club-paypal').value.trim();
+    const iban = document.getElementById('club-iban').value.replace(/\s+/g,'').toUpperCase();
+    const accountHolder = document.getElementById('club-account-holder').value.trim();
+    const seatingLeft = document.getElementById('club-seating-left').value.trim() || DEFAULT_SEATING_SIDE_NAMES.left;
+    const seatingRight = document.getElementById('club-seating-right').value.trim() || DEFAULT_SEATING_SIDE_NAMES.right;
+    const seatingTemplateId = document.getElementById('club-seating-template').value;
+    const standardSeatId = document.getElementById('club-standard-seat').value;
+
+    if(!name){ if(errEl) errEl.textContent = 'Bitte einen Clubnamen angeben.'; return false; }
+    if(!foundedOn){ if(errEl) errEl.textContent = 'Bitte ein Gründungsdatum angeben.'; return false; }
+    // Grobe Formatprüfung (Länderkürzel + Prüfziffer + Rest, insgesamt 15-34 Zeichen wie im
+    // SEPA-Raum üblich) - keine vollständige IBAN-Prüfsummenvalidierung (Modulo-97), aber
+    // reicht, um grobe Tippfehler vor dem Speichern abzufangen.
+    if(iban && !/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(iban)){
+      if(errEl) errEl.textContent = 'IBAN sieht ungültig aus. Bitte prüfen.';
+      return false;
+    }
+    if(iban && !accountHolder){
+      if(errEl) errEl.textContent = 'Bitte einen Kontoinhaber für die IBAN angeben.';
+      return false;
+    }
+
+    if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Speichert…'; }
+    try{
+      // Die Club-ID (Dokument-Pfad) bleibt unverändert, nur die Stammdaten selbst werden
+      // aktualisiert - siehe saveClub()/clubRef() weiter oben. saveClub() nutzt merge:true,
+      // daher muss ein geleertes PayPal-/IBAN-/Kontoinhaber-Feld explizit per deleteField()
+      // entfernt werden - ein einfaches Weglassen des Felds im Payload würde es serverseitig
+      // NICHT löschen.
+      // Kürzel (z.B. 'L'/'R') werden hier einmalig aus den Bezeichnungen berechnet und
+      // mitgespeichert, damit sie beim Anzeigen des Sitzplans nicht bei jedem Aufruf neu
+      // berechnet werden müssen (siehe computeSeatingShortLabels()/getSeatingShortLabels()).
+      const seatingShortLabels = computeSeatingShortLabels(seatingLeft, seatingRight);
+      const clubUpdate = {
+        name, foundedOn,
+        paypalName: paypalName ? paypalName : deleteField(),
+        iban: iban ? iban : deleteField(),
+        accountHolder: accountHolder ? accountHolder : deleteField(),
+        seatingSideNames: { left: seatingLeft, right: seatingRight },
+        seatingShortLabels,
+        seatingTemplateId,
+        standardSchriftfuehrerSeatId: standardSeatId,
+      };
+      await saveClub(clubUpdate);
+      CURRENT_CLUB_DATA = { ...(CURRENT_CLUB_DATA||{}), name, foundedOn };
+      if(paypalName){ CURRENT_CLUB_DATA.paypalName = paypalName; } else { delete CURRENT_CLUB_DATA.paypalName; }
+      if(iban){ CURRENT_CLUB_DATA.iban = iban; } else { delete CURRENT_CLUB_DATA.iban; }
+      if(accountHolder){ CURRENT_CLUB_DATA.accountHolder = accountHolder; } else { delete CURRENT_CLUB_DATA.accountHolder; }
+      CURRENT_CLUB_DATA.seatingSideNames = { left: seatingLeft, right: seatingRight };
+      CURRENT_CLUB_DATA.seatingShortLabels = seatingShortLabels;
+      CURRENT_CLUB_DATA.seatingTemplateId = seatingTemplateId;
+      CURRENT_CLUB_DATA.standardSchriftfuehrerSeatId = standardSeatId;
+      markFetched('clubData');
+      applyClubBranding();
+      clubMgmtDirtyCheck = null;
+      return true;
+    }catch(e){
+      if(errEl) errEl.textContent = 'Speichern fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
+      if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = 'Speichern'; }
+      return false;
+    }
   }
 
   // Plan-Auswahlseite: rein visuelle Kartenauswahl (Radiobutton-Klick togglet die "selected"-
