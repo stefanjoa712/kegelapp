@@ -184,6 +184,24 @@
   }
   @keyframes loading-spin{ to{ transform:rotate(360deg); } }
 
+  /* Initialer, rein statischer Ladebildschirm direkt im HTML (kein JS nötig) - überbrückt die
+     Zeit, bis Firebase geladen ist und der Auth-Status feststeht (siehe #initial-loading unten).
+     Wird automatisch entfernt, sobald der erste echte Render document.getElementById('app').
+     innerHTML überschreibt (renderLoginScreen(), renderLoading(), etc. in bootstrapAuth()) - kein
+     zusätzlicher Removal-Code nötig. Dunkler Hintergrund passend zum --ink-Header, damit der
+     Übergang zum echten Header nahtlos wirkt statt weiß aufzublitzen. */
+  #initial-loading{
+    position:fixed; inset:0; background:var(--ink);
+    display:flex; align-items:center; justify-content:center; z-index:2000;
+  }
+  #initial-loading .loading-spinner{
+    width:36px; height:36px;
+    border:3px solid rgba(255,255,255,0.25);
+    border-top-color:var(--felt);
+    border-radius:50%;
+    animation:loading-spin 0.7s linear infinite;
+  }
+
   .card{
     background:var(--surface);
     border:1.5px solid var(--line);
@@ -663,7 +681,7 @@
 </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app"><div id="initial-loading"><div class="loading-spinner"></div></div></div>
 <div id="update-banner" class="update-banner" hidden>
   <span>Neue Version verfügbar</span>
   <button type="button" id="update-banner-btn">Jetzt aktualisieren</button>
@@ -784,7 +802,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.7';
+  const APP_VERSION = '1.1.8';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
