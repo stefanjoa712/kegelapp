@@ -511,6 +511,22 @@
   .fine-minus-btn:hover{border-color:var(--wine); color:var(--wine);}
   .fine-detail-count{font-family:var(--font-mono); font-weight:700; min-width:26px; text-align:center;}
   .fine-detail-result{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft); min-width:66px; text-align:right; flex-shrink:0;}
+  .game-score-row{cursor:default;}
+  .game-score-row:hover{background:none;}
+  .game-score-controls{display:flex; align-items:center; gap:8px; flex-shrink:0;}
+  .game-score-step-btn{
+    width:28px; height:28px; border-radius:50%; border:1.5px solid var(--line); background:#fff;
+    color:var(--ink); font-size:16px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; flex-shrink:0;
+  }
+  .game-score-step-btn:hover{border-color:var(--wine); color:var(--wine);}
+  .game-score-input{
+    font-family:var(--font-mono); font-weight:700; font-size:15px; text-align:center; width:52px;
+    padding:6px 2px; border:1.5px solid var(--line); border-radius:8px; background:#fff; color:var(--ink);
+    -moz-appearance:textfield;
+  }
+  .game-score-input:focus{outline:none; border-color:var(--wine);}
+  .game-score-input::-webkit-outer-spin-button, .game-score-input::-webkit-inner-spin-button{-webkit-appearance:none; margin:0;}
+  .game-score-input:disabled{background:var(--bg); color:var(--muted);}
   .adhoc-fine-row{display:flex; align-items:center; gap:10px; padding:12px 2px; border-bottom:1px dashed var(--line);}
   .adhoc-fine-row:last-child{border-bottom:none;}
   .muted{color:var(--muted); font-size:13px; margin:0;}
@@ -789,7 +805,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.22';
+  const APP_VERSION = '1.1.23';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4704,11 +4720,12 @@
       const scores = (detail.gameScoresBySeat && detail.gameScoresBySeat[seat.seatId]) || {};
       const points = scores[gameId] || 0;
       return `
-        <div class="fine-detail-row${closed?' readonly':''}" data-seat-id="${seat.seatId}">
+        <div class="fine-detail-row game-score-row${closed?' readonly':''}" data-seat-id="${seat.seatId}">
           <span class="fine-detail-name">${escapeHtml(seat.name)}</span>
-          <span class="fine-detail-controls">
-            ${closed ? '' : `<button type="button" class="fine-minus-btn game-score-minus-btn" data-seat-id="${seat.seatId}" aria-label="Um 1 verringern">−</button>`}
-            <span class="fine-detail-count">${points}</span>
+          <span class="game-score-controls">
+            ${closed ? '' : `<button type="button" class="game-score-step-btn game-score-minus-btn" data-seat-id="${seat.seatId}" aria-label="Um 1 verringern">−</button>`}
+            <input type="number" inputmode="numeric" class="game-score-input" data-seat-id="${seat.seatId}" value="${points}" min="0" step="1"${closed?' disabled':''} aria-label="Punkte von ${escapeHtml(seat.name)}">
+            ${closed ? '' : `<button type="button" class="game-score-step-btn game-score-plus-btn" data-seat-id="${seat.seatId}" aria-label="Um 1 erhöhen">+</button>`}
           </span>
         </div>
       `;
@@ -4717,14 +4734,14 @@
       <div class="card">
         <h2 class="section-title">${escapeHtml(gameTypeLabel(game.type))}</h2>
         <div id="game-score-list">${occupiedSeats.map(scoreRowHtml).join('')}</div>
-        ${closed ? '' : `<p class="hint">Zeile antippen für +1, − zum Verringern.</p>`}
       </div>
     `;
   }
 
   // Ändert den Punktewert eines Spiels für einen Sitzplatz um delta (nie unter 0) - aktualisiert
-  // zuerst den lokalen State und rendert sofort, speichert danach im Hintergrund über den
-  // race-condition-sicheren Save-Pfad saveGameScoreForSeat (siehe dort).
+  // den lokalen State und nur das betroffene Eingabefeld im DOM (kein vollständiges render(), damit
+  // ein eventuell gerade fokussiertes Eingabefeld in einer anderen Zeile nicht den Fokus verliert),
+  // speichert danach im Hintergrund über den race-condition-sicheren Save-Pfad saveGameScoreForSeat.
   async function adjustGameScore(seatId, delta){
     const detail = state.currentEveningDetail;
     const gameId = state.currentGameScoreId;
@@ -4733,7 +4750,24 @@
     const current = detail.gameScoresBySeat[seatId][gameId] || 0;
     const newValue = Math.max(0, current + delta);
     detail.gameScoresBySeat[seatId][gameId] = newValue;
-    render();
+    const input = document.querySelector(`.game-score-input[data-seat-id="${seatId}"]`);
+    if(input) input.value = newValue;
+    try{
+      await saveGameScoreForSeat(detail.id, seatId, gameId, newValue);
+    }catch(e){
+      renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', ()=>goToGameScoreDetail(gameId));
+    }
+  }
+
+  // Setzt den Punktewert eines Spiels für einen Sitzplatz direkt auf value (z.B. nach Tippen ins
+  // Eingabefeld) - nie unter 0, sonst analog zu adjustGameScore.
+  async function setGameScore(seatId, value){
+    const detail = state.currentEveningDetail;
+    const gameId = state.currentGameScoreId;
+    if(!detail.gameScoresBySeat) detail.gameScoresBySeat = {};
+    if(!detail.gameScoresBySeat[seatId]) detail.gameScoresBySeat[seatId] = {};
+    const newValue = Math.max(0, Math.round(value)||0);
+    detail.gameScoresBySeat[seatId][gameId] = newValue;
     try{
       await saveGameScoreForSeat(detail.id, seatId, gameId, newValue);
     }catch(e){
@@ -8439,10 +8473,10 @@
     const detail = state.currentEveningDetail;
     const closed = !!(detail && detail.closed) || !canEditEvening(detail);
     if(!closed){
-      document.querySelectorAll('#game-score-list .fine-detail-row').forEach(row=>{
-        row.addEventListener('click', (e)=>{
-          if(e.target.closest('.game-score-minus-btn')) return;
-          adjustGameScore(row.dataset.seatId, 1);
+      document.querySelectorAll('.game-score-plus-btn').forEach(btn=>{
+        btn.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          adjustGameScore(btn.dataset.seatId, 1);
         });
       });
       document.querySelectorAll('.game-score-minus-btn').forEach(btn=>{
@@ -8450,6 +8484,27 @@
           e.stopPropagation();
           adjustGameScore(btn.dataset.seatId, -1);
         });
+      });
+      // Eingabefeld: kein sofortiges render() bei jedem Tastendruck (sonst verliert das Feld Fokus
+      // und Cursor-Position mitten im Tippen), Speichern erst debounced beim Verlassen des Felds
+      // bzw. nach kurzer Pause - analog zum Notizen-Textfeld.
+      document.querySelectorAll('.game-score-input').forEach(input=>{
+        let saveTimer = null;
+        const commit = ()=>{
+          clearTimeout(saveTimer);
+          const seatId = input.dataset.seatId;
+          const gameId = state.currentGameScoreId;
+          const value = Math.max(0, Math.round(parseFloat(input.value))||0);
+          input.value = value;
+          const current = (detail.gameScoresBySeat && detail.gameScoresBySeat[seatId] && detail.gameScoresBySeat[seatId][gameId]) || 0;
+          if(current===value) return;
+          setGameScore(seatId, value);
+        };
+        input.addEventListener('input', ()=>{
+          clearTimeout(saveTimer);
+          saveTimer = setTimeout(commit, 800);
+        });
+        input.addEventListener('blur', commit);
       });
     }
   }
