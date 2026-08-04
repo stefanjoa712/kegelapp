@@ -519,10 +519,10 @@
     color:var(--ink); font-size:16px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; flex-shrink:0;
   }
   .game-score-step-btn:hover{border-color:var(--wine); color:var(--wine);}
-  .game-score-input{
-    font-family:var(--font-mono); font-weight:700; font-size:15px; text-align:center; width:52px;
-    padding:6px 2px; border:1.5px solid var(--line); border-radius:8px; background:#fff; color:var(--ink);
-    -moz-appearance:textfield;
+  input[type="number"].game-score-input{
+    font-family:var(--font-mono); font-weight:700; font-size:15px; text-align:center; width:70px;
+    padding:8px 4px; border:1.5px solid var(--line); border-radius:8px; background:#fff; color:var(--ink);
+    -moz-appearance:textfield; margin:0; flex-shrink:0;
   }
   .game-score-input:focus{outline:none; border-color:var(--wine);}
   .game-score-input::-webkit-outer-spin-button, .game-score-input::-webkit-inner-spin-button{-webkit-appearance:none; margin:0;}
@@ -805,7 +805,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.23';
+  const APP_VERSION = '1.1.24';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
