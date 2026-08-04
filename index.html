@@ -751,7 +751,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.126';
+  const APP_VERSION = '1.0.127';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1410,10 +1410,12 @@
     main.finesBySeat = {};
     main.adHocFinesBySeat = {};
     main.roundsGivenBySeat = {};
+    main.roundsCarriedAwayBySeat = {};
     for(const seatId of Object.keys(seatFines)){
       if(seatFines[seatId].finesBySeat) main.finesBySeat[seatId] = seatFines[seatId].finesBySeat;
       if(seatFines[seatId].adHocFinesBySeat) main.adHocFinesBySeat[seatId] = seatFines[seatId].adHocFinesBySeat;
       if(seatFines[seatId].roundsGivenBySeat) main.roundsGivenBySeat[seatId] = seatFines[seatId].roundsGivenBySeat;
+      if(seatFines[seatId].roundsCarriedAwayBySeat) main.roundsCarriedAwayBySeat[seatId] = seatFines[seatId].roundsCarriedAwayBySeat;
     }
     return main;
   }
@@ -1429,11 +1431,13 @@
 
   // Speichert die Strafen für GENAU EINEN Sitzplatz eines Abends, transaktional (falls zwei
   // Personen gleichzeitig für denselben Sitzplatz mitzählen, wiederholt Firestore die Transaktion
-  // automatisch statt eine der beiden Änderungen zu verlieren).
-  async function saveEveningSeatFines(eveningId, seatId, fines, adHocFines, roundsGiven){
+  // automatisch statt eine der beiden Änderungen zu verlieren). roundsCarriedAway ist optional -
+  // pro Instanz markiert, ob eine offene Runde bereits an einen späteren Abend weitergereicht
+  // wurde (siehe carryOverOpenRounds()); analog zu roundsGivenBySeat, aber ein eigener Zustand.
+  async function saveEveningSeatFines(eveningId, seatId, fines, adHocFines, roundsGiven, roundsCarriedAway){
     assertNotAccessBlocked();
     await withTimeout(runTransaction(db, async (tx)=>{
-      tx.set(eveningSeatDocRef(eveningId, seatId), { value: JSON.stringify({ finesBySeat: fines||{}, adHocFinesBySeat: adHocFines||[], roundsGivenBySeat: roundsGiven||{} }) });
+      tx.set(eveningSeatDocRef(eveningId, seatId), { value: JSON.stringify({ finesBySeat: fines||{}, adHocFinesBySeat: adHocFines||[], roundsGivenBySeat: roundsGiven||{}, roundsCarriedAwayBySeat: roundsCarriedAway||{} }) });
     }), STORAGE_TIMEOUT_MS);
   }
 
@@ -3906,8 +3910,11 @@
     absentList.forEach(a=>{ income += a.amount; });
     // hasOpenRounds landet im Index (evenings-index), damit carryOverOpenRounds() beim Anlegen
     // eines neuen Abends NICHT für jeden vergangenen Abend das komplette Detail-Dokument (inkl.
-    // aller Sitzplatz-Unterdokumente) laden muss, sondern per Index vorfiltern kann.
-    const hasOpenRounds = computeRoundEntries(detail).some(e=>!e.given);
+    // aller Sitzplatz-Unterdokumente) laden muss, sondern per Index vorfiltern kann. Eine Instanz
+    // zählt nur, wenn sie weder gegeben NOCH bereits an einen anderen Abend weitergereicht wurde
+    // (siehe carriedAway in computeRoundEntries) - sonst würde ein Abend fälschlich als "hat keine
+    // offenen Runden mehr" gelten, nur weil EINE seiner mehreren offenen Runden übernommen wurde.
+    const hasOpenRounds = computeRoundEntries(detail).some(e=>!e.given && !e.carriedAway);
     return { presentCount, guestCount, absentCount, income, hasOpenRounds };
   }
   // Aktualisiert den Index-Eintrag eines Abends mit den aktuellen Kennzahlen (mutiert state.eveningsIndex).
@@ -4053,6 +4060,15 @@
   // abhakbar). Wird die zugrunde liegende Strafe reduziert, filtert computeRoundEntries
   // automatisch die dann nicht mehr existierenden Indizes (>= neuer count) heraus; die
   // eigentliche Bereinigung von roundsGivenBySeat passiert zusätzlich in adjustFineCount.
+  // carriedAway markiert PRO EINZELNER INSTANZ (nicht pro Abend!), ob diese offene Runde bereits
+  // an einen späteren Abend weitergereicht wurde - Pendant zu roundsGivenBySeat, aber für den
+  // "weitergegeben statt gegeben"-Zustand. Wichtig: ein Abend kann mehrere offene Runden
+  // verschiedener Personen haben, von denen nur ein Teil an einen bestimmten neuen Abend
+  // übernommen werden kann (z.B. weil nicht alle Personen dort anwesend sind) - ein einziges
+  // Boolean-Flag pro ABEND kann das nicht korrekt abbilden (frühere Version dieses Features hatte
+  // genau diesen Fehler: roundsCarriedForward auf Abendebene führte dazu, dass die offene Runde
+  // einer nicht anwesenden Person verloren ging, sobald irgendeine andere Person an diesem Abend
+  // erfolgreich übernommen wurde). Jede einzelne Instanz trägt ihren Status daher selbst.
   function computeRoundEntries(detail){
     const catalog = detail.finesCatalogSnapshot || [];
     const roundFines = catalog.filter(f=> f.type==='runde' || f.type==='fremdstrafe_runde');
@@ -4069,10 +4085,12 @@
     occupied.forEach(seat=>{
       const seatEntries = (detail.finesBySeat && detail.finesBySeat[seat.seatId]) || {};
       const givenMap = (detail.roundsGivenBySeat && detail.roundsGivenBySeat[seat.seatId]) || {};
+      const carriedAwayMap = (detail.roundsCarriedAwayBySeat && detail.roundsCarriedAwayBySeat[seat.seatId]) || {};
       roundFines.forEach(fine=>{
         const count = seatEntries[fine.id] || 0;
         if(count<=0) return;
         const givenIndices = new Set(givenMap[fine.id] || []);
+        const carriedAwayIndices = new Set(carriedAwayMap[fine.id] || []);
         for(let i=0;i<count;i++){
           entries.push({
             seatId: seat.seatId,
@@ -4080,6 +4098,7 @@
             name: seat.name,
             fineName: fine.name,
             given: givenIndices.has(i),
+            carriedAway: carriedAwayIndices.has(i),
             instanceIndex: i,
             carried: false
           });
@@ -4100,6 +4119,7 @@
         name: c.name,
         fineName: c.fineName,
         given: !!c.given,
+        carriedAway: false,
         instanceIndex: c.id,
         carried: true,
         sourceDate: c.sourceDate || null
@@ -4113,7 +4133,11 @@
   // Aktions-Button). Runden können hier nur als gegeben markiert, nicht gelöscht werden -
   // Löschen/Reduzieren läuft ausschließlich über die Strafen-Zähler auf der Personen-Detailseite.
   function buildRoundsTab(detail){
-    const entries = computeRoundEntries(detail);
+    // carriedAway-Instanzen (an einen späteren Abend weitergereicht, siehe carryOverOpenRounds())
+    // werden hier nicht mehr angezeigt - sie erscheinen stattdessen im neuen Abend als "carried"-
+    // Eintrag. Ohne diesen Filter würden sie fälschlich weiterhin als offene Runde in diesem
+    // (dem alten) Abend auftauchen, obwohl die Pflicht bereits weitergegeben wurde.
+    const entries = computeRoundEntries(detail).filter(e=>!e.carriedAway);
     const closed = !!detail.closed || !canEditEvening(detail);
     if(entries.length===0){
       return `
@@ -4419,11 +4443,14 @@
   // Speichert die Strafen für einen bestimmten Sitzplatz eines Abends und hält gleichzeitig die
   // Kennzahlen im Index aktuell - gebündelter Helper für alle Stellen, die nur an EINEM Sitzplatz
   // etwas ändern (Katalog-Strafe hoch/runter zählen, Geldstrafe hinzufügen/bearbeiten/löschen).
+  // roundsCarriedAwayBySeat wird IMMER mitgegeben, auch wenn diese Funktion es selbst nicht
+  // ändert - saveEveningSeatFines() schreibt das Sitzplatz-Unterdokument komplett neu (tx.set
+  // statt Merge), ein fehlender Wert würde ein zuvor gesetztes carriedAway-Flag sonst löschen.
   async function saveEveningSeatFinesAndIndex(detail, seatId){
     updateEveningIndexSummary(detail);
     const summary = computeEveningSummaryFields(detail);
     await Promise.all([
-      saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId]),
+      saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId], (detail.roundsCarriedAwayBySeat||{})[seatId]),
       updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
     ]);
   }
@@ -4436,7 +4463,7 @@
     const summary = computeEveningSummaryFields(detail);
     const uniqueSeatIds = [...new Set(seatIds)];
     await Promise.all([
-      ...uniqueSeatIds.map(seatId=> saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId])),
+      ...uniqueSeatIds.map(seatId=> saveEveningSeatFines(detail.id, seatId, (detail.finesBySeat||{})[seatId], (detail.adHocFinesBySeat||{})[seatId], (detail.roundsGivenBySeat||{})[seatId], (detail.roundsCarriedAwayBySeat||{})[seatId])),
       updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===detail.id ? {...e, ...summary} : e))
     ]);
   }
@@ -4458,6 +4485,13 @@
     const isRoundFine = fine && (fine.type==='runde' || fine.type==='fremdstrafe_runde');
     if(isRoundFine && detail.roundsGivenBySeat && detail.roundsGivenBySeat[seatId] && detail.roundsGivenBySeat[seatId][fineId]){
       detail.roundsGivenBySeat[seatId][fineId] = detail.roundsGivenBySeat[seatId][fineId].filter(i=>i<newCount);
+    }
+    // Analog: bereits an einen späteren Abend weitergereichte Instanzen (carriedAway), die durch
+    // die Reduzierung nicht mehr existieren, müssen ebenfalls entfernt werden - sonst könnte
+    // computeEveningSummaryFields()/hasOpenRounds auf Basis einer Instanz rechnen, die es gar
+    // nicht mehr gibt.
+    if(isRoundFine && detail.roundsCarriedAwayBySeat && detail.roundsCarriedAwayBySeat[seatId] && detail.roundsCarriedAwayBySeat[seatId][fineId]){
+      detail.roundsCarriedAwayBySeat[seatId][fineId] = detail.roundsCarriedAwayBySeat[seatId][fineId].filter(i=>i<newCount);
     }
     render();
     await saveEveningSeatFinesAndIndex(detail, seatId);
@@ -7520,17 +7554,16 @@
   // in einem separaten Feld (carriedOverRounds statt finesBySeat), damit bei "Fremdstrafe + Runde"
   // kein zweiter Geldbetrag entsteht - hier geht es rein um die Rundenpflicht.
   //
-  // Damit eine offene Runde nicht bei jedem weiteren neuen Abend erneut als Quelle dient (z.B.
-  // Abend 1 -> Abend 2 übernommen, dort wieder nicht gegeben -> darf NICHT zusätzlich nochmal aus
-  // Abend 1 UND aus Abend 2 in Abend 3 einfließen), wird ein alter Abend NUR DANN mit
-  // roundsCarriedForward:true markiert, wenn tatsächlich mindestens eine seiner offenen Runden
-  // übernommen werden konnte. Nahm z.B. die betroffene Person am neuen Abend nicht teil, bleibt
-  // der alte Abend weiterhin als Quelle verfügbar - sonst würde die Rundenpflicht ersatzlos
-  // verloren gehen, sobald diese Person länger pausiert. Jeder übernommene Eintrag trägt
-  // zusätzlich sourceEveningId, damit removeCarriedRoundsFromSource() beim Löschen des Abends,
-  // der die Übernahme ausgelöst hat, den Quell-Abend gezielt wieder freigeben kann (siehe dort).
+  // WICHTIG: die Markierung "diese Runde wurde bereits weitergereicht" passiert PRO EINZELNER
+  // INSTANZ (roundsCarriedAwayBySeat, analog zu roundsGivenBySeat), NICHT pro Abend. Ein Abend
+  // kann mehrere offene Runden verschiedener Personen haben; nimmt nur ein Teil dieser Personen
+  // am neuen Abend teil, dürfen die übrigen, nicht übernommenen Instanzen weiterhin als offene
+  // Quelle für spätere Abende gelten. Eine frühere Version markierte stattdessen den GESAMTEN
+  // Quell-Abend als "abgearbeitet", sobald irgendeine seiner Runden übernommen wurde - das ließ
+  // die offene Runde einer an diesem Zwischen-Abend abwesenden Person unwiederbringlich verloren
+  // gehen, sobald irgendeine andere Person erfolgreich übernommen hatte.
   async function carryOverOpenRounds(newDate, participantNames){
-    const sourceIndexEntries = state.eveningsIndex.filter(e=> e.date < newDate && e.hasOpenRounds && !e.roundsCarriedForward);
+    const sourceIndexEntries = state.eveningsIndex.filter(e=> e.date < newDate && e.hasOpenRounds);
     if(sourceIndexEntries.length===0) return [];
 
     const carried = [];
@@ -7538,52 +7571,105 @@
     for(const indexEntry of sourceIndexEntries){
       const oldDetail = await getEveningDetail(indexEntry.id);
       if(!oldDetail) continue;
-      const oldEntries = computeRoundEntries(oldDetail).filter(e=>!e.given);
-      let usedAny = false;
+      const oldEntries = computeRoundEntries(oldDetail).filter(e=>!e.given && !e.carriedAway);
+      let changed = false;
       oldEntries.forEach(e=>{
         if(!participantNames.has(e.name)) return;
-        usedAny = true;
         carried.push({ id: uid('cr'), fineId: e.fineId, fineName: e.fineName, name: e.name, given: false, sourceEveningId: oldDetail.id, sourceDate: oldDetail.date });
+        changed = true;
+        if(e.carried){
+          // Diese Instanz war selbst schon eine übernommene Runde aus einem noch älteren Abend
+          // (carriedOverRounds-Eintrag mit eigener id in e.instanceIndex) - hier wird sie ein
+          // weiteres Mal weitergereicht, das Original-Objekt bekommt dafür sein eigenes
+          // carriedAway-Flag (kein Sitzplatz vorhanden, daher eigenes Feld statt der Seat-Map).
+          const origEntry = (oldDetail.carriedOverRounds||[]).find(c=>c.id===e.instanceIndex);
+          if(origEntry) origEntry.carriedAway = true;
+        }else{
+          if(!oldDetail.roundsCarriedAwayBySeat) oldDetail.roundsCarriedAwayBySeat = {};
+          if(!oldDetail.roundsCarriedAwayBySeat[e.seatId]) oldDetail.roundsCarriedAwayBySeat[e.seatId] = {};
+          const current = oldDetail.roundsCarriedAwayBySeat[e.seatId][e.fineId] || [];
+          if(!current.includes(e.instanceIndex)) oldDetail.roundsCarriedAwayBySeat[e.seatId][e.fineId] = [...current, e.instanceIndex];
+        }
       });
-      if(usedAny){
-        oldDetail.roundsCarriedForward = true;
-        touchedOldDetails.push(oldDetail);
-      }
+      if(changed) touchedOldDetails.push(oldDetail);
     }
-    await Promise.all(touchedOldDetails.map(d=> saveEveningMainDoc(d)));
-    // evenings-index ebenfalls aktualisieren, damit spätere Abend-Anlagen diese Quellen nicht
-    // erneut laden.
+    // roundsCarriedAwayBySeat liegt wie roundsGivenBySeat im Sitzplatz-Unterdokument, NICHT im
+    // Hauptdokument - deshalb pro betroffenem Sitzplatz über saveEveningSeatFines speichern.
+    // carriedOverRounds (für den carried-Sonderfall oben) liegt dagegen im Hauptdokument.
+    await Promise.all(touchedOldDetails.map(async d=>{
+      const seatIds = new Set([
+        ...Object.keys(d.roundsCarriedAwayBySeat||{}),
+      ]);
+      await Promise.all([...seatIds].map(seatId=> saveEveningSeatFines(d.id, seatId, (d.finesBySeat||{})[seatId], (d.adHocFinesBySeat||{})[seatId], (d.roundsGivenBySeat||{})[seatId], (d.roundsCarriedAwayBySeat||{})[seatId])));
+      await saveEveningMainDoc(d);
+    }));
+    // evenings-index aktualisieren, damit spätere Abend-Anlagen den korrekten hasOpenRounds-Stand
+    // sehen (ein Abend kann jetzt hasOpenRounds:false haben, wenn ALLE seine Instanzen entweder
+    // gegeben oder weitergereicht wurden).
     if(touchedOldDetails.length>0){
-      const touchedIds = new Set(touchedOldDetails.map(d=>d.id));
-      await updateEveningsIndex(serverIndex=> serverIndex.map(e=> touchedIds.has(e.id) ? {...e, roundsCarriedForward:true} : e));
-      state.eveningsIndex = state.eveningsIndex.map(e=> touchedIds.has(e.id) ? {...e, roundsCarriedForward:true} : e);
+      const summaryById = {};
+      touchedOldDetails.forEach(d=>{ summaryById[d.id] = computeEveningSummaryFields(d); });
+      await updateEveningsIndex(serverIndex=> serverIndex.map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e));
+      state.eveningsIndex = state.eveningsIndex.map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e);
     }
     return carried;
   }
 
-  // Gibt die Quell-Abende einer Liste carriedOverRounds-Einträge wieder als Runden-Quelle frei
-  // (roundsCarriedForward:false), sofern die jeweilige Runde noch offen war (given:false) - eine
+  // Gibt eine Liste carriedOverRounds-Einträge wieder an ihre Quell-Instanz zurück (macht das
+  // carriedAway-Flag rückgängig), sofern die jeweilige Runde noch offen war (given:false) - eine
   // bereits gegebene Runde muss nicht zurückgegeben werden, die Pflicht wurde ja bereits erfüllt.
   // Wird beim Löschen eines Abends aufgerufen (siehe attachDetailListeners()), damit übernommene,
   // aber noch offene Rundenpflichten nicht ersatzlos verschwinden, nur weil der Abend, der sie
-  // übernommen hatte, wieder gelöscht wird.
+  // übernommen hatte, wieder gelöscht wird. Arbeitet jetzt (wie carryOverOpenRounds) auf
+  // Instanz-Ebene: nur die konkret betroffene Runde wird zurückgegeben, nicht der ganze Abend.
   async function releaseCarriedRoundsToSource(carriedOverRounds){
     const openCarried = (carriedOverRounds||[]).filter(c=>!c.given && c.sourceEveningId);
     if(openCarried.length===0) return;
     const sourceIds = [...new Set(openCarried.map(c=>c.sourceEveningId))];
-    await Promise.all(sourceIds.map(id=> updateEveningsIndex(serverIndex=> serverIndex.map(e=> e.id===id ? {...e, roundsCarriedForward:false} : e))));
-    // Alle Aufrufe zielen auf dasselbe Server-Dokument evenings-index - sequenziell statt
-    // Promise.all wäre hier zwar unkritisch, würde aber ohne Not mehrere Overwrite-Runden
-    // riskieren; updateEveningsIndex liest/schreibt bereits pro Aufruf den vollen aktuellen
-    // Serverstand, mögliche Kollisionen bei mehreren IDs sind also selbst im Promise.all-Fall
-    // durch das jeweils frische Lesen abgefangen.
-    state.eveningsIndex = state.eveningsIndex.map(e=> sourceIds.includes(e.id) ? {...e, roundsCarriedForward:false} : e);
-    // Auch im Hauptdokument des alten Abends selbst zurücksetzen, damit ein direkt danach
-    // geladenes Detail (z.B. erneuter Blick auf den alten Abend) konsistent ist.
-    await Promise.all(sourceIds.map(async id=>{
-      const oldDetail = await getEveningDetail(id);
-      if(oldDetail){ oldDetail.roundsCarriedForward = false; await saveEveningMainDoc(oldDetail); }
+    const touchedOldDetails = [];
+    for(const sourceId of sourceIds){
+      const oldDetail = await getEveningDetail(sourceId);
+      if(!oldDetail) continue;
+      const relevant = openCarried.filter(c=>c.sourceEveningId===sourceId);
+      let changed = false;
+      relevant.forEach(c=>{
+        // Fall 1: die übernommene Runde stammt direkt aus finesBySeat des Quell-Abends
+        // (roundsCarriedAwayBySeat). Fall 2: sie war dort selbst schon eine carriedOverRounds-
+        // Instanz (carried, siehe carryOverOpenRounds) - dann carriedAway dort zurücksetzen.
+        // Da carried-Einträge keine seatId/instanceIndex-Zahl haben, wird zuerst versucht, per
+        // fineId+name eine passende carriedAway-Markierung in roundsCarriedAwayBySeat zu finden;
+        // schlägt das fehl, wird stattdessen der carriedOverRounds-Eintrag mit gleichem
+        // fineId+name gesucht.
+        const seatsWithFine = Object.keys(oldDetail.roundsCarriedAwayBySeat||{});
+        let resolved = false;
+        for(const seatId of seatsWithFine){
+          const seatObj = (oldDetail.seating||[]).find(s=>s.seatId===seatId);
+          if(!seatObj || seatObj.name!==c.name) continue;
+          const list = (oldDetail.roundsCarriedAwayBySeat[seatId]||{})[c.fineId] || [];
+          if(list.length>0){
+            oldDetail.roundsCarriedAwayBySeat[seatId][c.fineId] = list.slice(0, -1);
+            changed = true; resolved = true;
+            break;
+          }
+        }
+        if(!resolved){
+          const origEntry = (oldDetail.carriedOverRounds||[]).find(cc=> cc.fineId===c.fineId && cc.name===c.name && cc.carriedAway);
+          if(origEntry){ origEntry.carriedAway = false; changed = true; }
+        }
+      });
+      if(changed) touchedOldDetails.push(oldDetail);
+    }
+    await Promise.all(touchedOldDetails.map(async d=>{
+      const seatIds = Object.keys(d.roundsCarriedAwayBySeat||{});
+      await Promise.all(seatIds.map(seatId=> saveEveningSeatFines(d.id, seatId, (d.finesBySeat||{})[seatId], (d.adHocFinesBySeat||{})[seatId], (d.roundsGivenBySeat||{})[seatId], (d.roundsCarriedAwayBySeat||{})[seatId])));
+      await saveEveningMainDoc(d);
     }));
+    if(touchedOldDetails.length>0){
+      const summaryById = {};
+      touchedOldDetails.forEach(d=>{ summaryById[d.id] = computeEveningSummaryFields(d); });
+      await updateEveningsIndex(serverIndex=> serverIndex.map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e));
+      state.eveningsIndex = state.eveningsIndex.map(e=> summaryById[e.id] ? {...e, ...summaryById[e.id]} : e);
+    }
   }
 
   async function handleConfirmNewEvening(){
