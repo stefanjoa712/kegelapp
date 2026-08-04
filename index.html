@@ -512,6 +512,7 @@
   .round-entry-row.given .round-entry-name{color:var(--muted); font-weight:600;}
   .round-entry-badge{display:inline-block; align-self:flex-start; background:var(--tint); color:var(--brass); font-size:12px; font-weight:700; padding:2px 8px; border-radius:20px;}
   .round-entry-row.given .round-entry-badge{background:transparent; color:var(--muted); padding:0; font-weight:600;}
+  .round-carried-tag{font-weight:600; font-style:italic; opacity:.85;}
   .round-mark-given-btn{flex-shrink:0; width:34px; height:34px; border-radius:50%; border:1.5px solid var(--line); background:var(--surface); color:var(--muted); display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; transition:background .2s ease, border-color .2s ease, color .2s ease;}
   .round-mark-given-btn svg{width:18px; height:18px;}
   .round-mark-given-btn:hover{border-color:var(--felt); color:var(--felt);}
@@ -750,7 +751,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.123';
+  const APP_VERSION = '1.0.124';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3903,7 +3904,11 @@
     let income = 0;
     occupied.forEach(s=>{ income += roundedFineTotalForSeat(detail, s.seatId); });
     absentList.forEach(a=>{ income += a.amount; });
-    return { presentCount, guestCount, absentCount, income };
+    // hasOpenRounds landet im Index (evenings-index), damit carryOverOpenRounds() beim Anlegen
+    // eines neuen Abends NICHT für jeden vergangenen Abend das komplette Detail-Dokument (inkl.
+    // aller Sitzplatz-Unterdokumente) laden muss, sondern per Index vorfiltern kann.
+    const hasOpenRounds = computeRoundEntries(detail).some(e=>!e.given);
+    return { presentCount, guestCount, absentCount, income, hasOpenRounds };
   }
   // Aktualisiert den Index-Eintrag eines Abends mit den aktuellen Kennzahlen (mutiert state.eveningsIndex).
   function updateEveningIndexSummary(detail){
@@ -4051,7 +4056,8 @@
   function computeRoundEntries(detail){
     const catalog = detail.finesCatalogSnapshot || [];
     const roundFines = catalog.filter(f=> f.type==='runde' || f.type==='fremdstrafe_runde');
-    if(roundFines.length===0) return [];
+    const carriedOver = detail.carriedOverRounds || [];
+    if(roundFines.length===0 && carriedOver.length===0) return [];
     const bySeatId = {};
     detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
     const perSide = getEveningSeatingTemplate(detail).perSide;
@@ -4074,9 +4080,28 @@
             name: seat.name,
             fineName: fine.name,
             given: givenIndices.has(i),
-            instanceIndex: i
+            instanceIndex: i,
+            carried: false
           });
         }
+      });
+    });
+    // Übernommene Runden aus einem vergangenen Abend (siehe carryOverOpenRounds()) - eigener
+    // Datentopf ohne Bezug zu finesBySeat, damit keine Fremdstrafe-Beträge erneut ausgelöst
+    // werden. Nur Personen, die an DIESEM Abend auch tatsächlich sitzen (occupied), werden
+    // berücksichtigt - carryOverOpenRounds() filtert das bereits beim Anlegen, hier zusätzlich
+    // defensiv, falls sich die Besetzung nachträglich ändert.
+    const occupiedNames = new Set(occupied.map(s=>s.name));
+    carriedOver.forEach(c=>{
+      if(!occupiedNames.has(c.name)) return;
+      entries.push({
+        seatId: null,
+        fineId: c.fineId,
+        name: c.name,
+        fineName: c.fineName,
+        given: !!c.given,
+        instanceIndex: c.id,
+        carried: true
       });
     });
     return entries;
@@ -4113,13 +4138,13 @@
 
     function openRowHtml(e){
       return `
-        <div class="round-entry-row" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}">
+        <div class="round-entry-row" data-seat-id="${e.seatId||''}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" data-carried="${e.carried?'1':'0'}">
           <span class="round-avatar">${escapeHtml(initialsFor(e.name))}</span>
           <span class="round-entry-main">
             <span class="round-entry-name">${escapeHtml(e.name)}</span>
-            <span class="round-entry-badge">${escapeHtml(e.fineName)}</span>
+            <span class="round-entry-badge">${escapeHtml(e.fineName)}${e.carried ? ' <span class="round-carried-tag">· übernommen</span>' : ''}</span>
           </span>
-          ${closed ? '' : `<button type="button" class="round-mark-given-btn" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" aria-label="Als gegeben markieren" title="Als gegeben markieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg></button>`}
+          ${closed ? '' : `<button type="button" class="round-mark-given-btn" data-seat-id="${e.seatId||''}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" data-carried="${e.carried?'1':'0'}" aria-label="Als gegeben markieren" title="Als gegeben markieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg></button>`}
         </div>
       `;
     }
@@ -4129,9 +4154,9 @@
           <span class="round-avatar">${escapeHtml(initialsFor(e.name))}</span>
           <span class="round-entry-main">
             <span class="round-entry-name">${escapeHtml(e.name)}</span>
-            <span class="round-entry-badge">${escapeHtml(e.fineName)}</span>
+            <span class="round-entry-badge">${escapeHtml(e.fineName)}${e.carried ? ' <span class="round-carried-tag">· übernommen</span>' : ''}</span>
           </span>
-          ${closed ? `<svg class="round-given-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>` : `<button type="button" class="round-undo-given-btn" data-seat-id="${e.seatId}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" aria-label="Rückgängig machen" title="Rückgängig machen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>`}
+          ${closed ? `<svg class="round-given-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>` : `<button type="button" class="round-undo-given-btn" data-seat-id="${e.seatId||''}" data-fine-id="${e.fineId}" data-instance-index="${e.instanceIndex}" data-carried="${e.carried?'1':'0'}" aria-label="Rückgängig machen" title="Rückgängig machen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>`}
         </div>
       `;
     }
@@ -4158,8 +4183,18 @@
 
   // Markiert eine einzelne Runden-Instanz als gegeben. Jede Zeile ist unabhängig: der Index der
   // angeklickten Instanz wird zur Liste in roundsGivenBySeat[seatId][fineId] hinzugefügt.
-  async function markRoundGiven(seatId, fineId, instanceIndex){
+  // "carried"-Instanzen (aus carryOverOpenRounds() übernommene Runden ohne Geldbetrag, siehe
+  // computeRoundEntries) liegen in detail.carriedOverRounds statt in finesBySeat/roundsGivenBySeat
+  // und werden deshalb separat behandelt (eigenes carriedRoundId statt seatId+fineId+instanceIndex).
+  async function markRoundGiven(seatId, fineId, instanceIndex, carried){
     const detail = state.currentEveningDetail;
+    if(carried){
+      const entry = (detail.carriedOverRounds||[]).find(c=>c.id===instanceIndex);
+      if(entry) entry.given = true;
+      render();
+      await saveEveningMainDoc(detail);
+      return;
+    }
     if(!detail.roundsGivenBySeat) detail.roundsGivenBySeat = {};
     if(!detail.roundsGivenBySeat[seatId]) detail.roundsGivenBySeat[seatId] = {};
     const current = detail.roundsGivenBySeat[seatId][fineId] || [];
@@ -4170,9 +4205,16 @@
 
   // Macht eine als "gegeben" markierte Runden-Instanz wieder rückgängig (z.B. bei Fehlklick):
   // entfernt den Index aus roundsGivenBySeat[seatId][fineId], die Instanz landet danach wieder
-  // in den offenen Runden.
-  async function unmarkRoundGiven(seatId, fineId, instanceIndex){
+  // in den offenen Runden. Siehe markRoundGiven() zum carried-Sonderfall.
+  async function unmarkRoundGiven(seatId, fineId, instanceIndex, carried){
     const detail = state.currentEveningDetail;
+    if(carried){
+      const entry = (detail.carriedOverRounds||[]).find(c=>c.id===instanceIndex);
+      if(entry) entry.given = false;
+      render();
+      await saveEveningMainDoc(detail);
+      return;
+    }
     if(!detail.roundsGivenBySeat || !detail.roundsGivenBySeat[seatId]) return;
     const current = detail.roundsGivenBySeat[seatId][fineId] || [];
     detail.roundsGivenBySeat[seatId][fineId] = current.filter(i=>i!==instanceIndex);
@@ -7472,6 +7514,54 @@
     });
   }
 
+  // Übernimmt offene Runden aus vergangenen Abenden (Datum < neues Datum) in den neu angelegten
+  // Abend, aber NUR für Personen, die auch tatsächlich an diesem neuen Abend teilnehmen. Landet
+  // in einem separaten Feld (carriedOverRounds statt finesBySeat), damit bei "Fremdstrafe + Runde"
+  // kein zweiter Geldbetrag entsteht - hier geht es rein um die Rundenpflicht.
+  //
+  // Damit eine offene Runde nicht bei jedem weiteren neuen Abend erneut als Quelle dient (z.B.
+  // Abend 1 -> Abend 2 übernommen, dort wieder nicht gegeben -> darf NICHT zusätzlich nochmal aus
+  // Abend 1 UND aus Abend 2 in Abend 3 einfließen), wird jeder als Quelle genutzte alte Abend mit
+  // roundsCarriedForward:true markiert und dient danach nicht mehr als Quelle. Die "Kette" läuft
+  // dadurch immer nur über den jeweils letzten Abend, der die offene Runde trägt.
+  async function carryOverOpenRounds(newDate, participantNames){
+    const sourceIndexEntries = state.eveningsIndex.filter(e=> e.date < newDate && e.hasOpenRounds && !e.roundsCarriedForward);
+    if(sourceIndexEntries.length===0) return [];
+
+    const carried = [];
+    const touchedOldDetails = [];
+    for(const indexEntry of sourceIndexEntries){
+      const oldDetail = await getEveningDetail(indexEntry.id);
+      if(!oldDetail) continue;
+      const oldEntries = computeRoundEntries(oldDetail).filter(e=>!e.given);
+      let usedAny = false;
+      oldEntries.forEach(e=>{
+        if(!participantNames.has(e.name)) return;
+        usedAny = true;
+        carried.push({ id: uid('cr'), fineId: e.fineId, fineName: e.fineName, name: e.name, given: false });
+      });
+      // Der alte Abend wird IMMER als "abgearbeitet" markiert, sobald er als Quelle geprüft wurde -
+      // auch wenn aktuell keine seiner offenen Runden übernommen werden konnte (z.B. weil die
+      // betroffene Person heute fehlt). Ansonsten würde er bei jedem künftigen neuen Abend erneut
+      // geprüft und könnte doch noch zuschlagen, sobald die Person irgendwann wieder teilnimmt -
+      // das widerspricht "nur vom jeweils letzten Abend weiterreichen" nicht, weil eine nicht
+      // teilnehmende Person ihre Rundenpflicht ohnehin erst beim nächsten Abend, an dem sie
+      // dabei ist, einlösen kann; diese Prüfung passiert dann über den neuen (aktuellen) Abend.
+      oldDetail.roundsCarriedForward = true;
+      touchedOldDetails.push(oldDetail);
+      if(usedAny){ /* nur informativ für Kommentar oben, keine Verzweigung nötig */ }
+    }
+    await Promise.all(touchedOldDetails.map(d=> saveEveningMainDoc(d)));
+    // evenings-index ebenfalls aktualisieren, damit spätere Abend-Anlagen diese Quellen nicht
+    // erneut laden.
+    if(touchedOldDetails.length>0){
+      const touchedIds = new Set(touchedOldDetails.map(d=>d.id));
+      await updateEveningsIndex(serverIndex=> serverIndex.map(e=> touchedIds.has(e.id) ? {...e, roundsCarriedForward:true} : e));
+      state.eveningsIndex = state.eveningsIndex.map(e=> touchedIds.has(e.id) ? {...e, roundsCarriedForward:true} : e);
+    }
+    return carried;
+  }
+
   async function handleConfirmNewEvening(){
     const dateInput = document.getElementById('date-input');
     const date = (dateInput && dateInput.value) ? dateInput.value : todayISO();
@@ -7603,7 +7693,10 @@
     // (analog zu finesCatalogSnapshot) - siehe getEveningSeatingTemplate()/getEveningSideNames():
     // ein späterer Wechsel des Club-Templates bzw. der Seitenbezeichnungen darf die Darstellung
     // dieses bereits angelegten Abends nicht rückwirkend verändern.
-    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, seatingTemplateId: seatingTemplate.id, seatingSideNamesSnapshot: seatingSideNamesAtCreation };
+    const participantNames = new Set(participants.map(p=>p.name));
+    const carriedOverRounds = await carryOverOpenRounds(date, participantNames);
+
+    const detail = { id, date, seating, finesBySeat: {}, finesCatalogSnapshot: finesCatalogAtCreation, seatingTemplateId: seatingTemplate.id, seatingSideNamesSnapshot: seatingSideNamesAtCreation, carriedOverRounds };
     const newIndexEntry = {id, date, ...computeEveningSummaryFields(detail)};
     await Promise.all([
       saveEveningMainDoc(detail),
@@ -7656,24 +7749,26 @@
     document.querySelectorAll('.round-mark-given-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         if(btn.disabled) return;
-        const { seatId, fineId } = btn.dataset;
-        const instanceIndex = parseInt(btn.dataset.instanceIndex, 10);
+        const { seatId, fineId, carried } = btn.dataset;
+        const isCarried = carried==='1';
+        const instanceIndex = isCarried ? btn.dataset.instanceIndex : parseInt(btn.dataset.instanceIndex, 10);
         btn.disabled = true;
         btn.classList.add('confirmed');
         const row = btn.closest('.round-entry-row');
         setTimeout(()=>{
           if(row) row.classList.add('fading-out');
-          setTimeout(()=>{ markRoundGiven(seatId, fineId, instanceIndex); }, 350);
+          setTimeout(()=>{ markRoundGiven(seatId, fineId, instanceIndex, isCarried); }, 350);
         }, 300);
       });
     });
     document.querySelectorAll('.round-undo-given-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         if(btn.disabled) return;
-        const { seatId, fineId } = btn.dataset;
-        const instanceIndex = parseInt(btn.dataset.instanceIndex, 10);
+        const { seatId, fineId, carried } = btn.dataset;
+        const isCarried = carried==='1';
+        const instanceIndex = isCarried ? btn.dataset.instanceIndex : parseInt(btn.dataset.instanceIndex, 10);
         btn.disabled = true;
-        unmarkRoundGiven(seatId, fineId, instanceIndex);
+        unmarkRoundGiven(seatId, fineId, instanceIndex, isCarried);
       });
     });
     const roundsGivenToggleBtn = document.getElementById('rounds-given-toggle-btn');
