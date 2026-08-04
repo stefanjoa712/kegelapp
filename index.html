@@ -730,7 +730,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.0.116';
+  const APP_VERSION = '1.0.117';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4798,6 +4798,19 @@
   function buildSeatingSVG(detail){
     const template = getEveningSeatingTemplate(detail);
     const n = template.perSide;
+    const sideNames = getEveningSideNames(detail);
+    const shortLabels = getEveningShortLabels(detail);
+    const bySeatId = {};
+    detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
+    const crownSeatIds = computePudelCrownSeatIds(detail);
+
+    // 'rund' bekommt eine komplett eigene, kreisförmige Geometrie (echter Kreistisch statt nur
+    // gewölbter Längsseiten an zwei geraden Sitzreihen) - siehe buildRoundSeatingSVG(). Trapez
+    // und Rechteck behalten die ursprüngliche Zwei-Reihen-Geometrie unterhalb.
+    if(template.shape==='rund'){
+      return buildRoundSeatingSVG(detail, template, sideNames, shortLabels, bySeatId, crownSeatIds);
+    }
+
     // Grundmaße wie ursprünglich bei n=6 kalibriert (chairH=122 + Row-Abstand ergibt ca. 140px
     // pro Platz) - bei anderem n wird die Tischlänge (tableBottomY-tableTopY) proportional
     // mitskaliert, damit der Row-Abstand und damit die Stuhlgröße gleich bleiben, statt bei
@@ -4807,20 +4820,11 @@
     const tableBottomY = tableTopY + n*rowSpacing;
     const W = 760, H = tableBottomY + 50;
     // Trapezform (zur Kegelbahn hin verjüngend, wie ursprünglich) vs. rechteckige Form (parallele
-    // Kanten) vs. runde/ovale Form (parallele Kanten wie beim Rechteck, aber mit nach außen
-    // gewölbten Längsseiten statt geraden Linien, siehe tablePath unten).
+    // Kanten).
     const topLX = 230, topRX = 530;
     const botLX = template.shape==='trapez' ? 300 : topLX;
     const botRX = template.shape==='trapez' ? 460 : topRX;
-    const ovalBulge = 46; // wie weit sich die Längsseiten beim Rundtisch nach außen wölben
     const chairW = 188, chairH = 122, outward = 128;
-
-    const sideNames = getEveningSideNames(detail);
-    const shortLabels = getEveningShortLabels(detail);
-
-    const bySeatId = {};
-    detail.seating.forEach(s=>{ bySeatId[s.seatId] = s; });
-    const crownSeatIds = computePudelCrownSeatIds(detail);
 
     function edge(side, t){
       const topX = side==='left' ? topLX : topRX;
@@ -4883,12 +4887,7 @@
     for(let i=0;i<n;i++) chairsHtml += chairGroup('saal-'+(i+1), 'left', i);
     for(let i=0;i<n;i++) chairsHtml += chairGroup('kneipe-'+(i+1), 'right', i);
 
-    // Bei 'rund' wölben sich beide Längsseiten (links: topLX/botLX, rechts: topRX/botRX) über
-    // eine kubische Bézierkurve nach außen, statt als gerade Linie zu verlaufen wie bei Trapez
-    // und Rechteck - das ergibt die ovale Form eines Rundtischs.
-    const tablePath = template.shape==='rund'
-      ? `M${topLX},${tableTopY} L${topRX},${tableTopY} C${topRX+ovalBulge},${tableTopY} ${topRX+ovalBulge},${tableBottomY} ${botRX},${tableBottomY} L${botLX},${tableBottomY} C${botLX-ovalBulge},${tableBottomY} ${topLX-ovalBulge},${tableTopY} ${topLX},${tableTopY} Z`
-      : `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
+    const tablePath = `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
 
     return `<svg class="seating-diagram" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sitzplan des Kegelabends">
       <path class="table-shape" d="${tablePath}" />
@@ -4900,10 +4899,115 @@
     </svg>`;
   }
 
+  // Zeichnet den Sitzplan eines KONKRETEN Kegelabends mit rundem Tisch (Kreis statt Trapez/
+  // Rechteck): die Plätze verteilen sich gleichmäßig über den jeweiligen Halbkreis (links/rechts
+  // der vertikalen Kegelbahn-Achse), mit einer bewussten Lücke oben UND unten auf der Achse -
+  // dadurch liegt nie ein Platz exakt auf der Grenze zwischen "links" und "rechts" (siehe
+  // Anforderung "kein Platz genau mittig auf der Seitengrenze"). idx=0 ist der Platz am nächsten
+  // zur Kegelbahn (oben), höhere idx wandern im Kreisbogen nach unten - analog zur bisherigen
+  // Zählweise bei Trapez/Rechteck (dort war idx=0 ebenfalls die Reihe am nächsten zur Bahn).
+  function buildRoundSeatingSVG(detail, template, sideNames, shortLabels, bySeatId, crownSeatIds){
+    const n = template.perSide;
+    const chairW = 168, chairH = 108;
+    // Radius wächst mit n, damit bei mehr Plätzen pro Seite genug Bogenlänge für alle Stühle
+    // bleibt (kalibriert wie die 140px-Row-Abstände bei Trapez/Rechteck).
+    const R = 210 + (n-2)*46;
+    const cx0 = 380, cy0 = R + 170;
+    const W = 760, H = cy0 + R + 90;
+    const outward = 30; // zusätzlicher Abstand der Stühle nach außen relativ zum Kreisrand
+
+    // Jede Seite bekommt einen Winkelbereich von halbGap bis (180°-halbGap), gemessen von der
+    // oberen Achse (0° = senkrecht nach oben Richtung Kegelbahn) im Uhrzeigersinn für rechts,
+    // gegen den Uhrzeigersinn für links - so bleibt an der 0°/180°-Achse (oben UND unten) bewusst
+    // eine Lücke, statt dass ein Platz dort exakt mittig sitzt.
+    const gapDeg = 14;
+    function seatAngleDeg(idx){
+      // idx läuft von 0 (nah an der Bahn, oben) bis n-1 (unten) - gleichmäßig verteilt zwischen
+      // gapDeg und (180-gapDeg).
+      const span = 180 - 2*gapDeg;
+      return gapDeg + (idx+0.5)/n * span;
+    }
+    function pointOnCircle(angleDeg, side, radius){
+      const rad = angleDeg * Math.PI/180;
+      // Winkel 0° = oben (Richtung Kegelbahn), 90° = seitlich, 180° = unten.
+      const dy = -Math.cos(rad) * radius;
+      const dx = Math.sin(rad) * radius * (side==='left' ? -1 : 1);
+      return { x: cx0+dx, y: cy0+dy };
+    }
+
+    function chairGroup(seatId, side, idx){
+      const angle = seatAngleDeg(idx);
+      const edgePoint = pointOnCircle(angle, side, R);
+      const seatPoint = pointOnCircle(angle, side, R+outward);
+      const cx = seatPoint.x, cy = seatPoint.y;
+      const rectX = cx - chairW/2, rectY = cy - chairH/2;
+      const seat = bySeatId[seatId] || { name:null, isGuest:false };
+      const empty = !seat.name;
+      const shortLabel = (seatId.startsWith('saal') ? shortLabels.left : shortLabels.right) + seatId.split('-')[1];
+      const nameRaw = empty ? '— frei —' : seat.name;
+      const fontSize = nameRaw.length>10 ? 19 : 22;
+      const plateWidth = chairW-16;
+      const availW = plateWidth-10;
+      const estW = nameRaw.length * fontSize * 0.56;
+      const textLenAttr = estW>availW ? ` textLength="${availW}" lengthAdjust="spacingAndGlyphs"` : '';
+      const plateCenterY = cy+8;
+      const clickable = !empty;
+      const hasCrown = !empty && crownSeatIds.has(seat.seatId);
+      const crownCx = cx+plateWidth/2, crownCy = plateCenterY-18;
+      const crownBadgeHtml = hasCrown ? `
+        <g class="pudel-crown-badge">
+          <circle cx="${crownCx}" cy="${crownCy}" r="13" />
+          <path transform="translate(${crownCx-8.4},${crownCy-8.4}) scale(0.7)" d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8z"/>
+        </g>
+      ` : '';
+      const invalidBadgeCx = crownCx - (hasCrown ? 32 : 0);
+      const invalidBadgeHtml = (!empty && seat.invalid) ? `
+        <g class="invalid-seat-badge">
+          <circle cx="${invalidBadgeCx}" cy="${crownCy}" r="13"/>
+          <line x1="${invalidBadgeCx-5.5}" y1="${crownCy-5.5}" x2="${invalidBadgeCx+5.5}" y2="${crownCy+5.5}" stroke-linecap="round" stroke-width="2.4" stroke="#fff"/>
+          <line x1="${invalidBadgeCx+5.5}" y1="${crownCy-5.5}" x2="${invalidBadgeCx-5.5}" y2="${crownCy+5.5}" stroke-linecap="round" stroke-width="2.4" stroke="#fff"/>
+        </g>
+      ` : '';
+      const sfText = 'SCHRIFTFÜHRER';
+      const sfMaxW = chairW-14;
+      const sfEstW = sfText.length * 13 * 0.56;
+      const sfTextLenAttr = sfEstW>sfMaxW ? ` textLength="${sfMaxW}" lengthAdjust="spacingAndGlyphs"` : '';
+      return `<g class="reveal-group${clickable?' chair-clickable':''}" style="animation-delay:${idx*45}ms"${clickable?` data-member-name="${escapeHtml(seat.name)}" data-seat-id="${seat.seatId}"`:''}>
+        <line class="chair-tick" x1="${edgePoint.x}" y1="${edgePoint.y}" x2="${cx}" y2="${cy}" />
+        <rect class="chair-body${empty?' empty':''}" x="${rectX}" y="${rectY}" width="${chairW}" height="${chairH}" rx="15" />
+        <text class="seat-label-text${empty?' empty':''}" x="${cx}" y="${rectY+26}" text-anchor="middle">${shortLabel}</text>
+        <rect class="name-plate-rect" x="${cx-plateWidth/2}" y="${plateCenterY-18}" width="${plateWidth}" height="36" rx="6" />
+        <text class="name-plate-text${empty?' empty-text':''}" x="${cx}" y="${plateCenterY+8}" text-anchor="middle" font-size="${fontSize}"${textLenAttr}>${escapeHtml(nameRaw)}</text>
+        ${(!empty && seat.isGuest) ? `<text class="guest-tag-text" x="${cx}" y="${rectY+chairH-9}" text-anchor="middle">GAST</text>` : ''}
+        ${(!empty && seat.isSchriftfuehrer) ? `<text class="guest-tag-text" x="${cx}" y="${rectY+chairH-9}" text-anchor="middle"${sfTextLenAttr}>${sfText}</text>` : ''}
+        ${crownBadgeHtml}
+        ${invalidBadgeHtml}
+      </g>`;
+    }
+
+    let chairsHtml = '';
+    for(let i=0;i<n;i++) chairsHtml += chairGroup('saal-'+(i+1), 'left', i);
+    for(let i=0;i<n;i++) chairsHtml += chairGroup('kneipe-'+(i+1), 'right', i);
+
+    return `<svg class="seating-diagram" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sitzplan des Kegelabends">
+      <circle class="table-shape" cx="${cx0}" cy="${cy0}" r="${R}" />
+      <line class="lane-center-line" x1="${cx0}" y1="${cy0-R-40}" x2="${cx0}" y2="${cy0-R+15}" />
+      <text class="lane-label-text" x="${cx0}" y="${cy0-R-55}" text-anchor="middle">Kegelbahn</text>
+      <text class="side-label-text" x="${cx0-R-95}" y="${cy0}" text-anchor="middle">${escapeHtml(sideNames.left)}</text>
+      <text class="side-label-text" x="${cx0+R+95}" y="${cy0}" text-anchor="middle">${escapeHtml(sideNames.right)}</text>
+      ${chairsHtml}
+    </svg>`;
+  }
+
   // Vereinfachte, nicht-interaktive Vorschau eines Sitzplan-Templates für die Clubverwaltung:
   // zeigt nur die Tischform und die Platzkürzel (kein Name, kein Klick, keine Badges) - reine
   // Live-Vorschau bei Auswahl im Template-Dropdown, unabhängig von einem konkreten Kegelabend.
   function buildPreviewSeatingSVG(template){
+    // 'rund' bekommt dieselbe kreisförmige Geometrie wie buildRoundSeatingSVG() (nur ohne Namen,
+    // Klick-Handler und Badges) - siehe buildRoundPreviewSeatingSVG().
+    if(template.shape==='rund'){
+      return buildRoundPreviewSeatingSVG(template);
+    }
     const n = template.perSide;
     const rowSpacing = 84;
     const tableTopY = 70;
@@ -4912,7 +5016,6 @@
     const topLX = 140, topRX = 320;
     const botLX = template.shape==='trapez' ? 175 : topLX;
     const botRX = template.shape==='trapez' ? 285 : topRX;
-    const ovalBulge = 28; // wie weit sich die Längsseiten beim Rundtisch nach außen wölben (skaliert mit der kleineren Vorschaugröße)
     const chairW = 112, chairH = 72, outward = 76;
 
     const sideNames = getSeatingSideNames();
@@ -4941,13 +5044,60 @@
     for(let i=0;i<n;i++) chairsHtml += chairGroup('left', i, shortLabels.left);
     for(let i=0;i<n;i++) chairsHtml += chairGroup('right', i, shortLabels.right);
 
-    const tablePath = template.shape==='rund'
-      ? `M${topLX},${tableTopY} L${topRX},${tableTopY} C${topRX+ovalBulge},${tableTopY} ${topRX+ovalBulge},${tableBottomY} ${botRX},${tableBottomY} L${botLX},${tableBottomY} C${botLX-ovalBulge},${tableBottomY} ${topLX-ovalBulge},${tableTopY} ${topLX},${tableTopY} Z`
-      : `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
+    const tablePath = `M${topLX},${tableTopY} L${topRX},${tableTopY} L${botRX},${tableBottomY} L${botLX},${tableBottomY} Z`;
 
     return `<svg class="seating-diagram seating-diagram-preview" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vorschau des Sitzplans">
       <path class="table-shape" d="${tablePath}" />
       <line class="lane-center-line" x1="${W/2}" y1="${tableTopY+10}" x2="${W/2}" y2="${tableBottomY-10}" />
+      ${chairsHtml}
+    </svg>`;
+  }
+
+  // Kreisförmige Vorschau-Variante für Rundtisch-Templates (analog zu buildRoundSeatingSVG(),
+  // aber vereinfacht wie buildPreviewSeatingSVG(): keine Namen, kein Klick, keine Badges - nur
+  // Tischform und Platzkürzel). Nutzt dieselbe Winkel-Logik (Lücke oben UND unten auf der
+  // Kegelbahn-Achse), damit die Vorschau exakt der späteren echten Sitzplan-Zeichnung entspricht.
+  function buildRoundPreviewSeatingSVG(template){
+    const n = template.perSide;
+    const chairW = 100, chairH = 64;
+    const R = 120 + (n-2)*28;
+    const cx0 = 230, cy0 = R + 100;
+    const W = 460, H = cy0 + R + 55;
+    const outward = 20;
+    const gapDeg = 14;
+
+    const shortLabels = getSeatingShortLabels();
+
+    function seatAngleDeg(idx){
+      const span = 180 - 2*gapDeg;
+      return gapDeg + (idx+0.5)/n * span;
+    }
+    function pointOnCircle(angleDeg, side, radius){
+      const rad = angleDeg * Math.PI/180;
+      const dy = -Math.cos(rad) * radius;
+      const dx = Math.sin(rad) * radius * (side==='left' ? -1 : 1);
+      return { x: cx0+dx, y: cy0+dy };
+    }
+
+    function chairGroup(side, idx, sidePrefixLabel){
+      const angle = seatAngleDeg(idx);
+      const seatPoint = pointOnCircle(angle, side, R+outward);
+      const cx = seatPoint.x, cy = seatPoint.y;
+      const rectX = cx - chairW/2, rectY = cy - chairH/2;
+      const shortLabel = sidePrefixLabel + (idx+1);
+      return `<g>
+        <rect class="chair-body empty" x="${rectX}" y="${rectY}" width="${chairW}" height="${chairH}" rx="10" />
+        <text class="seat-label-text empty" x="${cx}" y="${cy+6}" text-anchor="middle" font-size="16">${shortLabel}</text>
+      </g>`;
+    }
+
+    let chairsHtml = '';
+    for(let i=0;i<n;i++) chairsHtml += chairGroup('left', i, shortLabels.left);
+    for(let i=0;i<n;i++) chairsHtml += chairGroup('right', i, shortLabels.right);
+
+    return `<svg class="seating-diagram seating-diagram-preview" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vorschau des Sitzplans">
+      <circle class="table-shape" cx="${cx0}" cy="${cy0}" r="${R}" />
+      <line class="lane-center-line" x1="${cx0}" y1="${cy0-R-25}" x2="${cx0}" y2="${cy0-R+10}" />
       ${chairsHtml}
     </svg>`;
   }
