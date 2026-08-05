@@ -815,7 +815,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.37';
+  const APP_VERSION = '1.1.38';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2543,70 +2543,78 @@
     </div>`;
   }
   function viewRecurringDetail(){
+    const readOnly = !canManageMembers();
     const r = state.financeRecurring.find(x=>x.id===state.currentRecurringId);
     const isEdit = !!r;
     if(state.financeAccounts.length===0){
       return `<div class="card"><p class="empty-state">Noch kein Konto/Kasse angelegt. Lege zuerst in der Finanzverwaltung eines an.</p></div>`;
     }
     const isExpenseEdit = isEdit && r.amount<0;
+    const disabledAttr = readOnly ? ' disabled' : '';
     const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${(isEdit && r.accountId===a.id)?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
     const potOptionsHtml = state.financeSavingsPots.map(p=>`<option value="${p.id}"${(isEdit && r.potId===p.id)?' selected':''}>${escapeHtml(p.name)}</option>`).join('');
     return `
       <div class="card">
+        ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart, Admin oder Präsident können die Finanzverwaltung bearbeiten.</p>` : ''}
         <label for="rec-description">Bezeichnung</label>
-        <input type="text" id="rec-description" placeholder="z. B. Bahnmiete" value="${isEdit?escapeHtml(r.description):''}">
+        <input type="text" id="rec-description" placeholder="z. B. Bahnmiete" value="${isEdit?escapeHtml(r.description):''}"${disabledAttr}>
         <label for="rec-account">Konto/Kasse</label>
-        <select id="rec-account">${accountOptionsHtml}</select>
+        <select id="rec-account"${disabledAttr}>${accountOptionsHtml}</select>
         <label for="rec-income">Einnahme (€)</label>
-        <input type="number" id="rec-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(r.amount).toFixed(2):''}">
+        <input type="number" id="rec-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(r.amount).toFixed(2):''}"${disabledAttr}>
         <label for="rec-expense">Ausgabe (€)</label>
-        <input type="number" id="rec-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(r.amount).toFixed(2):''}">
+        <input type="number" id="rec-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(r.amount).toFixed(2):''}"${disabledAttr}>
         <label for="rec-next-date">Nächste Ausführung</label>
-        <input type="date" id="rec-next-date" value="${isEdit?r.nextDate:todayISO()}">
+        <input type="date" id="rec-next-date" value="${isEdit?r.nextDate:todayISO()}"${disabledAttr}>
         <label for="rec-pot">Spartopf (optional)</label>
-        <select id="rec-pot">
+        <select id="rec-pot"${disabledAttr}>
           <option value="">Kein Spartopf</option>
           ${potOptionsHtml}
         </select>
         <p class="hint">Ist ein Spartopf ausgewählt, fließt diese Buchung immer direkt in diesen Topf statt in die allgemeine Aufteilung.</p>
         <p class="form-error" id="rec-detail-error"></p>
-        <button type="button" class="btn-primary" id="save-rec-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-rec-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
     `;
   }
 
   function viewSavingsPotDetail(){
+    const readOnly = !canManageMembers();
     const p = state.financeSavingsPots.find(x=>x.id===state.currentSavingsPotId);
     const isEdit = !!p;
+    const disabledAttr = readOnly ? ' disabled' : '';
     return `
       <div class="card">
+        ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart, Admin oder Präsident können die Finanzverwaltung bearbeiten.</p>` : ''}
         <label for="pot-name">Bezeichnung</label>
-        <input type="text" id="pot-name" placeholder="z. B. Weihnachtsfeier" value="${isEdit?escapeHtml(p.name):''}">
+        <input type="text" id="pot-name" placeholder="z. B. Weihnachtsfeier" value="${isEdit?escapeHtml(p.name):''}"${disabledAttr}>
         <label for="pot-target">Sparziel (€)</label>
-        <input type="number" id="pot-target" min="0" step="0.01" placeholder="0,00" value="${isEdit?p.targetAmount.toFixed(2):''}">
+        <input type="number" id="pot-target" min="0" step="0.01" placeholder="0,00" value="${isEdit?p.targetAmount.toFixed(2):''}"${disabledAttr}>
         <label for="pot-date">Zieldatum</label>
-        <input type="date" id="pot-date" value="${isEdit?p.targetDate:''}">
+        <input type="date" id="pot-date" value="${isEdit?p.targetDate:''}"${disabledAttr}>
         <label for="pot-start">Startbetrag (€, optional)</label>
-        <input type="number" id="pot-start" min="0" step="0.01" placeholder="0,00" value="${(isEdit && p.startAmount)?p.startAmount.toFixed(2):''}">
+        <input type="number" id="pot-start" min="0" step="0.01" placeholder="0,00" value="${(isEdit && p.startAmount)?p.startAmount.toFixed(2):''}"${disabledAttr}>
         <p class="form-error" id="pot-detail-error"></p>
-        <button type="button" class="btn-primary" id="save-pot-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-pot-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
     `;
   }
 
   function viewFinanceAccountDetail(){
+    const readOnly = !canManageMembers();
     const acc = state.financeAccounts.find(x=>x.id===state.currentFinanceAccountId);
     const isEdit = !!acc;
     return `
       <div class="card">
+        ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart, Admin oder Präsident können die Finanzverwaltung bearbeiten.</p>` : ''}
         <label for="finance-acc-name">Bezeichnung</label>
-        <input type="text" id="finance-acc-name" placeholder="z. B. Vereinskasse" value="${isEdit?escapeHtml(acc.name):''}">
+        <input type="text" id="finance-acc-name" placeholder="z. B. Vereinskasse" value="${isEdit?escapeHtml(acc.name):''}"${readOnly?' disabled':''}>
         <label for="finance-acc-balance">Start-Kontostand (€)</label>
         <input type="number" id="finance-acc-balance" min="0" step="0.01" placeholder="0,00"
-          value="${isEdit?acc.startBalance.toFixed(2):''}"${isEdit?' readonly disabled':''}>
+          value="${isEdit?acc.startBalance.toFixed(2):''}"${(isEdit||readOnly)?' readonly disabled':''}>
         ${isEdit ? `<p class="hint" style="margin-top:-6px;">Der Start-Kontostand kann nachträglich nicht mehr geändert werden.</p>` : ''}
         <p class="form-error" id="finance-acc-detail-error"></p>
-        <button type="button" class="btn-primary" id="save-finance-acc-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>
+        ${readOnly ? '' : `<button type="button" class="btn-primary" id="save-finance-acc-detail-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
     `;
   }
@@ -2848,48 +2856,52 @@
   }
 
   function viewFinanceManagement(){
+    // Read-Only für Nutzer ohne Verwaltungsrechte - dieselbe Berechtigung wie die
+    // Clubverwaltung (Kassenwart, Admin, Präsident), siehe canManageMembers().
+    const readOnly = !canManageMembers();
     const accountsListHtml = state.financeAccounts.length===0
-      ? `<p class="empty-state">Noch keine Konten &amp; Kassen angelegt. Über das „+" oben hinzufügen.</p>`
+      ? `<p class="empty-state">Noch keine Konten &amp; Kassen angelegt.${readOnly?'':' Über das „+" oben hinzufügen.'}</p>`
       : state.financeAccounts.map(financeAccountRowHtml).join('');
     const sortedRecurring = state.financeRecurring.slice().sort((a,b)=> a.nextDate.localeCompare(b.nextDate));
     const recurringListHtml = sortedRecurring.length===0
-      ? `<p class="empty-state">Noch keine monatlichen Buchungen angelegt. Über das „+" oben hinzufügen.</p>`
+      ? `<p class="empty-state">Noch keine monatlichen Buchungen angelegt.${readOnly?'':' Über das „+" oben hinzufügen.'}</p>`
       : sortedRecurring.map(recurringRowHtml).join('');
     const sortedPots = state.financeSavingsPots.slice().sort((a,b)=> a.targetDate.localeCompare(b.targetDate));
     const potsListHtml = sortedPots.length===0
-      ? `<p class="empty-state">Noch keine Spartöpfe angelegt. Über das „+" oben hinzufügen.</p>`
+      ? `<p class="empty-state">Noch keine Spartöpfe angelegt.${readOnly?'':' Über das „+" oben hinzufügen.'}</p>`
       : sortedPots.map(savingsPotRowHtml).join('');
     return `
+      ${readOnly ? `<p class="hint">Nur Kassenwart, Admin oder Präsident können die Finanzverwaltung bearbeiten.</p>` : ''}
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Konten &amp; Kassen <span class="member-count">(${state.financeAccounts.length})</span></h2>
-          <button type="button" class="header-circle-btn" id="header-add-finance-account-btn" aria-label="Konto hinzufügen">
+          ${readOnly ? '' : `<button type="button" class="header-circle-btn" id="header-add-finance-account-btn" aria-label="Konto hinzufügen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
-          </button>
+          </button>`}
         </div>
         <div id="finance-accounts-list-container">${accountsListHtml}</div>
       </div>
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Monatliche Buchungen <span class="member-count">(${state.financeRecurring.length})</span></h2>
-          <button type="button" class="header-circle-btn" id="header-add-recurring-btn" aria-label="Monatliche Buchung hinzufügen">
+          ${readOnly ? '' : `<button type="button" class="header-circle-btn" id="header-add-recurring-btn" aria-label="Monatliche Buchung hinzufügen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
-          </button>
+          </button>`}
         </div>
         <div id="finance-recurring-list-container">${recurringListHtml}</div>
       </div>
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Spartöpfe <span class="member-count">(${state.financeSavingsPots.length})</span></h2>
-          <button type="button" class="header-circle-btn" id="header-add-pot-btn" aria-label="Spartopf hinzufügen">
+          ${readOnly ? '' : `<button type="button" class="header-circle-btn" id="header-add-pot-btn" aria-label="Spartopf hinzufügen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
-          </button>
+          </button>`}
         </div>
         <div id="finance-pots-list-container">${potsListHtml}</div>
       </div>
@@ -5942,7 +5954,7 @@
       </div>
     ` : '';
 
-    const recurringOverflowHtml = (state.view==='recurringDetail' && state.currentRecurringId) ? `
+    const recurringOverflowHtml = (state.view==='recurringDetail' && state.currentRecurringId && canManageMembers()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-recurring-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -5953,7 +5965,7 @@
       </div>
     ` : '';
 
-    const savingsPotOverflowHtml = (state.view==='savingsPotDetail' && state.currentSavingsPotId) ? `
+    const savingsPotOverflowHtml = (state.view==='savingsPotDetail' && state.currentSavingsPotId && canManageMembers()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-pot-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -5964,7 +5976,7 @@
       </div>
     ` : '';
 
-    const financeAccountOverflowHtml = (state.view==='financeAccountDetail' && state.currentFinanceAccountId) ? `
+    const financeAccountOverflowHtml = (state.view==='financeAccountDetail' && state.currentFinanceAccountId && canManageMembers()) ? `
       <div class="header-overflow-wrap">
         <button type="button" class="header-icon-btn" id="header-finance-acc-overflow-btn" aria-label="Weitere Optionen">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>

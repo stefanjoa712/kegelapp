@@ -141,9 +141,24 @@ service cloud.firestore {
       allow read: if request.auth != null && (belongsToClub(clubId) || isAdmin());
       allow write: if canManageMembers(clubId) && !clubAccessBlocked(clubId);
     }
+    // Finanzverwaltung (Konten/Kassen, monatliche Buchungen, Sparziele): schreibgeschützt wie
+    // die Mitglieder-/Clubverwaltung (canManageMembers - Kassenwart, Admin, Präsident), analog
+    // zu fines-catalog/games-catalog oben.
+    match /clubs/{clubId}/data/finance-accounts {
+      allow read: if request.auth != null && (belongsToClub(clubId) || isAdmin());
+      allow write: if canManageMembers(clubId) && !clubAccessBlocked(clubId);
+    }
+    match /clubs/{clubId}/data/finance-recurring {
+      allow read: if request.auth != null && (belongsToClub(clubId) || isAdmin());
+      allow write: if canManageMembers(clubId) && !clubAccessBlocked(clubId);
+    }
+    match /clubs/{clubId}/data/finance-savings-pots {
+      allow read: if request.auth != null && (belongsToClub(clubId) || isAdmin());
+      allow write: if canManageMembers(clubId) && !clubAccessBlocked(clubId);
+    }
     match /clubs/{clubId}/data/{key} {
       allow read: if request.auth != null && (belongsToClub(clubId) || isAdmin());
-      allow write: if (belongsToClub(clubId) || isAdmin()) && key != 'fines-catalog' && key != 'games-catalog' && !clubAccessBlocked(clubId);
+      allow write: if (belongsToClub(clubId) || isAdmin()) && key != 'fines-catalog' && key != 'games-catalog' && key != 'finance-accounts' && key != 'finance-recurring' && key != 'finance-savings-pots' && !clubAccessBlocked(clubId);
     }
 
     // Globale Token-Mapping-Collections (siehe Review-Issue #52): shareGuestBill/calendarFeed
