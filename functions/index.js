@@ -2174,6 +2174,15 @@ async function sendArrearsRemindersForClub(clubId) {
   const clubSnap = await db.collection('clubs').doc(clubId).get();
   if (!clubSnap.exists) return;
   const clubData = clubSnap.data();
+
+  // Test-Flag zum gezielten Ausrollen (siehe Issue #58 Follow-up): fehlt das Feld, wird wie
+  // gewohnt verschickt - nur bei explizit gesetztem true wird der Versand für diesen Club
+  // übersprungen. Bewusst kein UI-Toggle, nur manuell in Firestore setzbar.
+  if (clubData.arrearsRemindersDisabled === true) {
+    logger.info(`Club ${clubId}: sendArrearsReminders übersprungen (arrearsRemindersDisabled=true).`);
+    return;
+  }
+
   const clubName = clubData.name || 'Dein Kegelclub';
 
   const members = await loadMembers(clubId);
