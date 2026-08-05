@@ -805,7 +805,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.31';
+  const APP_VERSION = '1.1.32';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3363,34 +3363,54 @@
     return '#uebersicht';
   }
 
+  // Zentrale View-Registry (siehe Review-Issue #53): fasst body/title/attach für jeden View an
+  // einer Stelle zusammen, statt drei separate if/else-Ketten über state.view in render(),
+  // headerHtml() und attachListeners() synchron zu pflegen. title ist ein String für statische
+  // Titel oder eine Funktion für Titel, die von aktuellem state abhängen (z.B. memberDetail:
+  // "Mitglied bearbeiten" vs. "Neues Mitglied"). 'main' hat title:null, weil headerHtml() dafür
+  // ein komplett eigenes Logo-Header-Layout vor der Registry-Nutzung zurückgibt.
+  const VIEWS = {
+    main: { body: viewMain, title: null, attach: attachMainListeners },
+    settingsMenu: { body: viewSettingsMenu, title: 'Einstellungen', attach: attachSettingsMenuListeners },
+    clubManagement: { body: viewClubManagement, title: 'Clubverwaltung', attach: attachClubManagementListeners },
+    subscriptionPlans: { body: viewSubscriptionPlans, title: 'Abonnement anpassen', attach: attachSubscriptionPlansListeners },
+    settings: { body: viewSettings, title: 'Mitgliederverwaltung', attach: attachSettingsListeners },
+    memberDetail: { body: viewMemberDetail, title: ()=> state.currentMemberId ? 'Mitglied bearbeiten' : 'Neues Mitglied', attach: attachMemberDetailListeners },
+    finesManagement: { body: viewFinesManagement, title: 'Strafenverwaltung', attach: attachFinesManagementListeners },
+    fineDetail: { body: viewFineDetail, title: ()=> state.currentFineId ? 'Strafe bearbeiten' : 'Strafe hinzufügen', attach: attachFineDetailListeners },
+    gameDetail: { body: viewGameDetail, title: ()=> state.currentGameId ? 'Spiel bearbeiten' : 'Spiel hinzufügen', attach: attachGameDetailListeners },
+    gamesManagement: { body: viewGamesManagement, title: 'Spieleverwaltung', attach: attachGamesManagementListeners },
+    financeManagement: { body: viewFinanceManagement, title: 'Finanzverwaltung', attach: ()=>{ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); } },
+    recurringDetail: { body: viewRecurringDetail, title: ()=> state.currentRecurringId ? 'Buchung bearbeiten' : 'Monatliche Buchung hinzufügen', attach: attachRecurringDetailListeners },
+    savingsPotDetail: { body: viewSavingsPotDetail, title: ()=> state.currentSavingsPotId ? 'Spartopf bearbeiten' : 'Spartopf hinzufügen', attach: attachSavingsPotDetailListeners },
+    financeAccountDetail: { body: viewFinanceAccountDetail, title: ()=> state.currentFinanceAccountId ? 'Konto bearbeiten' : 'Konto/Kasse hinzufügen', attach: attachFinanceAccountDetailListeners },
+    finance: { body: viewFinance, title: 'Finanzen', attach: attachFinanceListeners },
+    calendar: { body: viewCalendar, title: 'Kalender', attach: attachCalendarListeners },
+    eventManagement: { body: viewEventManagement, title: 'Terminverwaltung', attach: attachEventManagementListeners },
+    eventDetail: { body: viewEventDetail, title: ()=>{
+        if(!state.calendarEditingOccurrence) return 'Termin hinzufügen';
+        const baseEv = state.calendarEvents.find(e=>e.id===state.calendarEditingOccurrence.seriesId);
+        if(!isEventCreator(baseEv)) return 'Termindetails';
+        return state.calendarEditingOccurrence.isSeriesEdit ? 'Terminserie bearbeiten' : 'Termin bearbeiten';
+      }, attach: attachEventDetailListeners },
+    arrearsDetail: { body: viewArrearsDetail, title: ()=> state.currentArrearsName ? `Rückstand von ${state.currentArrearsName}` : '', attach: attachArrearsDetailListeners },
+    transactionDetail: { body: viewTransactionDetail, title: ()=> state.currentTransactionId ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen', attach: attachTransactionDetailListeners },
+    new: { body: viewNew, title: 'Neuer Kegelabend', attach: attachNewListeners },
+    detail: { body: ()=> viewDetail(state.currentEveningDetail), title: ()=> state.currentEveningDetail ? `Kegelabend vom ${formatDateShortDE(state.currentEveningDetail.date)}` : '', attach: attachDetailListeners },
+    personFineDetail: { body: viewPersonFineDetail, title: ()=> `Strafen von ${state.currentFineName || ''}`, attach: attachPersonFineDetailListeners },
+    gameScoreDetail: { body: viewGameScoreDetail, title: ()=>{
+        const gamesForTitle = (state.currentEveningDetail && state.currentEveningDetail.gamesCatalogSnapshot) || [];
+        const game = gamesForTitle.find(g=>g.id===state.currentGameScoreId);
+        return game ? game.name : 'Punkte erfassen';
+      }, attach: attachGameScoreDetailListeners },
+  };
+
   function render(opts){
     if(window.__resetPullIndicator) window.__resetPullIndicator();
     const app = document.getElementById('app');
     let body = '';
-    if(state.view==='main') body = viewMain();
-    else if(state.view==='settingsMenu') body = viewSettingsMenu();
-    else if(state.view==='clubManagement') body = viewClubManagement();
-    else if(state.view==='subscriptionPlans') body = viewSubscriptionPlans();
-    else if(state.view==='settings') body = viewSettings();
-    else if(state.view==='memberDetail') body = viewMemberDetail();
-    else if(state.view==='finesManagement') body = viewFinesManagement();
-    else if(state.view==='fineDetail') body = viewFineDetail();
-    else if(state.view==='gameDetail') body = viewGameDetail();
-    else if(state.view==='gamesManagement') body = viewGamesManagement();
-    else if(state.view==='financeManagement') body = viewFinanceManagement();
-    else if(state.view==='recurringDetail') body = viewRecurringDetail();
-    else if(state.view==='savingsPotDetail') body = viewSavingsPotDetail();
-    else if(state.view==='financeAccountDetail') body = viewFinanceAccountDetail();
-    else if(state.view==='finance') body = viewFinance();
-    else if(state.view==='calendar') body = viewCalendar();
-    else if(state.view==='eventManagement') body = viewEventManagement();
-    else if(state.view==='eventDetail') body = viewEventDetail();
-    else if(state.view==='arrearsDetail') body = viewArrearsDetail();
-    else if(state.view==='transactionDetail') body = viewTransactionDetail();
-    else if(state.view==='new') body = viewNew();
-    else if(state.view==='detail') body = viewDetail(state.currentEveningDetail);
-    else if(state.view==='personFineDetail') body = viewPersonFineDetail();
-    else if(state.view==='gameScoreDetail') body = viewGameScoreDetail();
+    const viewEntry = VIEWS[state.view];
+    if(viewEntry) body = viewEntry.body();
     // Read-Only-Banner (abgelaufener Free-Zeitraum) wird zentral hier vorangestellt, statt in
     // jeder viewXyz()-Funktion einzeln - so ist er auf jeder Seite sichtbar, unabhängig davon,
     // welche Aktion der Nutzer als Nächstes versucht. Ausnahme: auf der Abo-Seite selbst
@@ -5726,39 +5746,9 @@
       </header>`;
     }
     let title = '';
-    if(state.view==='settingsMenu') title = 'Einstellungen';
-    else if(state.view==='clubManagement') title = 'Clubverwaltung';
-    else if(state.view==='subscriptionPlans') title = 'Abonnement anpassen';
-    else if(state.view==='settings') title = 'Mitgliederverwaltung';
-    else if(state.view==='memberDetail') title = state.currentMemberId ? 'Mitglied bearbeiten' : 'Neues Mitglied';
-    else if(state.view==='finesManagement') title = 'Strafenverwaltung';
-    else if(state.view==='fineDetail') title = state.currentFineId ? 'Strafe bearbeiten' : 'Strafe hinzufügen';
-    else if(state.view==='gameDetail') title = state.currentGameId ? 'Spiel bearbeiten' : 'Spiel hinzufügen';
-    else if(state.view==='gamesManagement') title = 'Spieleverwaltung';
-    else if(state.view==='financeManagement') title = 'Finanzverwaltung';
-    else if(state.view==='recurringDetail') title = state.currentRecurringId ? 'Buchung bearbeiten' : 'Monatliche Buchung hinzufügen';
-    else if(state.view==='savingsPotDetail') title = state.currentSavingsPotId ? 'Spartopf bearbeiten' : 'Spartopf hinzufügen';
-    else if(state.view==='financeAccountDetail') title = state.currentFinanceAccountId ? 'Konto bearbeiten' : 'Konto/Kasse hinzufügen';
-    else if(state.view==='finance') title = 'Finanzen';
-    else if(state.view==='calendar') title = 'Kalender';
-    else if(state.view==='eventManagement') title = 'Terminverwaltung';
-    else if(state.view==='eventDetail'){
-      if(!state.calendarEditingOccurrence) title = 'Termin hinzufügen';
-      else{
-        const baseEv = state.calendarEvents.find(e=>e.id===state.calendarEditingOccurrence.seriesId);
-        if(!isEventCreator(baseEv)) title = 'Termindetails';
-        else title = state.calendarEditingOccurrence.isSeriesEdit ? 'Terminserie bearbeiten' : 'Termin bearbeiten';
-      }
-    }
-    else if(state.view==='arrearsDetail') title = state.currentArrearsName ? `Rückstand von ${state.currentArrearsName}` : '';
-    else if(state.view==='transactionDetail') title = state.currentTransactionId ? 'Umsatz bearbeiten' : 'Umsatz hinzufügen';
-    else if(state.view==='new') title = 'Neuer Kegelabend';
-    else if(state.view==='detail' && state.currentEveningDetail) title = `Kegelabend vom ${formatDateShortDE(state.currentEveningDetail.date)}`;
-    else if(state.view==='personFineDetail') title = `Strafen von ${state.currentFineName || ''}`;
-    else if(state.view==='gameScoreDetail'){
-      const gamesForTitle = (state.currentEveningDetail && state.currentEveningDetail.gamesCatalogSnapshot) || [];
-      const game = gamesForTitle.find(g=>g.id===state.currentGameScoreId);
-      title = game ? game.name : 'Punkte erfassen';
+    const viewEntry = VIEWS[state.view];
+    if(viewEntry && viewEntry.title!==null){
+      title = typeof viewEntry.title==='function' ? viewEntry.title() : viewEntry.title;
     }
 
     const isClosed = !!(state.currentEveningDetail && state.currentEveningDetail.closed);
@@ -6080,30 +6070,8 @@
   function attachListeners(){
     attachGlobalNavListeners();
 
-    if(state.view==='main') attachMainListeners();
-    else if(state.view==='settingsMenu') attachSettingsMenuListeners();
-    else if(state.view==='clubManagement') attachClubManagementListeners();
-    else if(state.view==='subscriptionPlans') attachSubscriptionPlansListeners();
-    else if(state.view==='settings') attachSettingsListeners();
-    else if(state.view==='memberDetail') attachMemberDetailListeners();
-    else if(state.view==='finesManagement') attachFinesManagementListeners();
-    else if(state.view==='fineDetail') attachFineDetailListeners();
-    else if(state.view==='gameDetail') attachGameDetailListeners();
-    else if(state.view==='gamesManagement') attachGamesManagementListeners();
-    else if(state.view==='financeManagement'){ attachFinanceManagementListeners(); attachFinanceRecurringListeners(); }
-    else if(state.view==='recurringDetail') attachRecurringDetailListeners();
-    else if(state.view==='savingsPotDetail') attachSavingsPotDetailListeners();
-    else if(state.view==='financeAccountDetail') attachFinanceAccountDetailListeners();
-    else if(state.view==='finance') attachFinanceListeners();
-    else if(state.view==='calendar') attachCalendarListeners();
-    else if(state.view==='eventManagement') attachEventManagementListeners();
-    else if(state.view==='eventDetail') attachEventDetailListeners();
-    else if(state.view==='arrearsDetail') attachArrearsDetailListeners();
-    else if(state.view==='transactionDetail') attachTransactionDetailListeners();
-    else if(state.view==='new') attachNewListeners();
-    else if(state.view==='detail') attachDetailListeners();
-    else if(state.view==='personFineDetail') attachPersonFineDetailListeners();
-    else if(state.view==='gameScoreDetail') attachGameScoreDetailListeners();
+    const viewEntry = VIEWS[state.view];
+    if(viewEntry) viewEntry.attach();
 
     applyReadOnlyLockToView();
   }
