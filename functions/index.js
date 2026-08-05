@@ -235,6 +235,56 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// -------- Wöchentlicher Rückstands-Reminder (siehe Issue #58) --------
+//
+// Baut die HTML-Mail für eine einzelne Person mit offenem Rückstand. Zeigt den Verlauf seit der
+// letzten vollständigen Bezahlung (siehe extractHistorySinceLastSettled unten) sowie - sofern
+// gepflegt - PayPal-Button und/oder Kontodaten zur Überweisung. Kein QR-Code in der Mail selbst
+// (analog zu buildEmailHtml oben): Mail-Clients rendern eingebettetes SVG nicht zuverlässig,
+// anders als die gehostete shareGuestBill-Seite.
+function buildArrearsReminderHtml(name, historyLines, totalAmount, paypalLink, transferInfo, clubName) {
+  const historyHtml = historyLines.length > 0 ? `
+    <table style="width:100%; border-collapse:collapse; font-size:15px; margin-top:10px;">
+      ${historyLines.map(l => `
+        <tr>
+          <td style="padding:6px 0; border-bottom:1px dashed #e5e1d8; color:#4a4642;">${escapeHtml(l.dateLabel)} · ${escapeHtml(l.label)}</td>
+          <td style="padding:6px 0; border-bottom:1px dashed #e5e1d8; text-align:right; white-space:nowrap;">${fmtEuro(l.amount)}</td>
+        </tr>
+      `).join('')}
+    </table>
+  ` : '';
+
+  const paypalHtml = paypalLink ? `
+    <p style="margin-top:22px;">
+      <a href="${paypalLink}" style="display:inline-block; background:#E3421F; color:#fff; font-weight:800; text-decoration:none; padding:12px 22px; border-radius:8px;">
+        Jetzt ${fmtEuro(totalAmount)} per PayPal bezahlen
+      </a>
+    </p>
+  ` : '';
+
+  const transferHtml = transferInfo ? `
+    <div style="margin-top:22px; padding:14px 16px; background:#F6F6F4; border-radius:10px;">
+      <p style="margin:0 0 8px; font-weight:700;">Überweisung</p>
+      <table style="width:100%; border-collapse:collapse; font-size:14px;">
+        <tr><td style="color:#9a9186; padding:2px 0;">Empfänger</td><td style="text-align:right;">${escapeHtml(transferInfo.accountHolder)}</td></tr>
+        <tr><td style="color:#9a9186; padding:2px 0;">IBAN</td><td style="text-align:right;">${escapeHtml(transferInfo.ibanDisplay)}</td></tr>
+        <tr><td style="color:#9a9186; padding:2px 0;">Verwendungszweck</td><td style="text-align:right;">${escapeHtml(transferInfo.remittanceText)}</td></tr>
+      </table>
+    </div>
+  ` : '';
+
+  return `
+    <div style="font-family:sans-serif; color:#161616; max-width:480px;">
+      <p>Hallo ${escapeHtml(name)},</p>
+      <p>kleine Erinnerung: bei dir steht aktuell noch ein offener Rückstand von <strong>${fmtEuro(totalAmount)}</strong>.</p>
+      ${historyHtml}
+      ${paypalHtml}
+      ${transferHtml}
+      <p style="margin-top:22px;">Kegelgruß,<br>${escapeHtml(clubName)}</p>
+    </div>
+  `;
+}
+
 function buildReopenEmailHtml(name, dateStr, clubName) {
   return `
     <div style="font-family:sans-serif; color:#161616; max-width:480px;">
@@ -2096,6 +2146,102 @@ exports.updateSubscriptionAccessStatus = onSchedule(
         }
       } catch (e) {
         logger.error(`Fehler bei updateSubscriptionAccessStatus für Club ${clubDoc.id}:`, e);
+      }
+    }
+  }
+);
+
+// -------- Wöchentlicher Rückstands-Reminder (siehe Issue #58) --------
+//
+// Läuft jeden Sonntag um 20 Uhr und erinnert alle Mitglieder mit offenem Rückstand (amount > 0)
+// per Mail - unabhängig von der Höhe (bewusst keine Bagatellgrenze) und jede Woche neu, solange
+// der Rückstand offen bleibt (bewusst kein Limit/Opt-out, siehe Diskussion in Issue #58).
+//
+// Extrahiert aus entry.history alle Einträge NACH der letzten "vollständigen Bezahlung"
+// (= letzter Eintrag mit balanceAfter === 0). Gibt es nie eine vollständige Bezahlung, wird die
+// komplette Historie gezeigt. Ältere history-Einträge (vor Einführung von balanceAfter) haben
+// dieses Feld u.U. nicht - werden dann konservativ als "nicht vollständig beglichen" behandelt,
+// damit kein zu kurzer Verlauf angezeigt wird.
+function extractHistorySinceLastSettled(history) {
+  if (!Array.isArray(history) || history.length === 0) return [];
+  const sorted = history.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  let lastSettledIdx = -1;
+  sorted.forEach((h, idx) => { if (h.balanceAfter === 0) lastSettledIdx = idx; });
+  return sorted.slice(lastSettledIdx + 1);
+}
+
+async function sendArrearsRemindersForClub(clubId) {
+  const clubSnap = await db.collection('clubs').doc(clubId).get();
+  if (!clubSnap.exists) return;
+  const clubData = clubSnap.data();
+  const clubName = clubData.name || 'Dein Kegelclub';
+
+  const members = await loadMembers(clubId);
+  if (!members) return;
+
+  const clubRef = db.collection('clubs').doc(clubId);
+  const arrearsSnap = await clubRef.collection('arrears').get();
+  const entries = [];
+  arrearsSnap.forEach(snap => {
+    if (snap.id === '_index') return;
+    try {
+      const entry = JSON.parse(snap.data().value);
+      if (entry && entry.amount > 0) entries.push(entry);
+    } catch (e) { /* einzelnes defektes Dokument ignorieren */ }
+  });
+  if (entries.length === 0) return;
+
+  const resend = new Resend(resendApiKey.value());
+
+  for (const entry of entries) {
+    const member = members.find(m => m.id === entry.memberId);
+    if (!member || !member.email) {
+      logger.warn(`Club ${clubId}: Rückstands-Reminder für "${entry.name}" übersprungen (keine E-Mail hinterlegt).`);
+      continue;
+    }
+
+    const historySince = extractHistorySinceLastSettled(entry.history);
+    const historyLines = historySince.map(h => ({
+      dateLabel: formatDateDEServer(h.date),
+      label: h.note || (h.type === 'payment' ? 'Zahlung' : h.type === 'correction' ? 'Korrektur' : 'Strafe'),
+      amount: h.delta,
+    }));
+
+    const paypalLink = buildPaypalLink(clubData.paypalName, entry.amount);
+    let transferInfo = null;
+    if (clubData.iban && clubData.accountHolder) {
+      transferInfo = {
+        accountHolder: clubData.accountHolder,
+        ibanDisplay: formatIbanForDisplay(clubData.iban),
+        remittanceText: `Rückstand ${displayName(member)}`,
+      };
+    }
+
+    const html = buildArrearsReminderHtml(displayName(member), historyLines, entry.amount, paypalLink, transferInfo, clubName);
+
+    try {
+      await resend.emails.send({
+        from: FROM_ADDRESS,
+        to: member.email,
+        subject: `Erinnerung: offener Rückstand bei ${clubName}`,
+        html,
+      });
+    } catch (e) {
+      logger.error(`Club ${clubId}: Rückstands-Reminder an ${member.email} fehlgeschlagen:`, e);
+    }
+  }
+}
+
+exports.sendArrearsReminders = onSchedule(
+  { schedule: '0 20 * * 0', timeZone: 'Europe/Berlin', secrets: [resendApiKey] },
+  async () => {
+    const clubsSnapshot = await db.collection('clubs').get();
+    for (const clubDoc of clubsSnapshot.docs) {
+      try {
+        await sendArrearsRemindersForClub(clubDoc.id);
+      } catch (e) {
+        // Ein Fehler in einem Club darf die Verarbeitung der anderen Clubs nicht verhindern.
+        logger.error(`Fehler bei sendArrearsReminders für Club ${clubDoc.id}:`, e);
       }
     }
   }
