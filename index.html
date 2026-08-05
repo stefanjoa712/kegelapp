@@ -207,8 +207,14 @@
      innerHTML zu ersetzen - vermeidet das kurze Verschwinden/Neuaufbauen von Header/Navbar/Inhalt
      beim Wechsel zwischen Menüpunkten. position:absolute statt fixed, da Header/Navbar variable
      Höhe haben (sticky, safe-area) - relativ zu .container (siehe dortiges position:relative). */
+  /* position:fixed statt absolute: bei langen Seiten (z.B. Finanzen mit Scrollbar) wäre die
+     Höhe von .container weit größer als der sichtbare Viewport, wodurch sich der Ring relativ zum
+     GESAMTEN Seiteninhalt statt zum sichtbaren Bereich zentrieren würde (Bug: Ring erschien weit
+     unterhalb des Viewports, nicht mittig sichtbar). Mit fixed zentriert sich der Ring immer im
+     sichtbaren Viewport-Ausschnitt, unabhängig von der Höhe der darunterliegenden View. z-index
+     bewusst unter Header (800) und Navbar (900), damit beide weiterhin oben/unten sichtbar bleiben. */
   .boot-loading-overlay{
-    position:absolute; inset:0; min-height:50vh;
+    position:fixed; inset:0; min-height:50vh;
     z-index:50; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
     background:rgba(246,246,244,0.88);
     animation:boot-fade-in 0.2s ease-out;
@@ -896,7 +902,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.51';
+  const APP_VERSION = '1.1.52';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
