@@ -125,7 +125,7 @@
   }
   .evening-tab-bar .tab-btn.active{background:var(--wood);}
 
-  .container{max-width:640px; margin:0 auto; padding:24px 16px 100px; transition:transform 0.25s ease;}
+  .container{max-width:640px; margin:0 auto; padding:24px 16px 100px; transition:transform 0.25s ease; position:relative;}
 
   .login-screen{
     min-height:100vh; min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -201,6 +201,17 @@
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
     min-height:50vh; padding:60px 20px;
     animation:boot-fade-in 0.25s ease-out;
+  }
+  /* Overlay-Variante von .boot-loading-inline (siehe renderLoading()): legt sich als zusätzliches
+     Kind-Element ÜBER die noch sichtbare vorherige View innerhalb von <main> statt sie per
+     innerHTML zu ersetzen - vermeidet das kurze Verschwinden/Neuaufbauen von Header/Navbar/Inhalt
+     beim Wechsel zwischen Menüpunkten. position:absolute statt fixed, da Header/Navbar variable
+     Höhe haben (sticky, safe-area) - relativ zu .container (siehe dortiges position:relative). */
+  .boot-loading-overlay{
+    position:absolute; inset:0; min-height:50vh;
+    z-index:50; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+    background:rgba(246,246,244,0.88);
+    animation:boot-fade-in 0.2s ease-out;
   }
   .boot-loading-label{
     font-family:var(--font-display); font-size:13px; font-weight:700;
@@ -885,7 +896,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.50';
+  const APP_VERSION = '1.1.51';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3738,9 +3749,21 @@
     })();
   });
 
-  // Zeigt sofort eine Ladeanzeige, bevor auf eine Firestore-Antwort gewartet wird –
-  // so wirkt ein Klick nie so, als wäre nichts passiert.
+  // Zeigt sofort eine Ladeanzeige, bevor auf eine Firestore-Antwort gewartet wird – so wirkt ein
+  // Klick nie so, als wäre nichts passiert. Legt das Overlay bewusst ÜBER die noch sichtbare
+  // vorherige View (statt #app komplett neu zu schreiben) - Header/Navbar/Inhalt bleiben dadurch
+  // stehen, nur ein halbtransparentes Overlay mit Ring+Text blendet sich darüber ein. Das
+  // vermeidet das kurze Verschwinden/Neuaufbauen ("Flackern") beim Wechsel zwischen Menüpunkten.
+  // Fallback auf die alte Variante (kompletter #app-Neuaufbau), falls noch gar keine View mit
+  // .container im DOM steht (z.B. sehr früh im Bootstrap, bevor init() zum ersten Mal lief).
   function renderLoading(message){
+    const container = document.querySelector('#app .container');
+    if(container){
+      const existingOverlay = container.querySelector('.boot-loading-overlay');
+      if(existingOverlay) existingOverlay.remove();
+      container.insertAdjacentHTML('beforeend', `<div class="boot-loading-overlay"><div class="boot-loading-ring"><div class="boot-loading-dot"></div></div><div class="boot-loading-label">${escapeHtml(message)}</div></div>`);
+      return;
+    }
     document.getElementById('app').innerHTML = headerHtml() + `<main class="container"><div class="boot-loading-inline"><div class="boot-loading-ring"><div class="boot-loading-dot"></div></div><div class="boot-loading-label">${escapeHtml(message)}</div></div></main>` + bottomNavHtml();
     attachGlobalNavListeners();
   }
