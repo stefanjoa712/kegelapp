@@ -565,11 +565,6 @@ async function updateAttendanceStatsForEveningServer(clubRef, detail, direction)
 }
 
 exports.closeEvening = onCall({}, async (request) => {
-  // Enger gefasst als canManageMembers(): hier nur Kassenwart oder Admin, bewusst nicht
-  // Präsident - dieselbe Berechtigung wie die übrige Finanzverwaltung
-  // (siehe canManageFinances() in firestore.rules und index.html).
-  requireFinanceRole(request);
-
   const { clubId, eveningId, skipNotificationEmail } = request.data || {};
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
@@ -578,6 +573,10 @@ exports.closeEvening = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
   }
 
+  // Enger gefasst als canManageMembers(): hier nur Kassenwart oder Admin, bewusst nicht
+  // Präsident - dieselbe Berechtigung wie die übrige Finanzverwaltung
+  // (siehe canManageFinances() in firestore.rules und index.html). Prüft auch Club-Zugehörigkeit.
+  requireFinanceRole(request, clubId);
   await requireClubAccessNotBlocked(clubId);
 
   const clubRef = db.collection('clubs').doc(clubId);
@@ -777,19 +776,6 @@ function reverseArrearsForEveningServer(detail, arrears, members, noteText) {
   return touchedArrearsEntries;
 }
 
-// Prüft, ob der Aufrufer die Rolle Kassenwart oder den Admin-Account hat - dieselbe Berechtigung
-// wie canManageFinances() in firestore.rules und index.html. Wirft bei fehlender Berechtigung.
-function requireFinanceRole(request) {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
-  }
-  const callerRole = request.auth.token.role || 'Mitglied';
-  const isCallerAdmin = request.auth.token.email === 'admin@die-pudolfs.internal';
-  if (!isCallerAdmin && callerRole !== 'Kassenwart') {
-    throw new HttpsError('permission-denied', 'Nur Kassenwart oder Admin dürfen diese Aktion ausführen.');
-  }
-}
-
 // Prüft, ob der Aufrufer selbst zu clubId gehört (custom claim 'clubIds'), oder der
 // Admin-Account ist. Cloud Functions mit Admin-SDK-Rechten umgehen die Firestore Rules
 // vollständig - ohne diese Prüfung könnte jeder eingeloggte Nutzer (unabhängig von Rolle oder
@@ -800,6 +786,33 @@ function requireCallerBelongsToClub(request, clubId) {
   const callerClubIds = request.auth.token.clubIds || [];
   if (!isCallerAdmin && !callerClubIds.includes(clubId)) {
     throw new HttpsError('permission-denied', 'Kein Zugriff auf diesen Club.');
+  }
+}
+
+// Liest die Rolle des Aufrufers für GENAU DIESEN Club aus dem Custom Claim 'roles' (Objekt,
+// { [clubId]: 'Kassenwart' } - siehe syncMemberRoleClaim). Vorher gab es nur einen globalen
+// role-String, der fälschlich für alle Clubs des Nutzers gleichzeitig galt. Fehlt der Eintrag
+// (z.B. Account noch nicht synchronisiert, oder Nutzer gehört gar nicht zu diesem Club),
+// wird sicherheitshalber 'Mitglied' angenommen.
+function callerRoleForClub(request, clubId) {
+  const roles = request.auth.token.roles;
+  if (roles && typeof roles === 'object' && roles[clubId]) return roles[clubId];
+  return 'Mitglied';
+}
+
+// Prüft, ob der Aufrufer für DIESEN clubId die Rolle Kassenwart hat oder der Admin-Account ist -
+// dieselbe Berechtigung wie canManageFinances() in firestore.rules und index.html. Prüft
+// zusätzlich die Club-Zugehörigkeit (requireCallerBelongsToClub) - ohne die könnte die Rolle aus
+// einem anderen Club sonst nicht greifen, aber ein Nutzer ohne jede Zugehörigkeit zu clubId
+// müsste trotzdem abgewiesen werden. Wirft bei fehlender Berechtigung.
+function requireFinanceRole(request, clubId) {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  requireCallerBelongsToClub(request, clubId);
+  const isCallerAdmin = request.auth.token.email === 'admin@die-pudolfs.internal';
+  if (!isCallerAdmin && callerRoleForClub(request, clubId) !== 'Kassenwart') {
+    throw new HttpsError('permission-denied', 'Nur Kassenwart oder Admin dürfen diese Aktion ausführen.');
   }
 }
 
@@ -819,8 +832,6 @@ async function requireClubAccessNotBlocked(clubId) {
 }
 
 exports.reopenEvening = onCall({}, async (request) => {
-  requireFinanceRole(request);
-
   const { clubId, eveningId, skipNotificationEmail } = request.data || {};
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
@@ -829,6 +840,7 @@ exports.reopenEvening = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
   }
 
+  requireFinanceRole(request, clubId);
   await requireClubAccessNotBlocked(clubId);
 
   const clubRef = db.collection('clubs').doc(clubId);
@@ -939,8 +951,6 @@ exports.reopenEvening = onCall({}, async (request) => {
 });
 
 exports.deleteEvening = onCall({}, async (request) => {
-  requireFinanceRole(request);
-
   const { clubId, eveningId } = request.data || {};
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
@@ -949,6 +959,7 @@ exports.deleteEvening = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'Abend-ID fehlt.');
   }
 
+  requireFinanceRole(request, clubId);
   await requireClubAccessNotBlocked(clubId);
 
   const clubRef = db.collection('clubs').doc(clubId);
@@ -1065,12 +1076,15 @@ exports.deleteEvening = onCall({}, async (request) => {
 
 // Wie canManageMembers() im Client: Kassenwart und Präsident dürfen Mitglieder verwalten
 // (löschen/archivieren), bewusst weiter gefasst als requireFinanceRole() (nur Kassenwart).
-function requireManageMembersRole(request) {
+// Prüft die Rolle für GENAU DIESEN clubId (Custom Claim 'roles', siehe callerRoleForClub) und
+// zusätzlich die Club-Zugehörigkeit (requireCallerBelongsToClub).
+function requireManageMembersRole(request, clubId) {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
   }
-  const callerRole = request.auth.token.role || 'Mitglied';
+  requireCallerBelongsToClub(request, clubId);
   const isCallerAdmin = request.auth.token.email === 'admin@die-pudolfs.internal';
+  const callerRole = callerRoleForClub(request, clubId);
   if (!isCallerAdmin && callerRole !== 'Kassenwart' && callerRole !== 'Präsident') {
     throw new HttpsError('permission-denied', 'Nur Kassenwart, Präsident oder Admin dürfen diese Aktion ausführen.');
   }
@@ -1128,8 +1142,6 @@ async function findMemberReferences(clubRef, memberId) {
 // direkt vor der eigentlichen Aktion (falls sich der Stand zwischen Popup-Öffnen und Bestätigen
 // geändert hat, z.B. paralleler Kegelabend-Abschluss auf einem anderen Gerät).
 exports.checkMemberDeletable = onCall({}, async (request) => {
-  requireManageMembersRole(request);
-
   const { clubId, memberId } = request.data || {};
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
@@ -1137,6 +1149,8 @@ exports.checkMemberDeletable = onCall({}, async (request) => {
   if (!memberId || typeof memberId !== 'string') {
     throw new HttpsError('invalid-argument', 'Mitglieds-ID fehlt.');
   }
+
+  requireManageMembersRole(request, clubId);
 
   const clubRef = db.collection('clubs').doc(clubId);
   const { deletable, reasons } = await findMemberReferences(clubRef, memberId);
@@ -1181,8 +1195,6 @@ async function removeMemberClubAuthAccess(email, clubId) {
 }
 
 exports.deleteOrArchiveMember = onCall({}, async (request) => {
-  requireManageMembersRole(request);
-
   const { clubId, memberId } = request.data || {};
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
@@ -1191,6 +1203,7 @@ exports.deleteOrArchiveMember = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'Mitglieds-ID fehlt.');
   }
 
+  requireManageMembersRole(request, clubId);
   await requireClubAccessNotBlocked(clubId);
 
   const clubRef = db.collection('clubs').doc(clubId);
@@ -1283,8 +1296,6 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
 const HOSTING_URL = 'https://app.die-pudolfs.de/';
 
 exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
-  requireManageMembersRole(request);
-
   const { email, name, clubId } = request.data || {};
   if (!email || typeof email !== 'string') {
     throw new HttpsError('invalid-argument', 'E-Mail-Adresse fehlt.');
@@ -1292,7 +1303,8 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
   }
-  requireCallerBelongsToClub(request, clubId);
+  // requireManageMembersRole prüft bereits Rolle UND Club-Zugehörigkeit (requireCallerBelongsToClub).
+  requireManageMembersRole(request, clubId);
   await requireClubAccessNotBlocked(clubId);
 
   const adminAuth = getAuth();
@@ -1331,16 +1343,19 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   // und die neue clubId nur ERGÄNZEN, nie überschreiben - sonst würde ein zweiter Invite (z.B. in
   // einem anderen Club) die Zugehörigkeit zu allen bisherigen Clubs löschen. clubId kommt vom
   // Client (dessen aktuell aktiver Club, CURRENT_CLUB_ID) statt einer fest verdrahteten Konstante,
-  // damit das Einladen auch für künftige, weitere Clubs funktioniert. 'role' wird bei jedem Invite
-  // aktualisiert (nicht nur ergänzt), da es sich - anders als clubIds - pro Club nicht summiert.
+  // damit das Einladen auch für künftige, weitere Clubs funktioniert.
+  // 'roles' ist ein Objekt { [clubId]: 'Kassenwart' } - nur der Eintrag für DIESEN clubId wird
+  // aktualisiert, alle anderen Clubs im Objekt bleiben unverändert (anders als früher mit einem
+  // einzigen globalen role-String, der fälschlich für alle Clubs des Nutzers gegolten hätte).
   const existingClaims = userRecord.customClaims || {};
   const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
   const nextClubIds = existingClubIds.includes(clubId) ? existingClubIds : [...existingClubIds, clubId];
-  if (!existingClubIds.includes(clubId) || existingClaims.role !== currentRole) {
+  const existingRoles = (existingClaims.roles && typeof existingClaims.roles === 'object') ? existingClaims.roles : {};
+  if (!existingClubIds.includes(clubId) || existingRoles[clubId] !== currentRole) {
     await adminAuth.setCustomUserClaims(userRecord.uid, {
       ...existingClaims,
       clubIds: nextClubIds,
-      role: currentRole,
+      roles: { ...existingRoles, [clubId]: currentRole },
     });
   }
 
@@ -1495,11 +1510,12 @@ exports.createClub = onCall({ secrets: [resendApiKey] }, async (request) => {
   }
   const existingClaims = userRecord.customClaims || {};
   const existingClubIds = Array.isArray(existingClaims.clubIds) ? existingClaims.clubIds : [];
-  if (!existingClubIds.includes(clubId) || existingClaims.role !== member.role) {
+  const existingRoles = (existingClaims.roles && typeof existingClaims.roles === 'object') ? existingClaims.roles : {};
+  if (!existingClubIds.includes(clubId) || existingRoles[clubId] !== member.role) {
     await adminAuth.setCustomUserClaims(userRecord.uid, {
       ...existingClaims,
       clubIds: existingClubIds.includes(clubId) ? existingClubIds : [...existingClubIds, clubId],
-      role: member.role,
+      roles: { ...existingRoles, [clubId]: member.role },
     });
   }
 
@@ -1545,19 +1561,18 @@ exports.deleteClub = onCall({}, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
   }
-  // Nur Admin, Kassenwart oder Präsident dürfen einen Club löschen - dieselbe Berechtigung wie
-  // die Mitglieder-/Clubverwaltung (siehe canManageMembers() in firestore.rules). onCall-Functions
-  // laufen mit Admin-SDK-Rechten und umgehen die Firestore Rules komplett, deshalb muss diese
-  // Prüfung hier eigenständig erfolgen - der Custom Claim 'role' steht direkt in request.auth.token.
-  const callerRole = request.auth.token.role || 'Mitglied';
-  const isCallerAdmin = request.auth.token.email === 'admin@die-pudolfs.internal';
-  if (!isCallerAdmin && callerRole !== 'Kassenwart' && callerRole !== 'Präsident') {
-    throw new HttpsError('permission-denied', 'Nur Kassenwart, Präsident oder Admin dürfen einen Club löschen.');
-  }
   const { clubId } = request.data || {};
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
   }
+  // Nur Admin, Kassenwart oder Präsident DIESES Clubs dürfen ihn löschen - dieselbe Berechtigung
+  // wie die Mitglieder-/Clubverwaltung (siehe canManageMembers() in firestore.rules). onCall-
+  // Functions laufen mit Admin-SDK-Rechten und umgehen die Firestore Rules komplett, deshalb muss
+  // diese Prüfung hier eigenständig erfolgen. requireManageMembersRole prüft sowohl die Rolle für
+  // GENAU DIESEN clubId (Custom Claim 'roles') als auch die Club-Zugehörigkeit - vorher fehlte
+  // dieser Zugehörigkeits-Check komplett, ein Kassenwart aus Club A hätte mit seiner (damals
+  // globalen) Rolle auch Club B löschen können.
+  requireManageMembersRole(request, clubId);
 
   const clubRef = db.collection('clubs').doc(clubId);
   const clubSnap = await clubRef.get();
@@ -1608,9 +1623,6 @@ exports.deleteClub = onCall({}, async (request) => {
 });
 
 exports.unlinkMemberAccount = onCall({}, async (request) => {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
-  }
   const { email, clubId } = request.data || {};
   if (!email || typeof email !== 'string') {
     throw new HttpsError('invalid-argument', 'E-Mail-Adresse fehlt.');
@@ -1618,6 +1630,10 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
   }
+  // War bisher nur auf "eingeloggt" beschränkt - jeder eingeloggte Nutzer hätte damit die
+  // Club-Zugehörigkeit eines fremden Mitglieds entfernen können. requireManageMembersRole prüft
+  // sowohl die Rolle für DIESEN clubId als auch die Club-Zugehörigkeit des Aufrufers.
+  requireManageMembersRole(request, clubId);
   await requireClubAccessNotBlocked(clubId);
 
   await removeMemberClubAuthAccess(email, clubId);
@@ -1625,10 +1641,16 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   return { success: true };
 });
 
-// -------- Rollen-Rechte: Custom Claim 'role' synchron zum Mitgliedsdokument halten --------
+// -------- Rollen-Rechte: Custom Claim 'roles' synchron zum Mitgliedsdokument halten --------
 // Die Firestore Rules können die Rolle eines eingeloggten Nutzers nicht direkt aus dem
 // Mitgliedsdokument lesen (das würde für JEDE Regel-Auswertung einen extra Read kosten) -
 // stattdessen wird die Rolle als Custom Claim im Auth-Token gespiegelt, genau wie 'clubIds'.
+// WICHTIG: 'roles' ist ein Objekt { [clubId]: 'Kassenwart' }, EIN Eintrag pro Club - nicht mehr
+// ein einziger globaler String wie früher ('role'). Ist ein Nutzer Mitglied in mehreren Clubs
+// (z.B. Kassenwart in Club A, einfaches Mitglied in Club B), betrifft ein Update nur den Eintrag
+// für das clubId, in dem der Trigger gefeuert hat - alle anderen Clubs im roles-Objekt bleiben
+// unverändert. Vorher hätte ein Kassenwart-Update in Club A den globalen role-Claim gesetzt und
+// damit fälschlich auch Kassenwart-Rechte in Club B vorgetäuscht.
 // Dieser Trigger feuert bei jedem Schreiben auf ein Mitgliedsdokument (angelegt, geändert,
 // gelöscht) und gleicht den Claim des zugehörigen Auth-Accounts (per E-Mail verknüpft) ab.
 // Wichtig: Ein gecachtes ID-Token auf dem Client kann bis zu 1h alt sein, d.h. eine gerade erst
@@ -1636,7 +1658,7 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
 // Kegelclub unkritisch. inviteMember und createClub setzen den Claim zusätzlich sofort beim
 // Erstanlegen, damit ein frisch eingeladenes Mitglied nicht auf diesen Trigger warten muss.
 exports.syncMemberRoleClaim = onDocumentWritten('clubs/{clubId}/members/{memberId}', async (event) => {
-  const { memberId } = event.params;
+  const { clubId, memberId } = event.params;
   if (memberId === MEMBERS_INDEX_ID) return; // Index-Dokument, kein echtes Mitglied
 
   const beforeData = event.data.before.exists ? JSON.parse(event.data.before.data().value) : null;
@@ -1644,8 +1666,9 @@ exports.syncMemberRoleClaim = onDocumentWritten('clubs/{clubId}/members/{memberI
 
   const adminAuth = getAuth();
 
-  // Mitglied gelöscht oder E-Mail entfernt: alten Auth-Account (falls vorhanden) auf die
-  // Standardrolle 'Mitglied' zurücksetzen, statt ihm eine veraltete Rolle zu lassen.
+  // Mitglied gelöscht oder E-Mail entfernt: alten Auth-Account (falls vorhanden) für DIESEN Club
+  // auf die Standardrolle 'Mitglied' zurücksetzen, statt ihm eine veraltete Rolle zu lassen.
+  // Andere Clubs im roles-Objekt bleiben unangetastet.
   const oldEmail = beforeData && beforeData.email;
   const newEmail = afterData && afterData.email;
   const newRole = (afterData && afterData.role) || 'Mitglied';
@@ -1654,8 +1677,12 @@ exports.syncMemberRoleClaim = onDocumentWritten('clubs/{clubId}/members/{memberI
     try {
       const oldUser = await adminAuth.getUserByEmail(oldEmail);
       const existingClaims = oldUser.customClaims || {};
-      if (existingClaims.role !== 'Mitglied') {
-        await adminAuth.setCustomUserClaims(oldUser.uid, { ...existingClaims, role: 'Mitglied' });
+      const existingRoles = (existingClaims.roles && typeof existingClaims.roles === 'object') ? existingClaims.roles : {};
+      if (existingRoles[clubId] !== 'Mitglied') {
+        await adminAuth.setCustomUserClaims(oldUser.uid, {
+          ...existingClaims,
+          roles: { ...existingRoles, [clubId]: 'Mitglied' },
+        });
       }
     } catch (e) {
       if (e.code !== 'auth/user-not-found') {
@@ -1669,8 +1696,12 @@ exports.syncMemberRoleClaim = onDocumentWritten('clubs/{clubId}/members/{memberI
   try {
     const userRecord = await adminAuth.getUserByEmail(newEmail);
     const existingClaims = userRecord.customClaims || {};
-    if (existingClaims.role !== newRole) {
-      await adminAuth.setCustomUserClaims(userRecord.uid, { ...existingClaims, role: newRole });
+    const existingRoles = (existingClaims.roles && typeof existingClaims.roles === 'object') ? existingClaims.roles : {};
+    if (existingRoles[clubId] !== newRole) {
+      await adminAuth.setCustomUserClaims(userRecord.uid, {
+        ...existingClaims,
+        roles: { ...existingRoles, [clubId]: newRole },
+      });
     }
   } catch (e) {
     if (e.code !== 'auth/user-not-found') {
@@ -1681,7 +1712,57 @@ exports.syncMemberRoleClaim = onDocumentWritten('clubs/{clubId}/members/{memberI
   }
 });
 
-// -------- Öffentliche Strafen-Übersicht für Gäste (kein Login nötig) --------
+// -------- Einmalige Migration: alter globaler 'role'-Claim -> neues 'roles'-Objekt --------
+// Vor diesem Fix hatte jeder Auth-Account einen einzigen globalen Custom Claim 'role' (String,
+// z.B. 'Kassenwart'), der fälschlich für ALLE Clubs des Nutzers gleichzeitig galt. Jetzt gilt
+// 'roles' (Objekt { [clubId]: 'Kassenwart' }), ein Eintrag pro Club. Bestehende Accounts haben
+// nach dem Deploy noch den alten Shape - diese Function wandelt ihn einmalig um: der alte
+// role-String wird auf JEDE clubId angewendet, zu der der Account laut 'clubIds' gehört (das ist
+// exakt die Rolle, die vorher ohnehin schon fälschlich club-übergreifend galt - danach wird sie
+// beim nächsten Mitgliedsdokument-Update pro Club über syncMemberRoleClaim wieder korrekt
+// auseinandergezogen). Accounts, die schon ein 'roles'-Objekt haben, werden übersprungen
+// (idempotent, mehrfacher Aufruf unschädlich).
+// ALS SCHEDULED FUNCTION angelegt (nicht onCall), damit sie ohne Frontend-Code oder HTTP-Aufruf
+// existiert: nach dem Deploy einmalig in der Firebase Console unter Cloud Scheduler -> Job
+// "migrateroleclaimstorolesobject-..." über "Force run" / "Jetzt ausführen" manuell auslösen.
+// Das schedule-Feld ('1 1 1 1 *' = einmal jährlich am 1. Januar) verhindert nur, dass sie sich
+// unbeabsichtigt wiederholt aufruft - nach der manuellen Einmal-Ausführung kann sie im Code
+// bleiben oder später entfernt werden.
+exports.migrateRoleClaimsToRolesObject = onSchedule(
+  { schedule: '1 1 1 1 *', timeZone: 'Europe/Berlin' },
+  async () => {
+    const adminAuth = getAuth();
+    let migrated = 0;
+    let skipped = 0;
+    let nextPageToken;
+    do {
+      const page = await adminAuth.listUsers(1000, nextPageToken);
+      for (const userRecord of page.users) {
+        const claims = userRecord.customClaims || {};
+        if (!claims.role || typeof claims.role !== 'string') {
+          skipped++;
+          continue; // kein alter Claim vorhanden - nichts zu migrieren
+        }
+        if (claims.roles && typeof claims.roles === 'object') {
+          skipped++;
+          continue; // bereits migriert (neues Format existiert schon)
+        }
+        const clubIds = Array.isArray(claims.clubIds) ? claims.clubIds : [];
+        const roles = {};
+        clubIds.forEach((clubId) => { roles[clubId] = claims.role; });
+        const { role, ...restClaims } = claims;
+        try {
+          await adminAuth.setCustomUserClaims(userRecord.uid, { ...restClaims, roles });
+          migrated++;
+        } catch (e) {
+          logger.error(`Migration role->roles für ${userRecord.email || userRecord.uid} fehlgeschlagen:`, e);
+        }
+      }
+      nextPageToken = page.pageToken;
+    } while (nextPageToken);
+    logger.info(`Migration role->roles abgeschlossen: ${migrated} Accounts migriert, ${skipped} übersprungen.`);
+  }
+);
 
 // -------- Überweisung per QR-Code (EPC069-12 / "GiroCode") --------
 //
