@@ -409,7 +409,7 @@ async function handleEveningClosed(clubId, after, docId) {
 
   const presentSeats = after.seating.filter(s => s.name && !s.isGuest);
   presentSeats.forEach(s => {
-    const member = members.find(m => displayName(m) === s.name);
+    const member = members.find(m => m.id === s.memberId);
     if (member && member.email) {
       if (s.invalid) {
         // Invalide: alle gepflegten Strafen ignorieren, nur der Durchschnittsbetrag zählt.
