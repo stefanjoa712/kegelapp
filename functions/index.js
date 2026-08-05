@@ -2210,7 +2210,10 @@ async function sendArrearsRemindersForClub(clubId) {
     }
 
     const historySince = extractHistorySinceLastSettled(entry.history);
-    const historyLines = historySince.map(h => ({
+    // Für die Mail-Anzeige umgekehrt sortiert (neueste zuerst) - extractHistorySinceLastSettled
+    // selbst bleibt aufsteigend sortiert, da sie darauf angewiesen ist, um den letzten
+    // Settlement-Eintrag korrekt zu finden.
+    const historyLines = historySince.slice().reverse().map(h => ({
       dateLabel: formatDateDEServer(h.date),
       label: h.note || (h.type === 'payment' ? 'Zahlung' : h.type === 'correction' ? 'Korrektur' : 'Strafe'),
       amount: h.delta,
