@@ -805,7 +805,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.29';
+  const APP_VERSION = '1.1.30';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1096,7 +1096,9 @@
   // beim ersten Versuch mit 'HTTP 400: lacks /' fehl) - daher der feste Zwischenschritt 'data' als
   // Collection-Name, macht daraus 'clubs/<clubId>/data/<key>' mit 4 Segmenten.
   function clubDocRef(key){ return doc(db, 'clubs', CURRENT_CLUB_ID, 'data', key); }
-  async function getClubJSON(key, fallback, onBackgroundUpdate){
+  // Gemeinsame Implementierung für getClubJSON()/getClubJSONOrThrow() - identisch bis auf die
+  // Fehlerbehandlung beim finalen getDoc()-Fallback (throwOnError steuert das).
+  async function getClubJSONInternal(key, fallback, onBackgroundUpdate, throwOnError){
     let cacheResult;
     try{
       const cacheSnap = await getDocFromCache(clubDocRef(key));
@@ -1120,6 +1122,10 @@
       console.error('getClubJSON Server-Abgleich fehlgeschlagen für', key, e);
     });
     if(cacheResult!==undefined) return cacheResult;
+    if(throwOnError){
+      const snap = await withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS);
+      return snap.exists() ? JSON.parse(snap.data().value) : fallback;
+    }
     try{
       const snap = await withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS);
       return snap.exists() ? JSON.parse(snap.data().value) : fallback;
@@ -1128,27 +1134,11 @@
       return fallback;
     }
   }
+  async function getClubJSON(key, fallback, onBackgroundUpdate){
+    return getClubJSONInternal(key, fallback, onBackgroundUpdate, false);
+  }
   async function getClubJSONOrThrow(key, fallback, onBackgroundUpdate){
-    let cacheResult;
-    try{
-      const cacheSnap = await getDocFromCache(clubDocRef(key));
-      cacheResult = cacheSnap.exists() ? JSON.parse(cacheSnap.data().value) : fallback;
-    }catch(e){
-      cacheResult = undefined;
-    }
-    // Siehe Kommentar in getClubJSON() oben - getDocFromServer() statt getDoc(), um den
-    // Hintergrundabgleich verlässlich gegen den echten Serverstand laufen zu lassen.
-    withTimeout(getDocFromServer(clubDocRef(key)), STORAGE_TIMEOUT_MS).then(snap=>{
-      const serverResult = snap.exists() ? JSON.parse(snap.data().value) : fallback;
-      if(onBackgroundUpdate && JSON.stringify(serverResult)!==JSON.stringify(cacheResult)){
-        onBackgroundUpdate(serverResult);
-      }
-    }).catch(e=>{
-      console.error('getClubJSONOrThrow Server-Abgleich fehlgeschlagen für', key, e);
-    });
-    if(cacheResult!==undefined) return cacheResult;
-    const snap = await withTimeout(getDoc(clubDocRef(key)), STORAGE_TIMEOUT_MS);
-    return snap.exists() ? JSON.parse(snap.data().value) : fallback;
+    return getClubJSONInternal(key, fallback, onBackgroundUpdate, true);
   }
   // Erzeugt einen onBackgroundUpdate-Callback für getClubJSON(OrThrow): schreibt den
   // nachträglich vom Server eingetroffenen Wert in den angegebenen state-Key und rendert neu -
