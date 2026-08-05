@@ -833,7 +833,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.40';
+  const APP_VERSION = '1.1.41';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -9177,15 +9177,17 @@
   }
 
   // Trägt beim Login den Zeitpunkt beim verknüpften Mitglied ein (Admin-Account übersprungen).
+  // Läuft über die updateOwnLastLoginFn Cloud Function statt direktem saveMember(): die
+  // Firestore Rules erlauben das Schreiben auf members/{memberId} nur Kassenwart/Präsident/Admin
+  // (canManageMembers), ein einfaches Mitglied konnte sein eigenes lastLogin also nie speichern -
+  // der Fehler wurde hier bisher nur still geschluckt, die Anzeige blieb veraltet stehen.
   async function updateOwnLastLogin(){
     try{
       const user = auth.currentUser;
-      if(!user || user.email===ADMIN_EMAIL) return;
-      const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
-      if(!member) return;
-      member.lastLogin = new Date().toISOString();
-      member.hasAccount = true;
-      await saveMember(member);
+      if(!user || user.email===ADMIN_EMAIL || !CURRENT_CLUB_ID) return;
+      const updateOwnLastLoginFn = httpsCallable(functions, 'updateOwnLastLogin');
+      await updateOwnLastLoginFn({ clubId: CURRENT_CLUB_ID });
+      invalidate('members');
     }catch(e){ /* nicht kritisch, einfach ignorieren */ }
   }
 

@@ -1245,6 +1245,51 @@ exports.deleteOrArchiveMember = onCall({}, async (request) => {
   return { success: true, archived: false };
 });
 
+// Setzt lastLogin/hasAccount am EIGENEN Mitgliedsdokument beim Login. Läuft serverseitig über
+// das Admin-SDK statt direkt vom Client aus 'members/{memberId}' zu schreiben, weil die
+// Firestore Rules (siehe canManageMembers in firestore.rules) das Mitgliedsdokument nur für
+// Kassenwart/Präsident/Admin beschreibbar machen - ein einfaches Mitglied konnte lastLogin also
+// nie selbst aktualisieren, der Schreibversuch schlug still fehl (siehe updateOwnLastLogin() im
+// Client, der den Fehler bisher ungeprüft schluckte) und die Anzeige blieb auf dem letzten Stand
+// stehen, den zufällig ein Kassenwart/Präsident beim eigenen Login gesetzt hatte.
+// Bewusst KEINE Berechtigungsprüfung wie requireManageMembersRole - jeder eingeloggte Nutzer darf
+// das, aber NUR am eigenen Mitgliedsdokument: das Mitglied wird serverseitig per E-Mail-Match
+// (request.auth.token.email, case-insensitive wie im Client) innerhalb des Clubs gesucht, die
+// clubId kommt nicht ungeprüft vom Client. Es werden ausschließlich lastLogin und hasAccount
+// gesetzt, alle anderen Felder des Mitgliedsdokuments bleiben unangetastet.
+exports.updateOwnLastLogin = onCall({}, async (request) => {
+  const { clubId } = request.data || {};
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
+  }
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  requireCallerBelongsToClub(request, clubId);
+  const callerEmail = (request.auth.token.email || '').toLowerCase();
+  if (!callerEmail) {
+    throw new HttpsError('failed-precondition', 'Kein E-Mail-Adresse am Account hinterlegt.');
+  }
+
+  const members = await loadMembers(clubId);
+  if (!members) {
+    throw new HttpsError('not-found', 'Mitgliederliste konnte nicht geladen werden.');
+  }
+  const member = members.find(m => (m.email || '').toLowerCase() === callerEmail);
+  if (!member) {
+    // Kein Fehler für den Aufrufer - z.B. Admin-Account oder (noch) nicht verknüpftes Mitglied,
+    // beides kein ungewöhnlicher Zustand beim Login.
+    return { success: false, reason: 'member-not-found' };
+  }
+
+  member.lastLogin = new Date().toISOString();
+  member.hasAccount = true;
+  await db.collection('clubs').doc(clubId).collection('members').doc(member.id)
+    .set({ value: JSON.stringify(member) });
+
+  return { success: true };
+});
+
 // -------- Die eigentliche Cloud Function --------
 // Trigger-Pfad mit Wildcard {clubId} statt fest verdrahteter CLUB_ID: reagiert auf
 // Kegelabend-Änderungen in JEDEM Club, nicht nur dem einen aktuell existierenden. clubId kommt
