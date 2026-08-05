@@ -833,7 +833,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.47';
+  const APP_VERSION = '1.1.48';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -9122,7 +9122,7 @@
 
   // ---------- Start ----------
   async function init(){
-    document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div>${clubDisplayName()} – wird geladen…</div>`;
+    document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div></div>`;
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
     try{
@@ -9205,7 +9205,7 @@
     }
     onAuthStateChanged(auth, async (user)=>{
       if(user){
-        document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div>Wird geprüft…</div>`;
+        document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div></div>`;
         const clubId = await resolveActiveClub(user);
         if(!clubId) return; // renderNoClubAccessScreen() wurde bereits von resolveActiveClub gezeigt
         // Stale-Cache (siehe isFresh()/fetchIfStale() oben) ist rein zeitbasiert und kennt keinen
