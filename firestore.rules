@@ -151,5 +151,24 @@ service cloud.firestore {
       allow read: if request.auth != null && (belongsToClub(clubId) || isAdmin());
       allow write: if (belongsToClub(clubId) || isAdmin()) && key != 'fines-catalog' && key != 'games-catalog' && !clubAccessBlocked(clubId);
     }
+
+    // Globale Token-Mapping-Collections (siehe Review-Issue #52): shareGuestBill/calendarFeed
+    // sind öffentliche, login-lose Cloud Functions und brauchten bisher einen Lookup über ALLE
+    // Clubs (Kosten/Latenz skalieren mit Club-Anzahl). Jetzt direkter Dokument-Zugriff per Token
+    // als ID. Kein öffentlicher Read nötig - die Functions selbst laufen mit Admin-SDK und
+    // umgehen diese Regeln; Lesen bleibt daher wie die übrigen Club-Daten auf eingeloggte
+    // Clubmitglieder beschränkt. Schreiben nur durch den Club, für den der Token erzeugt wird -
+    // request.resource.data.clubId statt resource.data.clubId, da beim initialen Anlegen (create)
+    // noch kein vorheriger Dokumentstand existiert.
+    match /shareTokens/{token} {
+      allow read: if request.auth != null && (belongsToClub(resource.data.clubId) || isAdmin());
+      allow create: if (belongsToClub(request.resource.data.clubId) || isAdmin()) && !clubAccessBlocked(request.resource.data.clubId);
+      allow update, delete: if false;
+    }
+    match /calendarFeedTokens/{token} {
+      allow read: if request.auth != null && (belongsToClub(resource.data.clubId) || isAdmin());
+      allow create: if (belongsToClub(request.resource.data.clubId) || isAdmin()) && !clubAccessBlocked(request.resource.data.clubId);
+      allow update, delete: if false;
+    }
   }
 }

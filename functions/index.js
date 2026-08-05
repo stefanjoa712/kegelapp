@@ -1857,22 +1857,26 @@ exports.shareGuestBill = onRequest(async (req, res) => {
   }
 
   const db = getFirestore();
-  // Der Gast-Link enthält bewusst KEINEN Club-Bezug (nur den Token) - solche Links werden an
-  // Gäste ohne Login verschickt und sollen auch nach der Multi-Club-Umstellung unverändert
-  // funktionieren. Da der Token selbst schon eindeutig ist, wird über alle existierenden Clubs
-  // iteriert, bis der passende Sitzplatz gefunden ist, statt einen Club fest anzunehmen.
-  const clubsSnapshot = await db.collection('clubs').get();
-  let foundDetail = null, foundSeat = null, foundClubId = null, foundClubData = null;
-  for (const clubDoc of clubsSnapshot.docs) {
-    const eveningsSnapshot = await db.collection('clubs').doc(clubDoc.id).collection('evenings').get();
-    for (const doc of eveningsSnapshot.docs) {
-      let detail;
-      try { detail = JSON.parse(doc.data().value || '{}'); } catch (e) { continue; }
-      const seat = (detail.seating || []).find(s => s.shareToken === token);
-      if (seat) { foundDetail = detail; foundSeat = seat; foundClubId = clubDoc.id; foundClubData = clubDoc.data(); break; }
-    }
-    if (foundDetail) break;
+  // Globaler Mapping-Eintrag (siehe Review-Issue #52): der Gast-Link enthält bewusst KEINEN
+  // Club-Bezug (nur den Token), damit er auch nach der Multi-Club-Umstellung unverändert
+  // funktioniert. Statt über alle Clubs × alle Evenings zu iterieren, wird der Token jetzt direkt
+  // per Dokument-ID in shareTokens/{token} aufgelöst (siehe Erzeugung in index.html,
+  // header-share-guest-btn-Listener). Bereits vor dieser Umstellung erzeugte Links ohne
+  // Mapping-Eintrag funktionieren nicht mehr (bewusst kein Fallback/Migration).
+  const tokenDoc = await db.collection('shareTokens').doc(token).get();
+  if (!tokenDoc.exists) {
+    res.status(404).set('Content-Type', 'text/html; charset=utf-8').send(buildShareNotFoundHtml());
+    return;
   }
+  const { clubId: foundClubId, eveningId, seatId } = tokenDoc.data();
+  const clubDoc = await db.collection('clubs').doc(foundClubId).get();
+  const eveningDoc = await db.collection('clubs').doc(foundClubId).collection('evenings').doc(eveningId).get();
+  let foundDetail = null, foundSeat = null;
+  if (eveningDoc.exists) {
+    try { foundDetail = JSON.parse(eveningDoc.data().value || '{}'); } catch (e) { foundDetail = null; }
+    if (foundDetail) foundSeat = (foundDetail.seating || []).find(s => s.seatId === seatId) || null;
+  }
+  const foundClubData = clubDoc.exists ? clubDoc.data() : null;
 
   if (!foundDetail || !foundSeat) {
     res.status(404).set('Content-Type', 'text/html; charset=utf-8').send(buildShareNotFoundHtml());
@@ -2250,22 +2254,18 @@ exports.calendarFeed = onRequest(async (req, res) => {
     return;
   }
 
-  // Der Feed-Link enthält bewusst KEINEN Club-Bezug (nur den Token) - dieser Link wird als
-  // Kalender-Abo eingerichtet und soll auch nach der Multi-Club-Umstellung unverändert
-  // funktionieren. Da der Token selbst schon eindeutig ist, wird über alle existierenden Clubs
-  // iteriert, bis der passende Token gefunden ist, statt einen Club fest anzunehmen.
-  const clubsSnapshot = await db.collection('clubs').get();
-  let matchedClubRef = null;
-  for (const clubDoc of clubsSnapshot.docs) {
-    const candidateClubRef = db.collection('clubs').doc(clubDoc.id);
-    const tokenDoc = await candidateClubRef.collection('data').doc('calendar-feed-token').get();
-    const storedToken = tokenDoc.exists ? JSON.parse(tokenDoc.data().value || 'null') : null;
-    if (storedToken && storedToken === token) { matchedClubRef = candidateClubRef; break; }
-  }
-  if (!matchedClubRef) {
+  // Globaler Mapping-Eintrag (siehe Review-Issue #52): der Feed-Link enthält bewusst KEINEN
+  // Club-Bezug (nur den Token), damit er auch nach der Multi-Club-Umstellung unverändert
+  // funktioniert. Statt über alle Clubs zu iterieren, wird der Token jetzt direkt per
+  // Dokument-ID in calendarFeedTokens/{token} aufgelöst (siehe Erzeugung in index.html,
+  // getOrCreateCalendarFeedToken()). Bereits vor dieser Umstellung erzeugte Abos ohne
+  // Mapping-Eintrag funktionieren nicht mehr (bewusst kein Fallback/Migration).
+  const tokenDoc = await db.collection('calendarFeedTokens').doc(token).get();
+  if (!tokenDoc.exists) {
     res.status(403).send('Ungültiger Link.');
     return;
   }
+  const matchedClubRef = db.collection('clubs').doc(tokenDoc.data().clubId);
 
   const events = await loadClubEntityCollection(matchedClubRef, 'events');
   const occurrenceEdits = await loadClubEntityCollection(matchedClubRef, 'occurrence-edits');

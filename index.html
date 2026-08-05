@@ -805,7 +805,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.32';
+  const APP_VERSION = '1.1.33';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -6908,6 +6908,10 @@
     if(!token){
       token = uid('calfeed');
       await setClubJSON('calendar-feed-token', token);
+      // Globaler Mapping-Eintrag (siehe Review-Issue #52): calendarFeed (login-lose Cloud
+      // Function) kann den Token damit per direktem Dokument-Lookup auflösen statt über alle
+      // Clubs zu iterieren.
+      await setDoc(doc(db, 'calendarFeedTokens', token), { clubId: CURRENT_CLUB_ID });
     }
     return token;
   }
@@ -8523,6 +8527,16 @@
       if(!seat.shareToken){
         seat.shareToken = uid('share');
         await saveEveningMainDoc(detail);
+        // Globaler Mapping-Eintrag (siehe Review-Issue #52): shareGuestBill (login-lose Cloud
+        // Function) kann den Token damit per direktem Dokument-Lookup auflösen statt über alle
+        // Clubs/Evenings zu iterieren. Bewusst NACH saveEveningMainDoc() geschrieben - schlägt
+        // dieser Schritt fehl, existiert der Token im Sitzplan noch nicht und der Mapping-
+        // Eintrag würde ins Leere zeigen.
+        await setDoc(doc(db, 'shareTokens', seat.shareToken), {
+          clubId: CURRENT_CLUB_ID,
+          eveningId: detail.id,
+          seatId: seat.seatId,
+        });
       }
       const shareUrl = `https://us-central1-die-pudolfs.cloudfunctions.net/shareGuestBill?token=${seat.shareToken}`;
       const shareTitle = `Strafen vom Kegelabend – ${seat.name}`;
