@@ -2450,6 +2450,128 @@ function buildIcsFeed(occurrences, clubName) {
   return lines.join('\r\n');
 }
 
+// -------- Täglicher RSVP-Reminder (siehe Issue #59) --------
+//
+// Läuft jeden Abend um 20 Uhr. Prüft pro Club den NÄCHSTEN anstehenden Termin (nur die nächste
+// Instanz einer Serie, siehe Diskussion in Issue #59) im Fenster "morgen" bis "in 7 Tagen" und
+// erinnert alle aktiven Mitglieder ohne RSVP-Eintrag per Mail. Läuft bewusst täglich weiter (kein
+// Zähler/Limit) - sobald ein Mitglied EINEN RSVP-Eintrag hat (egal welchen Status: zugesagt,
+// abgesagt oder vorläufig), gilt es als "hat reagiert" und wird nicht mehr erinnert.
+function buildRsvpReminderHtml(name, eventTitle, dateLabel, timeLabel, deepLinkUrl, clubName) {
+  return `
+    <div style="font-family:sans-serif; color:#161616; max-width:480px;">
+      <p>Hallo ${escapeHtml(name)},</p>
+      <p>kleine Erinnerung: für <strong>${escapeHtml(eventTitle)}</strong> am <strong>${dateLabel}${timeLabel ? ', ' + timeLabel + ' Uhr' : ''}</strong> steht von dir noch keine Rückmeldung aus.</p>
+      <p style="margin-top:22px;">
+        <a href="${deepLinkUrl}" style="display:inline-block; background:#E3421F; color:#fff; font-weight:800; text-decoration:none; padding:12px 22px; border-radius:8px;">
+          Jetzt zu- oder absagen
+        </a>
+      </p>
+      <p style="margin-top:22px;">Kegelgruß,<br>${escapeHtml(clubName)}</p>
+    </div>
+  `;
+}
+
+// Ermittelt pro Event die NÄCHSTE anstehende Instanz im Fenster [windowStart, windowEnd]
+// (inklusive), unabhängig davon ob Einzeltermin oder Serie. Bei Serien wird bewusst NUR die
+// nächste Instanz zurückgegeben, nicht jede Instanz im Fenster einzeln (siehe Issue #59).
+function findNextOccurrenceInWindow(ev, occurrenceEdits, windowStart, windowEnd) {
+  const isRecurring = ev.recurrence && ev.recurrence !== 'none';
+  let candidates;
+  if (isRecurring) {
+    const [wy, wm] = windowStart.split('-').map(Number);
+    candidates = expandEventOverMonths(ev, occurrenceEdits, wy, wm, 2);
+  } else {
+    const occ = buildOccurrenceObjectFeed(ev, dateOnlyFeed(ev.start), occurrenceEdits);
+    candidates = occ ? [occ] : [];
+  }
+  const inWindow = candidates.filter(occ => {
+    const d = dateOnlyFeed(occ.start);
+    return d >= windowStart && d <= windowEnd;
+  });
+  if (inWindow.length === 0) return null;
+  inWindow.sort((a, b) => a.start.localeCompare(b.start));
+  return inWindow[0];
+}
+
+async function sendRsvpRemindersForClub(clubId) {
+  const clubRef = db.collection('clubs').doc(clubId);
+  const clubSnap = await clubRef.get();
+  if (!clubSnap.exists) return;
+  const clubData = clubSnap.data();
+
+  // Gleiches Test-Flag-Prinzip wie bei sendArrearsReminders (siehe Issue #58 Follow-up) - fehlt
+  // das Feld, wird wie gewohnt verschickt.
+  if (clubData.rsvpRemindersDisabled === true) {
+    logger.info(`Club ${clubId}: sendRsvpReminders übersprungen (rsvpRemindersDisabled=true).`);
+    return;
+  }
+
+  const clubName = clubData.name || 'Dein Kegelclub';
+  const todayStr = getTodayInBerlin();
+  const windowStart = addDaysISOFeed(todayStr, 1);
+  const windowEnd = addDaysISOFeed(todayStr, 7);
+
+  const members = await loadMembers(clubId);
+  if (!members) return;
+  const activeMembers = members.filter(m => !m.archived);
+  if (activeMembers.length === 0) return;
+
+  const events = await loadClubEntityCollection(clubRef, 'events');
+  if (events.length === 0) return;
+  const occurrenceEdits = await loadClubEntityCollection(clubRef, 'occurrence-edits');
+  const rsvps = await loadClubEntityCollection(clubRef, 'rsvps');
+
+  // Über alle Events die jeweils nächste Instanz im Fenster einsammeln und danach die
+  // insgesamt früheste als "den nächsten Termin" wählen (mehrere Termine in 7 Tagen sind
+  // möglich, aber laut Issue #59 wird nur zum NÄCHSTEN erinnert).
+  const upcomingPerEvent = events
+    .map(ev => findNextOccurrenceInWindow(ev, occurrenceEdits, windowStart, windowEnd))
+    .filter(occ => occ !== null);
+  if (upcomingPerEvent.length === 0) return;
+  upcomingPerEvent.sort((a, b) => a.start.localeCompare(b.start));
+  const nextEvent = upcomingPerEvent[0];
+
+  const dateLabel = formatDateDEServer(dateOnlyFeed(nextEvent.start));
+  const timeLabel = timeOnlyFeed(nextEvent.start);
+  const deepLinkUrl = `${HOSTING_URL}?event=${encodeURIComponent(nextEvent.seriesId)}&date=${encodeURIComponent(nextEvent.occurrenceDate)}`;
+
+  const resend = new Resend(resendApiKey.value());
+
+  for (const member of activeMembers) {
+    if (!member.email) continue;
+    const hasRsvp = rsvps.some(r => r.seriesId === nextEvent.seriesId && r.occurrenceDate === nextEvent.occurrenceDate && r.memberId === member.id);
+    if (hasRsvp) continue;
+
+    const html = buildRsvpReminderHtml(displayName(member), nextEvent.title, dateLabel, timeLabel, deepLinkUrl, clubName);
+    try {
+      await resend.emails.send({
+        from: FROM_ADDRESS,
+        to: member.email,
+        subject: `Erinnerung: Rückmeldung für ${nextEvent.title} am ${dateLabel}`,
+        html,
+      });
+    } catch (e) {
+      logger.error(`Club ${clubId}: RSVP-Reminder an ${member.email} fehlgeschlagen:`, e);
+    }
+  }
+}
+
+exports.sendRsvpReminders = onSchedule(
+  { schedule: '0 20 * * *', timeZone: 'Europe/Berlin', secrets: [resendApiKey] },
+  async () => {
+    const clubsSnapshot = await db.collection('clubs').get();
+    for (const clubDoc of clubsSnapshot.docs) {
+      try {
+        await sendRsvpRemindersForClub(clubDoc.id);
+      } catch (e) {
+        // Ein Fehler in einem Club darf die Verarbeitung der anderen Clubs nicht verhindern.
+        logger.error(`Fehler bei sendRsvpReminders für Club ${clubDoc.id}:`, e);
+      }
+    }
+  }
+);
+
 exports.calendarFeed = onRequest(async (req, res) => {
   const token = req.query.t;
   if (!token || typeof token !== 'string') {
