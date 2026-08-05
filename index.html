@@ -295,6 +295,24 @@
   .finance-tab-bar{padding:0; margin:14px 0 16px; background:var(--surface); border:2px solid var(--ink); border-radius:10px; overflow:hidden;}
   .finance-tab-bar .tab-btn{color:var(--ink); background:none; border-radius:0;}
   .finance-tab-bar .tab-btn.active{background:var(--wood); color:#fff;}
+
+  /* Mitglieder-Filter: Suchfeld + Rollen-Chips oberhalb der Liste. Die Chip-Leiste folgt dem
+     gleichen Fluent-2-Muster wie .finance-tab-bar (durchgehende Kapsel, aktives Segment in
+     var(--wood)) statt der dunklen Header-Variante .evening-tab-bar, da diese Leiste auf
+     hellem Card-Grund sitzt statt auf dem dunklen Header. Horizontal scrollbar statt Umbruch,
+     da 4 Segmente ("Alle" + 3 Rollen) auf schmalen Screens knapp werden können. */
+  .member-search-input{margin-bottom:10px;}
+  .member-filter-bar{
+    display:flex; gap:6px; margin-bottom:14px; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  .member-filter-bar::-webkit-scrollbar{display:none;}
+  .member-filter-chip{
+    flex:0 0 auto; padding:7px 14px; border-radius:999px; border:2px solid var(--ink);
+    background:var(--surface); color:var(--ink); font-family:var(--font-body); font-weight:700;
+    font-size:13px; cursor:pointer; white-space:nowrap;
+  }
+  .member-filter-chip.active{background:var(--wood); border-color:var(--wood); color:#fff;}
   .savings-pot-row{padding:14px 0; border-bottom:1px dashed var(--line);}
   .savings-pot-row:last-child{border-bottom:none;}
   .savings-pot-header{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;}
@@ -815,7 +833,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.39';
+  const APP_VERSION = '1.1.40';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3969,18 +3987,59 @@
     `;
   }
 
+  // Mitglieder-Filter (Suchtext + Rolle) wird bewusst NICHT in state gespeichert: er ist reiner
+  // UI-Zustand dieser einen Ansicht und soll beim Verlassen/Wiederbetreten der Seite zurückgesetzt
+  // sein, nicht persistiert werden. renderMemberList() aktualisiert nur die Liste innerhalb von
+  // #member-list-container statt eines vollen render() - sonst würde das Suchfeld bei jedem
+  // Tastendruck den Fokus/die Cursor-Position verlieren (siehe analoge Begründung beim
+  // Notizen-Textfeld und den Spiel-Score-Inputs).
+  let memberFilterRole = 'alle';
+
+  function filterMembersForSettings(members){
+    const searchInput = document.getElementById('member-search-input');
+    const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    return members.filter(m=>{
+      if(memberFilterRole!=='alle' && (m.role||'Mitglied')!==memberFilterRole) return false;
+      if(!query) return true;
+      const haystack = `${m.firstName} ${m.lastName} ${m.nickname||''}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
+  function renderMemberList(){
+    const container = document.getElementById('member-list-container');
+    if(!container) return;
+    const visibleMembers = activeMembers();
+    const filtered = filterMembersForSettings(visibleMembers).sort((a,b)=> a.firstName.localeCompare(b.firstName,'de'));
+    container.innerHTML = filtered.length===0
+      ? `<p class="empty-state">${visibleMembers.length===0 ? 'Noch keine Mitglieder angelegt. Füge oben rechts das erste hinzu.' : 'Keine Mitglieder gefunden.'}</p>`
+      : filtered.map(memberRowHtml).join('');
+    attachMemberRowListeners();
+  }
+
+  function attachMemberRowListeners(){
+    document.querySelectorAll('.member-row-clickable').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const m = state.members.find(x=>x.id===row.dataset.id);
+        goToMemberDetail(m || null);
+      });
+    });
+  }
+
   function viewSettings(){
     const visibleMembers = activeMembers();
-    const sortedMembers = visibleMembers.slice().sort((a,b)=> a.firstName.localeCompare(b.firstName,'de'));
-    const membersHtml = visibleMembers.length===0
-      ? `<p class="empty-state">Noch keine Mitglieder angelegt. Füge oben rechts das erste hinzu.</p>`
-      : sortedMembers.map(memberRowHtml).join('');
     return `
       <div class="card">
         <div class="settings-header-row">
           <h2 class="section-title">Mitglieder <span class="member-count">(${visibleMembers.length})</span></h2>
         </div>
-        ${membersHtml}
+        <input type="text" id="member-search-input" class="member-search-input" placeholder="Suchen…">
+        <div class="member-filter-bar" id="member-filter-bar">
+          ${['alle','Präsident','Kassenwart','Mitglied'].map(r=>`
+            <button type="button" class="member-filter-chip${memberFilterRole===r?' active':''}" data-role="${r}">${r==='alle'?'Alle':escapeHtml(r)}</button>
+          `).join('')}
+        </div>
+        <div id="member-list-container"></div>
       </div>
     `;
   }
@@ -6474,10 +6533,14 @@
   }
 
   function attachSettingsListeners(){
-    document.querySelectorAll('.member-row-clickable').forEach(row=>{
-      row.addEventListener('click', ()=>{
-        const m = state.members.find(x=>x.id===row.dataset.id);
-        goToMemberDetail(m || null);
+    renderMemberList();
+    const searchInput = document.getElementById('member-search-input');
+    if(searchInput) searchInput.addEventListener('input', renderMemberList);
+    document.querySelectorAll('.member-filter-chip').forEach(chip=>{
+      chip.addEventListener('click', ()=>{
+        memberFilterRole = chip.dataset.role;
+        document.querySelectorAll('.member-filter-chip').forEach(c=>c.classList.toggle('active', c===chip));
+        renderMemberList();
       });
     });
     const openAddMemberBtn = document.getElementById('header-add-member-btn');
