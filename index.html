@@ -326,6 +326,9 @@
 
   .empty-state{color:var(--ink-soft); font-size:14px; margin:0;}
   .empty-state-small{color:var(--muted); font-size:13px; font-style:italic; margin:4px 0;}
+  .empty-state-invite{text-align:center; padding:12px 4px;}
+  .empty-state-invite-title{font-family:var(--font-display); font-weight:700; font-size:16px; margin-bottom:4px;}
+  .empty-state-invite-sub{color:var(--ink-soft); font-size:13px; line-height:1.5;}
   .version-footer{color:var(--muted); font-size:11px; font-family:var(--font-mono); text-align:center; padding:4px 12px 22px;}
 
   .evening-row{display:flex; align-items:center; gap:10px; padding:12px 2px; border-bottom:1px solid var(--line); cursor:pointer;}
@@ -344,6 +347,28 @@
   .own-arrears-card{text-align:center; padding:18px 20px;}
   .own-arrears-card.amount-due{background:var(--wine); cursor:pointer;}
   .own-arrears-card.amount-clear{background:#1a7a3c;}
+
+  /* Status-Chips (kompakte Variante von own-arrears-card/next-event-card für die Übersicht,
+     wenn zusätzlich ein Today-Hero angezeigt wird - siehe buildOverviewTopRowHtml()) */
+  .status-chip-row{display:flex; gap:10px; margin-bottom:14px;}
+  .status-chip{border-radius:12px; padding:10px 12px; text-align:center; flex:1; min-width:0;}
+  .status-chip.due{background:var(--tint); color:var(--felt-dark); cursor:pointer;}
+  .status-chip.clear{background:#E7F5EC; color:#1a7a3c;}
+  .status-chip.event{background:var(--ink); color:#fff; cursor:pointer;}
+  .status-chip-value{font-family:var(--font-display); font-weight:800; font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .status-chip-label{font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; opacity:0.85;}
+
+  /* Today-Hero: hervorgehobener Einstieg, wenn heute ein Kegelabend existiert (siehe
+     buildTodayHeroHtml()). Ersetzt die bisherige Gleichrangigkeit von Rückstand/Termin/Historie -
+     der laufende Abend ist die wichtigste Information auf der Übersicht. */
+  .today-hero{background:var(--ink); border-radius:14px; padding:16px 18px; margin-bottom:14px; cursor:pointer; color:#fff;}
+  .today-hero-eyebrow{font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--wood); font-weight:800; margin-bottom:4px;}
+  .today-hero-title{font-family:var(--font-display); font-size:18px; font-weight:700; margin-bottom:2px;}
+  .today-hero-sub{font-size:13px; color:#bbb;}
+  .today-hero-cta{display:inline-block; margin-top:12px; background:var(--felt); color:#fff; padding:8px 16px; border-radius:8px; font-size:13px; font-weight:800;}
+
+  .evening-row-legend{font-size:11px; color:var(--muted); padding:8px 2px 0; border-top:1px solid var(--line); margin-top:4px; display:flex; align-items:center; gap:4px; flex-wrap:wrap;}
+  .evening-row-legend svg{width:13px; height:13px; vertical-align:-2px; flex-shrink:0;}
   .own-arrears-amount{font-family:var(--font-display); font-size:26px; font-weight:700; color:#fff;}
   .own-arrears-label{font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.85); margin-top:3px;}
   .overview-top-row{display:flex; gap:12px; align-items:stretch;}
@@ -902,7 +927,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.52';
+  const APP_VERSION = '1.1.53';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3778,7 +3803,12 @@
     const sorted = state.eveningsIndex.slice().sort((a,b)=> b.date.localeCompare(a.date));
     let listHtml;
     if(sorted.length===0){
-      listHtml = `<p class="empty-state">Noch keine Kegelabende eingetragen. Leg oben den ersten an.</p>`;
+      listHtml = `
+        <div class="empty-state-invite">
+          <div class="empty-state-invite-title">Noch kein Kegelabend</div>
+          <div class="empty-state-invite-sub">Leg oben den ersten Abend an - Sitzplan, Strafen und Kasse startest du direkt danach.</div>
+        </div>
+      `;
     }else{
       const byYear = {};
       sorted.forEach(e=>{
@@ -3822,6 +3852,11 @@
       }).join('');
     }
     const overviewTopRowHtml = buildOverviewTopRowHtml();
+    const legendHtml = sorted.length>0 ? `
+      <div class="evening-row-legend">
+        ${ICON_MEMBER_PRESENT} Anwesend · ${ICON_MEMBER_ABSENT} Abwesend · ${ICON_GUEST} Gäste
+      </div>
+    ` : '';
     return `
       ${overviewTopRowHtml}
       <div class="card" style="text-align:center;">
@@ -3829,8 +3864,9 @@
       </div>
       ${state.mainError ? `<p class="form-error">${escapeHtml(state.mainError)}</p>` : ''}
       <div class="card">
-        <h2 class="section-title">Kegelabende</h2>
+        <h2 class="section-title">Verlauf</h2>
         ${listHtml}
+        ${legendHtml}
       </div>
       <p class="version-footer">Version ${APP_VERSION}</p>
     `;
@@ -3898,19 +3934,40 @@
     return detail.seating.some(s=> s.isSchriftfuehrer && s.memberId===myId);
   }
 
-  function buildOwnArrearsCardHtml(){
+  // Liefert die eigenen Rückstandsdaten (amount, canPayViaPaypal, isDue) oder null, falls der
+  // Nutzer kein verknüpftes Mitglied ist (z.B. Admin-Login). Gemeinsame Grundlage für die große
+  // Kartenvariante (buildOwnArrearsCardHtml) und die kompakte Chip-Variante (buildOwnArrearsChipHtml).
+  function getOwnArrearsInfo(){
     const user = auth.currentUser;
-    if(!user || !user.email || user.email===ADMIN_EMAIL) return '';
+    if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
     const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
-    if(!member) return '';
+    if(!member) return null;
     const entry = state.financeArrears.find(a=>a.memberId===member.id);
     const amount = entry ? entry.amount : 0;
-    const canPayViaPaypal = amount>0 && !!getPaypalUsername();
-    const isDue = amount>0;
+    return { amount, canPayViaPaypal: amount>0 && !!getPaypalUsername(), isDue: amount>0 };
+  }
+
+  function buildOwnArrearsCardHtml(){
+    const info = getOwnArrearsInfo();
+    if(!info) return '';
     return `
-      <div class="card own-arrears-card ${isDue?'amount-due':'amount-clear'}"${canPayViaPaypal?` id="own-arrears-pay-link" data-amount="${amount}"`:''}>
-        <div class="own-arrears-amount">${fmtEuro(amount)}</div>
-        <div class="own-arrears-label">Dein Rückstand${canPayViaPaypal?' · Tippen zum Bezahlen':''}</div>
+      <div class="card own-arrears-card ${info.isDue?'amount-due':'amount-clear'}"${info.canPayViaPaypal?` id="own-arrears-pay-link" data-amount="${info.amount}"`:''}>
+        <div class="own-arrears-amount">${fmtEuro(info.amount)}</div>
+        <div class="own-arrears-label">Dein Rückstand${info.canPayViaPaypal?' · Tippen zum Bezahlen':''}</div>
+      </div>
+    `;
+  }
+
+  // Kompakte Chip-Variante für die Statusleiste neben dem Today-Hero (siehe buildTodayHeroHtml()).
+  // Gleiche Zahlungsfunktion wie die große Karte, aber ohne diese optisch zu dominieren, da der
+  // Hero bereits die wichtigste Information (laufender Abend) belegt.
+  function buildOwnArrearsChipHtml(){
+    const info = getOwnArrearsInfo();
+    if(!info) return '';
+    return `
+      <div class="status-chip ${info.isDue?'due':'clear'}"${info.canPayViaPaypal?` id="own-arrears-pay-link" data-amount="${info.amount}"`:''}>
+        <div class="status-chip-value">${fmtEuro(info.amount)}</div>
+        <div class="status-chip-label">Rückstand</div>
       </div>
     `;
   }
@@ -3950,7 +4007,52 @@
     `;
   }
 
+  // Kompakte Chip-Variante für die Statusleiste neben dem Today-Hero (siehe buildTodayHeroHtml()).
+  function buildNextEventChipHtml(){
+    const occ = getNextUpcomingEvent();
+    if(!occ) return '';
+    return `
+      <div class="status-chip event" id="next-event-card" data-series-id="${occ.seriesId}" data-occurrence-date="${occ.occurrenceDate}">
+        <div class="status-chip-value">${escapeHtml(formatDateDE(dateOnly(occ.start)))}</div>
+        <div class="status-chip-label">${escapeHtml(occ.title)}</div>
+      </div>
+    `;
+  }
+
+  // Hervorgehobener Einstiegspunkt, wenn heute ein Kegelabend existiert - siehe Review-Feedback
+  // "kein visueller Anker für 'heute ist Kegelabend' auf der Übersicht". Ersetzt für diesen Fall
+  // die große Rückstands-/Termin-Karte durch eine kompakte Statusleiste (buildOverviewTopRowHtml()),
+  // damit der laufende Abend eindeutig die wichtigste Information bleibt.
+  function buildTodayHeroHtml(){
+    const eve = todayEvening();
+    if(!eve) return '';
+    const hasStats = eve.income!==undefined;
+    const present = hasStats ? eve.presentCount||0 : null;
+    const absent = hasStats ? eve.absentCount||0 : null;
+    const total = hasStats ? present+absent : null;
+    const subText = eve.closed
+      ? 'Abgeschlossen'
+      : (hasStats ? `${present} von ${total} anwesend` : 'Sitzplan wird vorbereitet');
+    return `
+      <div class="today-hero" id="today-hero-card">
+        <div class="today-hero-eyebrow">Heute · ${formatDateDE(eve.date)}</div>
+        <div class="today-hero-title">Kegelabend${eve.closed?' abgeschlossen':' läuft'}</div>
+        <div class="today-hero-sub">${escapeHtml(subText)}</div>
+        <div class="today-hero-cta">Zum Abend →</div>
+      </div>
+    `;
+  }
+
   function buildOverviewTopRowHtml(){
+    const heroHtml = buildTodayHeroHtml();
+    if(heroHtml){
+      // Ist heute ein Abend, weicht die Statusleiste den kompakten Chips - der Hero deckt die
+      // "was ist gerade wichtig"-Frage bereits ab, große Karten wären hier redundant.
+      const arrearsChip = buildOwnArrearsChipHtml();
+      const eventChip = buildNextEventChipHtml();
+      const chipsHtml = (arrearsChip || eventChip) ? `<div class="status-chip-row">${arrearsChip}${eventChip}</div>` : '';
+      return heroHtml + chipsHtml;
+    }
     const arrearsHtml = buildOwnArrearsCardHtml();
     const nextEventHtml = buildNextEventCardHtml();
     if(arrearsHtml && nextEventHtml) return `<div class="overview-top-row">${arrearsHtml}${nextEventHtml}</div>`;
@@ -6558,6 +6660,8 @@
   function attachMainListeners(){
     const newBtn = document.getElementById('new-evening-btn');
     if(newBtn) newBtn.addEventListener('click', goToNew);
+    const todayHeroCard = document.getElementById('today-hero-card');
+    if(todayHeroCard) todayHeroCard.addEventListener('click', goToTodayEvening);
     const ownArrearsPayLink = document.getElementById('own-arrears-pay-link');
     if(ownArrearsPayLink){
       ownArrearsPayLink.addEventListener('click', ()=>{
