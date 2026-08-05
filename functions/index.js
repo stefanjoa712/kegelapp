@@ -1712,58 +1712,6 @@ exports.syncMemberRoleClaim = onDocumentWritten('clubs/{clubId}/members/{memberI
   }
 });
 
-// -------- Einmalige Migration: alter globaler 'role'-Claim -> neues 'roles'-Objekt --------
-// Vor diesem Fix hatte jeder Auth-Account einen einzigen globalen Custom Claim 'role' (String,
-// z.B. 'Kassenwart'), der fälschlich für ALLE Clubs des Nutzers gleichzeitig galt. Jetzt gilt
-// 'roles' (Objekt { [clubId]: 'Kassenwart' }), ein Eintrag pro Club. Bestehende Accounts haben
-// nach dem Deploy noch den alten Shape - diese Function wandelt ihn einmalig um: der alte
-// role-String wird auf JEDE clubId angewendet, zu der der Account laut 'clubIds' gehört (das ist
-// exakt die Rolle, die vorher ohnehin schon fälschlich club-übergreifend galt - danach wird sie
-// beim nächsten Mitgliedsdokument-Update pro Club über syncMemberRoleClaim wieder korrekt
-// auseinandergezogen). Accounts, die schon ein 'roles'-Objekt haben, werden übersprungen
-// (idempotent, mehrfacher Aufruf unschädlich).
-// ALS SCHEDULED FUNCTION angelegt (nicht onCall), damit sie ohne Frontend-Code oder HTTP-Aufruf
-// existiert: nach dem Deploy einmalig in der Firebase Console unter Cloud Scheduler -> Job
-// "migrateroleclaimstorolesobject-..." über "Force run" / "Jetzt ausführen" manuell auslösen.
-// Das schedule-Feld ('1 1 1 1 *' = einmal jährlich am 1. Januar) verhindert nur, dass sie sich
-// unbeabsichtigt wiederholt aufruft - nach der manuellen Einmal-Ausführung kann sie im Code
-// bleiben oder später entfernt werden.
-exports.migrateRoleClaimsToRolesObject = onSchedule(
-  { schedule: '1 1 1 1 *', timeZone: 'Europe/Berlin' },
-  async () => {
-    const adminAuth = getAuth();
-    let migrated = 0;
-    let skipped = 0;
-    let nextPageToken;
-    do {
-      const page = await adminAuth.listUsers(1000, nextPageToken);
-      for (const userRecord of page.users) {
-        const claims = userRecord.customClaims || {};
-        if (!claims.role || typeof claims.role !== 'string') {
-          skipped++;
-          continue; // kein alter Claim vorhanden - nichts zu migrieren
-        }
-        if (claims.roles && typeof claims.roles === 'object') {
-          skipped++;
-          continue; // bereits migriert (neues Format existiert schon)
-        }
-        const clubIds = Array.isArray(claims.clubIds) ? claims.clubIds : [];
-        const roles = {};
-        clubIds.forEach((clubId) => { roles[clubId] = claims.role; });
-        const { role, ...restClaims } = claims;
-        try {
-          await adminAuth.setCustomUserClaims(userRecord.uid, { ...restClaims, roles });
-          migrated++;
-        } catch (e) {
-          logger.error(`Migration role->roles für ${userRecord.email || userRecord.uid} fehlgeschlagen:`, e);
-        }
-      }
-      nextPageToken = page.pageToken;
-    } while (nextPageToken);
-    logger.info(`Migration role->roles abgeschlossen: ${migrated} Accounts migriert, ${skipped} übersprungen.`);
-  }
-);
-
 // -------- Überweisung per QR-Code (EPC069-12 / "GiroCode") --------
 //
 // Erzeugt den standardisierten Text-Payload für SEPA-Überweisungen per QR-Code. Das Format wird
