@@ -815,7 +815,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.34';
+  const APP_VERSION = '1.1.35';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -6913,15 +6913,36 @@
   }
 
   // Liefert den bestehenden Feed-Token oder erzeugt einmalig einen neuen (lazy).
+  // Wird ein NEUER Token erzeugt, wartet die Funktion zusätzlich, bis der globale Mapping-
+  // Eintrag (calendarFeedTokens/{token}) nachweislich auf dem Server angekommen ist, bevor sie
+  // zurückkehrt: setDoc() löst sein Promise bereits beim lokalen Commit auf (Firestore-
+  // Offline-Persistenz, siehe persistentLocalCache), NICHT erst nach Server-Bestätigung. Ruft
+  // iOS den frisch angezeigten Abo-Link auf, bevor der Sync zum Server durch ist, sieht die
+  // login-lose calendarFeed-Function (liest direkt via Admin-SDK vom Server) den Mapping-
+  // Eintrag noch nicht und meldet "Ungültiger Link" - obwohl ein erneuter Versuch Sekunden
+  // später funktioniert. Bei bereits vorhandenem Token (Normalfall) entfällt der Check, da dann
+  // nichts neu geschrieben wurde.
   async function getOrCreateCalendarFeedToken(){
     let token = await getClubJSONOrThrow('calendar-feed-token', null);
     if(!token){
       token = uid('calfeed');
       await setClubJSON('calendar-feed-token', token);
-      // Globaler Mapping-Eintrag (siehe Review-Issue #52): calendarFeed (login-lose Cloud
-      // Function) kann den Token damit per direktem Dokument-Lookup auflösen statt über alle
-      // Clubs zu iterieren.
-      await setDoc(doc(db, 'calendarFeedTokens', token), { clubId: CURRENT_CLUB_ID });
+      const tokenRef = doc(db, 'calendarFeedTokens', token);
+      await setDoc(tokenRef, { clubId: CURRENT_CLUB_ID });
+      const maxAttempts = 8;
+      for(let attempt=1; attempt<=maxAttempts; attempt++){
+        try{
+          const confirmSnap = await withTimeout(getDocFromServer(tokenRef), STORAGE_TIMEOUT_MS);
+          if(confirmSnap.exists()) break;
+        }catch(e){
+          // Server-Check fehlgeschlagen (z.B. Netzwerk) - trotzdem weiter versuchen, bis
+          // maxAttempts erreicht ist, statt sofort mit einem unbestätigten Token zurückzukehren.
+        }
+        if(attempt<maxAttempts) await new Promise(r=>setTimeout(r, 400));
+      }
+      // Nach Ausschöpfen aller Versuche wird der Token trotzdem zurückgegeben (besser ein
+      // Link, der eventuell noch kurz nicht funktioniert, als gar keiner) - der Regelfall ist,
+      // dass die Bestätigung binnen der ersten 1-2 Versuche durchläuft.
     }
     return token;
   }
@@ -8535,6 +8556,7 @@
       const seat = detail.seating.find(s=>s.seatId===state.currentFineSeatId);
       if(!seat) return;
       if(!seat.shareToken){
+        showModal(`<p class="empty-state">Link wird vorbereitet…</p>`);
         seat.shareToken = uid('share');
         await saveEveningMainDoc(detail);
         // Globaler Mapping-Eintrag (siehe Review-Issue #52): shareGuestBill (login-lose Cloud
@@ -8542,11 +8564,28 @@
         // Clubs/Evenings zu iterieren. Bewusst NACH saveEveningMainDoc() geschrieben - schlägt
         // dieser Schritt fehl, existiert der Token im Sitzplan noch nicht und der Mapping-
         // Eintrag würde ins Leere zeigen.
-        await setDoc(doc(db, 'shareTokens', seat.shareToken), {
+        const tokenRef = doc(db, 'shareTokens', seat.shareToken);
+        await setDoc(tokenRef, {
           clubId: CURRENT_CLUB_ID,
           eveningId: detail.id,
           seatId: seat.seatId,
         });
+        // Server-Bestätigung abwarten (siehe ausführlicher Kommentar in
+        // getOrCreateCalendarFeedToken() weiter unten): setDoc() löst sein Promise schon beim
+        // lokalen Commit auf, nicht erst nach Server-Sync. Wird der Link sofort danach geteilt/
+        // geöffnet, könnte die login-lose shareGuestBill-Function (liest vom Server) den
+        // Mapping-Eintrag noch nicht sehen. Das "Link wird vorbereitet…"-Modal bleibt bis dahin
+        // sichtbar und wird unten (vor navigator.share/Zwischenablage) durch das eigentliche
+        // Teilen-Ergebnis ersetzt bzw. geschlossen.
+        const maxAttempts = 8;
+        for(let attempt=1; attempt<=maxAttempts; attempt++){
+          try{
+            const confirmSnap = await withTimeout(getDocFromServer(tokenRef), STORAGE_TIMEOUT_MS);
+            if(confirmSnap.exists()) break;
+          }catch(e){ /* weiter versuchen bis maxAttempts */ }
+          if(attempt<maxAttempts) await new Promise(r=>setTimeout(r, 400));
+        }
+        closeGenericModal();
       }
       const shareUrl = `${SHARE_GUEST_BILL_URL}?token=${seat.shareToken}`;
       const shareTitle = `Strafen vom Kegelabend – ${seat.name}`;
