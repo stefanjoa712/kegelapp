@@ -2214,16 +2214,16 @@ function icsFoldLine(line) {
   return parts.join('\r\n');
 }
 
-function buildIcsFeed(occurrences) {
+function buildIcsFeed(occurrences, clubName) {
   const now = new Date();
   const dtstamp = now.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
   const lines = [];
   lines.push('BEGIN:VCALENDAR');
   lines.push('VERSION:2.0');
-  lines.push('PRODID:-//Die Pudolfs Kegelclub//Kalender-Feed//DE');
+  lines.push(icsFoldLine(`PRODID:-//${icsEscape(clubName)}//Kalender-Feed//DE`));
   lines.push('CALSCALE:GREGORIAN');
   lines.push('METHOD:PUBLISH');
-  lines.push('X-WR-CALNAME:Die Pudolfs Kegelclub');
+  lines.push(icsFoldLine(`X-WR-CALNAME:${icsEscape(clubName)}`));
   lines.push('X-WR-TIMEZONE:Europe/Berlin');
   lines.push('REFRESH-INTERVAL;VALUE=DURATION:P1W');
   lines.push('X-PUBLISHED-TTL:P1W');
@@ -2266,6 +2266,8 @@ exports.calendarFeed = onRequest(async (req, res) => {
     return;
   }
   const matchedClubRef = db.collection('clubs').doc(tokenDoc.data().clubId);
+  const clubSnapForFeed = await matchedClubRef.get();
+  const clubName = (clubSnapForFeed.exists && clubSnapForFeed.data().name) || 'Dein Kegelclub';
 
   const events = await loadClubEntityCollection(matchedClubRef, 'events');
   const occurrenceEdits = await loadClubEntityCollection(matchedClubRef, 'occurrence-edits');
@@ -2289,8 +2291,11 @@ exports.calendarFeed = onRequest(async (req, res) => {
 
   allOccurrences.sort((a, b) => a.start.localeCompare(b.start));
 
-  const ics = buildIcsFeed(allOccurrences);
+  const ics = buildIcsFeed(allOccurrences, clubName);
+  // Dateiname aus Clubnamen ableiten (nur unbedenkliche Zeichen für Content-Disposition;
+  // Fallback 'kalender', falls der Name keine davon enthält, z.B. bei reinen Emoji-Namen).
+  const filenameSlug = clubName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'kalender';
   res.set('Content-Type', 'text/calendar; charset=utf-8');
-  res.set('Content-Disposition', 'inline; filename="pudolfs-kalender.ics"');
+  res.set('Content-Disposition', `inline; filename="${filenameSlug}-kalender.ics"`);
   res.send(ics);
 });
