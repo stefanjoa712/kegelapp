@@ -2598,15 +2598,19 @@ exports.calendarFeed = onRequest(async (req, res) => {
   const occurrenceEdits = await loadClubEntityCollection(matchedClubRef, 'occurrence-edits');
 
   const today = new Date();
-  const startYear = today.getUTCFullYear();
-  const startMonth = today.getUTCMonth() + 1;
+  const endYear = today.getUTCFullYear();
+  const endMonth = today.getUTCMonth() + 1;
 
   let allOccurrences = [];
   events.forEach(ev => {
     const isRecurring = ev.recurrence && ev.recurrence !== 'none';
     if (isRecurring) {
-      // Serien: nur die nächsten 12 Monate ab heute.
-      allOccurrences = allOccurrences.concat(expandEventOverMonths(ev, occurrenceEdits, startYear, startMonth, 12));
+      // Serien: ab dem allerersten Termin der Serie bis 12 Monate in die Zukunft - inkludiert
+      // damit sowohl bereits vergangene als auch anstehende Instanzen (vorher: nur die nächsten
+      // 12 Monate ab heute, vergangene Instanzen fehlten im Feed komplett).
+      const [by, bm] = dateOnlyFeed(ev.start).split('-').map(Number);
+      const monthCount = Math.max(1, (endYear - by) * 12 + (endMonth - bm) + 13);
+      allOccurrences = allOccurrences.concat(expandEventOverMonths(ev, occurrenceEdits, by, bm, monthCount));
     } else {
       // Einzeltermine: immer aufnehmen, unabhängig vom Datum.
       const occ = buildOccurrenceObjectFeed(ev, dateOnlyFeed(ev.start), occurrenceEdits);
