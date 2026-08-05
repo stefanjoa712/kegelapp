@@ -815,7 +815,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.38';
+  const APP_VERSION = '1.1.39';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4990,7 +4990,13 @@
       closeGenericModal();
       try{
         state.currentEveningDetail = await getEveningDetail(detail.id);
-        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: eveningsIndex', e); }
+        // WICHTIG: getEveningsIndexFromServer() statt getClubJSONOrThrow() - letzteres ist
+        // cache-first (siehe getClubJSONInternal) und kann direkt nach closeEvening (Cloud
+        // Function, schreibt am Client vorbei) noch den alten, lokal gecachten closed:false-Stand
+        // zurückgeben, falls der Firestore-Server-Push den lokalen Cache noch nicht erreicht hat.
+        // Das passiert vor allem bei schnellem Schließen/Öffnen/Schließen kurz hintereinander und
+        // führte dazu, dass das "geschlossen"-Icon auf der Übersicht fehlte.
+        try{ state.eveningsIndex = await getEveningsIndexFromServer(); markFetched('eveningsIndex'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: eveningsIndex', e); }
         try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: financeArrears', e); }
       }catch(e){ /* Detailansicht rendert notfalls mit dem letzten bekannten Stand weiter */ }
       render();
@@ -5033,7 +5039,10 @@
       closeGenericModal();
       try{
         state.currentEveningDetail = await getEveningDetail(detail.id);
-        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: eveningsIndex', e); }
+        // Siehe Kommentar in showCloseEveningModal(): getEveningsIndexFromServer() statt
+        // getClubJSONOrThrow(), um garantiert den frischen Serverstand nach reopenEvening
+        // (Cloud Function) zu bekommen statt eines potenziell noch veralteten Cache-Werts.
+        try{ state.eveningsIndex = await getEveningsIndexFromServer(); markFetched('eveningsIndex'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: eveningsIndex', e); }
         try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: financeArrears', e); }
       }catch(e){ /* Detailansicht rendert notfalls mit dem letzten bekannten Stand weiter */ }
       render();
