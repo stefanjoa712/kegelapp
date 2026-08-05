@@ -184,6 +184,45 @@
   }
   @keyframes loading-spin{ to{ transform:rotate(360deg); } }
 
+  /* Initialer Ladescreen beim App-Start (vor Login-Prüfung und vor erstem Datenladen) - läuft zu
+     diesem Zeitpunkt IMMER ohne bekannten Clubnamen/Logo (siehe CLUB_NAME_FALLBACK), deshalb
+     bewusst kein Text, sondern eine prominente, vollflächige Marken-Ladeanimation statt eines
+     kleinen grauen Spinners im sonst leeren #app. */
+  .boot-loading{
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:var(--bg);
+    animation:boot-fade-in 0.25s ease-out;
+  }
+  .boot-loading-ring{
+    position:relative; width:88px; height:88px;
+  }
+  .boot-loading-ring::before, .boot-loading-ring::after{
+    content:''; position:absolute; inset:0; border-radius:50%;
+  }
+  .boot-loading-ring::before{
+    border:4px solid var(--line);
+  }
+  .boot-loading-ring::after{
+    border:4px solid transparent;
+    border-top-color:var(--felt);
+    border-right-color:var(--felt);
+    animation:loading-spin 0.9s cubic-bezier(0.5,0.1,0.5,0.9) infinite;
+  }
+  .boot-loading-dot{
+    position:absolute; top:50%; left:50%; width:14px; height:14px; margin:-7px 0 0 -7px;
+    background:var(--felt); border-radius:50%;
+    animation:boot-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes boot-fade-in{ from{ opacity:0; } to{ opacity:1; } }
+  @keyframes boot-pulse{
+    0%, 100%{ transform:scale(1); opacity:1; }
+    50%{ transform:scale(1.35); opacity:0.55; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .boot-loading-ring::after{ animation-duration:1.6s; }
+    .boot-loading-dot{ animation:none; }
+  }
+
   .card{
     background:var(--surface);
     border:1.5px solid var(--line);
@@ -833,7 +872,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.48';
+  const APP_VERSION = '1.1.49';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -9122,7 +9161,7 @@
 
   // ---------- Start ----------
   async function init(){
-    document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div></div>`;
+    document.getElementById('app').innerHTML = `<div class="boot-loading"><div class="boot-loading-ring"><div class="boot-loading-dot"></div></div></div>`;
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
     try{
@@ -9205,7 +9244,7 @@
     }
     onAuthStateChanged(auth, async (user)=>{
       if(user){
-        document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div></div>`;
+        document.getElementById('app').innerHTML = `<div class="boot-loading"><div class="boot-loading-ring"><div class="boot-loading-dot"></div></div></div>`;
         const clubId = await resolveActiveClub(user);
         if(!clubId) return; // renderNoClubAccessScreen() wurde bereits von resolveActiveClub gezeigt
         // Stale-Cache (siehe isFresh()/fetchIfStale() oben) ist rein zeitbasiert und kennt keinen
