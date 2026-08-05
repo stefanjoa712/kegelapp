@@ -805,7 +805,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.27';
+  const APP_VERSION = '1.1.28';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -9108,9 +9108,13 @@
         // Rollen-Claim laden (siehe canManageMembers()) - steuert nur die UI-Anzeige, die
         // eigentliche Durchsetzung übernehmen die Firestore Rules unabhängig davon. Ein gecachtes
         // Token kann bis zu 1h alt sein; das ist für Rollenwechsel in einem Kegelclub unkritisch.
+        // 'roles' ist ein Objekt { [clubId]: 'Kassenwart' }, ein Eintrag pro Club - hier wird
+        // gezielt der Eintrag für den AKTUELL AKTIVEN Club (clubId) gelesen, nicht mehr ein
+        // einziger globaler role-String (der fälschlich für alle Clubs des Nutzers galt).
         try{
           const tokenResult = await user.getIdTokenResult();
-          state.currentUserRole = (tokenResult.claims && tokenResult.claims.role) || 'Mitglied';
+          const roles = (tokenResult.claims && tokenResult.claims.roles) || {};
+          state.currentUserRole = roles[clubId] || 'Mitglied';
         }catch(e){ state.currentUserRole = 'Mitglied'; }
         applyClubBranding();
         init();
