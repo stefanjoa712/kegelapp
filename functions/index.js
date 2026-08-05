@@ -790,6 +790,19 @@ function requireFinanceRole(request) {
   }
 }
 
+// Prüft, ob der Aufrufer selbst zu clubId gehört (custom claim 'clubIds'), oder der
+// Admin-Account ist. Cloud Functions mit Admin-SDK-Rechten umgehen die Firestore Rules
+// vollständig - ohne diese Prüfung könnte jeder eingeloggte Nutzer (unabhängig von Rolle oder
+// Club-Zugehörigkeit) die Function mit einer beliebigen fremden clubId aufrufen. Wirft bei
+// fehlender Zugehörigkeit.
+function requireCallerBelongsToClub(request, clubId) {
+  const isCallerAdmin = request.auth.token.email === 'admin@die-pudolfs.internal';
+  const callerClubIds = request.auth.token.clubIds || [];
+  if (!isCallerAdmin && !callerClubIds.includes(clubId)) {
+    throw new HttpsError('permission-denied', 'Kein Zugriff auf diesen Club.');
+  }
+}
+
 // Prüft, ob der Club im Read-Only-Modus ist (abgelaufener Free-Zeitraum, subscription.
 // accessBlocked - siehe updateSubscriptionAccessStatus oben und clubAccessBlocked() in
 // firestore.rules). Cloud Functions mit Admin-SDK-Rechten umgehen die Firestore Rules
@@ -1270,9 +1283,8 @@ exports.sendFineEmailsOnClose = onDocumentUpdated(
 const HOSTING_URL = 'https://app.die-pudolfs.de/';
 
 exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
-  }
+  requireManageMembersRole(request);
+
   const { email, name, clubId } = request.data || {};
   if (!email || typeof email !== 'string') {
     throw new HttpsError('invalid-argument', 'E-Mail-Adresse fehlt.');
@@ -1280,6 +1292,7 @@ exports.inviteMember = onCall({ secrets: [resendApiKey] }, async (request) => {
   if (!clubId || typeof clubId !== 'string') {
     throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
   }
+  requireCallerBelongsToClub(request, clubId);
   await requireClubAccessNotBlocked(clubId);
 
   const adminAuth = getAuth();
