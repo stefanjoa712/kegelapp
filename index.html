@@ -805,7 +805,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.30';
+  const APP_VERSION = '1.1.31';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3506,7 +3506,7 @@
             markFetched('financeAccounts');
             markFetched('financeTransactions');
             markFetched('financeArrears');
-          }catch(e){}
+          }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: arrearsDetail', e); }
         }
         state.currentArrearsMemberId = memberId;
         const member = state.members.find(m=>m.id===memberId);
@@ -3526,7 +3526,7 @@
             state.financeTransactions = transactions;
             markFetched('financeAccounts');
             markFetched('financeTransactions');
-          }catch(e){}
+          }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: transactionDetail', e); }
         }
         state.currentTransactionId = txId==='new' ? null : txId;
         state.view = 'transactionDetail';
@@ -3534,7 +3534,7 @@
       }else if(sig.startsWith('memberDetail:')){
         const memberId = sig.slice('memberDetail:'.length);
         if(state.members.length===0){
-          try{ state.members = await getAllMembers(); markFetched('members'); }catch(e){}
+          try{ state.members = await getAllMembers(); markFetched('members'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: members', e); }
         }
         if(memberId==='new'){
           state.currentMemberId = null;
@@ -3550,7 +3550,7 @@
             try{
               state.currentMemberStats = await computeMemberAttendanceStats(displayName(m));
               render();
-            }catch(e){}
+            }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: memberStats', e); }
           }
         }
       }else if(sig.startsWith('recurringDetail:')){
@@ -3568,7 +3568,7 @@
             markFetched('financeAccounts');
             markFetched('financeRecurring');
             markFetched('financeSavingsPots');
-          }catch(e){}
+          }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: recurringDetail', e); }
         }
         state.currentRecurringId = recId==='new' ? null : recId;
         state.view = 'recurringDetail';
@@ -3576,7 +3576,7 @@
       }else if(sig.startsWith('fineDetail:')){
         const fineId = sig.slice('fineDetail:'.length);
         if(state.finesCatalog.length===0){
-          try{ state.finesCatalog = await getClubJSONOrThrow('fines-catalog', []); markFetched('finesCatalog'); }catch(e){}
+          try{ state.finesCatalog = await getClubJSONOrThrow('fines-catalog', []); markFetched('finesCatalog'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: finesCatalog', e); }
         }
         state.currentFineId = fineId==='new' ? null : fineId;
         state.view = 'fineDetail';
@@ -3584,7 +3584,7 @@
       }else if(sig.startsWith('gameDetail:')){
         const gameId = sig.slice('gameDetail:'.length);
         if(state.gamesCatalog.length===0){
-          try{ state.gamesCatalog = await getClubJSONOrThrow('games-catalog', []); markFetched('gamesCatalog'); }catch(e){}
+          try{ state.gamesCatalog = await getClubJSONOrThrow('games-catalog', []); markFetched('gamesCatalog'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: gamesCatalog', e); }
         }
         state.currentGameId = gameId==='new' ? null : gameId;
         state.view = 'gameDetail';
@@ -3607,7 +3607,7 @@
             markFetched('calendarOccurrenceEdits');
             markFetched('calendarRsvps');
             markFetched('members');
-          }catch(e){}
+          }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: eventDetail', e); }
         }
         if(rest==='new'){
           state.calendarEditingOccurrence = null;
@@ -4948,8 +4948,8 @@
       closeGenericModal();
       try{
         state.currentEveningDetail = await getEveningDetail(detail.id);
-        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){}
-        try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){}
+        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: eveningsIndex', e); }
+        try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: financeArrears', e); }
       }catch(e){ /* Detailansicht rendert notfalls mit dem letzten bekannten Stand weiter */ }
       render();
     });
@@ -4991,8 +4991,8 @@
       closeGenericModal();
       try{
         state.currentEveningDetail = await getEveningDetail(detail.id);
-        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){}
-        try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){}
+        try{ state.eveningsIndex = await getClubJSONOrThrow('evenings-index', []); markFetched('eveningsIndex'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: eveningsIndex', e); }
+        try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: financeArrears', e); }
       }catch(e){ /* Detailansicht rendert notfalls mit dem letzten bekannten Stand weiter */ }
       render();
     });
@@ -6432,7 +6432,7 @@
       nextEventCard.addEventListener('click', async ()=>{
         const occurrence = findOccurrenceByIds(nextEventCard.dataset.seriesId, nextEventCard.dataset.occurrenceDate);
         if(!occurrence) return;
-        try{ state.calendarRsvps = await getAllCalendarRsvps(); markFetched('calendarRsvps'); }catch(e){}
+        try{ state.calendarRsvps = await getAllCalendarRsvps(); markFetched('calendarRsvps'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: calendarRsvps', e); }
         goToEventDetail(occurrence, 'main');
       });
     }
@@ -7391,7 +7391,7 @@
     if(!seriesId || !occurrenceDate) return;
     const occurrence = findOccurrenceByIds(seriesId, occurrenceDate);
     if(!occurrence) return;
-    try{ state.calendarRsvps = await getAllCalendarRsvps(); markFetched('calendarRsvps'); }catch(e){}
+    try{ state.calendarRsvps = await getAllCalendarRsvps(); markFetched('calendarRsvps'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: calendarRsvps', e); }
     goToEventDetail(occurrence, 'main');
   }
 
@@ -8462,7 +8462,7 @@
       state.eveningsIndex = state.eveningsIndex.filter(e=>e.id!==id);
       markFetched('eveningsIndex');
       invalidate('financeArrears');
-      try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){}
+      try{ state.financeArrears = await getAllArrears(); markFetched('financeArrears'); }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: financeArrears', e); }
       state.confirmDeleteEveningId = null;
       goToMain();
     });
