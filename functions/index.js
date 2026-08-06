@@ -385,6 +385,43 @@ async function saveClubEntity(clubRef, collectionName, entry) {
   });
 }
 
+// -------- Pagination & Concurrency-Helper für scheduled Functions (siehe Issue #70) --------
+// Vermeiden unbegrenzte Full-Collection-Scans und rein sequentielle Verarbeitung bei den
+// täglichen/wöchentlichen Jobs, die über alle Clubs (und deren E-Mail-Empfänger) laufen.
+
+const CLUBS_PAGE_SIZE = 300;
+const CLUB_CONCURRENCY = 8;
+const EMAIL_CONCURRENCY = 10;
+
+// Liest die 'clubs'-Collection seitenweise (statt eines unbegrenzten .get()), damit die
+// Lesezeit/Speicherlast nicht unbegrenzt mit der Anzahl an Clubs wächst. Gibt dieselben
+// QueryDocumentSnapshot-Objekte zurück wie ein normales .get() (.id/.data()/.ref nutzbar).
+async function getAllClubDocs() {
+  const docs = [];
+  let lastDoc = null;
+  for (;;) {
+    let query = db.collection('clubs').orderBy('__name__').limit(CLUBS_PAGE_SIZE);
+    if (lastDoc) query = query.startAfter(lastDoc);
+    const snap = await query.get();
+    if (snap.empty) break;
+    docs.push(...snap.docs);
+    if (snap.docs.length < CLUBS_PAGE_SIZE) break;
+    lastDoc = snap.docs[snap.docs.length - 1];
+  }
+  return docs;
+}
+
+// Verarbeitet 'items' in Batches von 'limit' parallel statt streng nacheinander. 'handler' MUSS
+// eigene Fehler abfangen (wie an allen Aufrufstellen üblich) - ein rejectetes Promise würde
+// sonst per Promise.all() den Batch zwar nicht sauber abbrechen, aber zu unbehandelten
+// Rejections der übrigen, noch laufenden Promises führen.
+async function processInBatches(items, limit, handler) {
+  for (let i = 0; i < items.length; i += limit) {
+    const batch = items.slice(i, i + limit);
+    await Promise.all(batch.map(handler));
+  }
+}
+
 // Pflegt den 'arrears/_index' innerhalb eines bereits vorhandenen Batches mit, wenn Einträge
 // gesetzt oder gelöscht werden - arrears folgt demselben "Einzeldokument pro Eintrag + Index"-
 // Muster wie members/events/etc. (siehe loadClubEntityCollection), die Schreibpfade in
@@ -540,7 +577,7 @@ async function handleEveningClosed(clubId, after, docId) {
 
   logger.info(`Sende Strafen-E-Mails für Abend ${docId} an ${recipients.length} Empfänger.`);
 
-  for (const r of recipients) {
+  await processInBatches(recipients, EMAIL_CONCURRENCY, async (r) => {
     const roundedTotal = roundUpToFullEuro(r.total);
     const priorArrears = (after.priorArrearsSnapshot && after.priorArrearsSnapshot[r.name]) || 0;
     const html = buildEmailHtml(r.name, dateStr, r.catalogLines, r.fremdstrafeLines, r.adHocLines, r.total, roundedTotal, priorArrears, paypalName, clubName);
@@ -554,7 +591,7 @@ async function handleEveningClosed(clubId, after, docId) {
     } catch (err) {
       logger.error(`Fehler beim Senden an ${r.email}:`, err);
     }
-  }
+  });
 }
 
 async function handleEveningReopened(clubId, before, docId) {
@@ -570,7 +607,7 @@ async function handleEveningReopened(clubId, before, docId) {
 
   logger.info(`Sende Korrektur-E-Mails (Wiedereröffnung) für Abend ${docId} an ${recipients.length} Empfänger.`);
 
-  for (const r of recipients) {
+  await processInBatches(recipients, EMAIL_CONCURRENCY, async (r) => {
     const html = buildReopenEmailHtml(r.name, dateStr, clubName);
     try {
       await resend.emails.send({
@@ -582,7 +619,7 @@ async function handleEveningReopened(clubId, before, docId) {
     } catch (err) {
       logger.error(`Fehler beim Senden an ${r.email}:`, err);
     }
-  }
+  });
 }
 
 // -------- Kegelabend abschließen (closeEvening) --------
@@ -2128,15 +2165,15 @@ async function processRecurringBookingsForClub(clubId) {
 exports.processRecurringBookings = onSchedule(
   { schedule: '0 0 * * *', timeZone: 'Europe/Berlin' },
   async () => {
-    const clubsSnapshot = await db.collection('clubs').get();
-    for (const clubDoc of clubsSnapshot.docs) {
+    const clubDocs = await getAllClubDocs();
+    await processInBatches(clubDocs, CLUB_CONCURRENCY, async (clubDoc) => {
       try {
         await processRecurringBookingsForClub(clubDoc.id);
       } catch (e) {
         // Ein Fehler in einem Club darf die Verarbeitung der anderen Clubs nicht verhindern.
         logger.error(`Fehler bei processRecurringBookings für Club ${clubDoc.id}:`, e);
       }
-    }
+    });
   }
 );
 
@@ -2168,8 +2205,8 @@ exports.updateSubscriptionAccessStatus = onSchedule(
   { schedule: '30 0 * * *', timeZone: 'Europe/Berlin' },
   async () => {
     const todayStr = getTodayInBerlin();
-    const clubsSnapshot = await db.collection('clubs').get();
-    for (const clubDoc of clubsSnapshot.docs) {
+    const clubDocs = await getAllClubDocs();
+    await processInBatches(clubDocs, CLUB_CONCURRENCY, async (clubDoc) => {
       try {
         const subscription = clubDoc.data().subscription;
         const shouldBlock = await computeAccessBlocked(subscription, todayStr);
@@ -2190,7 +2227,7 @@ exports.updateSubscriptionAccessStatus = onSchedule(
       } catch (e) {
         logger.error(`Fehler bei updateSubscriptionAccessStatus für Club ${clubDoc.id}:`, e);
       }
-    }
+    });
   }
 );
 
@@ -2245,11 +2282,11 @@ async function sendArrearsRemindersForClub(clubId) {
 
   const resend = new Resend(resendApiKey.value());
 
-  for (const entry of entries) {
+  await processInBatches(entries, EMAIL_CONCURRENCY, async (entry) => {
     const member = members.find(m => m.id === entry.memberId);
     if (!member || !member.email) {
       logger.warn(`Club ${clubId}: Rückstands-Reminder für "${entry.name}" übersprungen (keine E-Mail hinterlegt).`);
-      continue;
+      return;
     }
 
     const historySince = extractHistorySinceLastSettled(entry.history);
@@ -2284,21 +2321,21 @@ async function sendArrearsRemindersForClub(clubId) {
     } catch (e) {
       logger.error(`Club ${clubId}: Rückstands-Reminder an ${member.email} fehlgeschlagen:`, e);
     }
-  }
+  });
 }
 
 exports.sendArrearsReminders = onSchedule(
   { schedule: '0 20 * * 0', timeZone: 'Europe/Berlin', secrets: [resendApiKey] },
   async () => {
-    const clubsSnapshot = await db.collection('clubs').get();
-    for (const clubDoc of clubsSnapshot.docs) {
+    const clubDocs = await getAllClubDocs();
+    await processInBatches(clubDocs, CLUB_CONCURRENCY, async (clubDoc) => {
       try {
         await sendArrearsRemindersForClub(clubDoc.id);
       } catch (e) {
         // Ein Fehler in einem Club darf die Verarbeitung der anderen Clubs nicht verhindern.
         logger.error(`Fehler bei sendArrearsReminders für Club ${clubDoc.id}:`, e);
       }
-    }
+    });
   }
 );
 
@@ -2581,10 +2618,10 @@ async function sendRsvpRemindersForClub(clubId) {
 
   const resend = new Resend(resendApiKey.value());
 
-  for (const member of activeMembers) {
-    if (!member.email) continue;
+  await processInBatches(activeMembers, EMAIL_CONCURRENCY, async (member) => {
+    if (!member.email) return;
     const hasRsvp = rsvps.some(r => r.seriesId === nextEvent.seriesId && r.occurrenceDate === nextEvent.occurrenceDate && r.memberId === member.id);
-    if (hasRsvp) continue;
+    if (hasRsvp) return;
 
     const html = buildRsvpReminderHtml(displayName(member), nextEvent.title, dateLabel, timeLabel, deepLinkUrl, clubName);
     try {
@@ -2597,21 +2634,21 @@ async function sendRsvpRemindersForClub(clubId) {
     } catch (e) {
       logger.error(`Club ${clubId}: RSVP-Reminder an ${member.email} fehlgeschlagen:`, e);
     }
-  }
+  });
 }
 
 exports.sendRsvpReminders = onSchedule(
   { schedule: '0 20 * * *', timeZone: 'Europe/Berlin', secrets: [resendApiKey] },
   async () => {
-    const clubsSnapshot = await db.collection('clubs').get();
-    for (const clubDoc of clubsSnapshot.docs) {
+    const clubDocs = await getAllClubDocs();
+    await processInBatches(clubDocs, CLUB_CONCURRENCY, async (clubDoc) => {
       try {
         await sendRsvpRemindersForClub(clubDoc.id);
       } catch (e) {
         // Ein Fehler in einem Club darf die Verarbeitung der anderen Clubs nicht verhindern.
         logger.error(`Fehler bei sendRsvpReminders für Club ${clubDoc.id}:`, e);
       }
-    }
+    });
   }
 );
 
