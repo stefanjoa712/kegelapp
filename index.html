@@ -160,50 +160,43 @@
   }
   .bottom-nav-item svg{width:22px; height:22px; display:block;}
 
-  .update-toast{
-    position:fixed; left:50%; top:0; z-index:1200;
-    transform:translateX(-50%);
-    display:flex; align-items:center; flex-wrap:wrap; gap:4px 12px;
-    width:calc(100% - 24px); max-width:420px;
-    margin-top:calc(12px + env(safe-area-inset-top));
+  /* Bewusst kein Schließen-Button: das Update ist keine beiläufige Meldung, sondern soll die
+     volle Aufmerksamkeit bekommen, bis der Nutzer aktiv "Jetzt aktualisieren" wählt - daher
+     als echtes modales Dialogfenster mit abdunkelndem Hintergrund statt als wegwischbarer
+     Toast (siehe #72-Folgeanpassung). */
+  .update-modal-overlay{
+    position:fixed; inset:0; z-index:1200;
+    display:flex; align-items:center; justify-content:center;
+    padding:calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));
+    box-sizing:border-box;
+    background:rgba(22,22,22,0.6);
+    animation:update-modal-overlay-in 0.25s ease-out;
+  }
+  .update-modal-overlay[hidden]{display:none;}
+  .update-modal{
+    width:100%; max-width:340px;
     background:var(--surface); color:var(--ink);
-    border:2px solid var(--ink); border-radius:14px;
-    padding:13px 38px 13px 13px;
-    box-shadow:5px 5px 0 var(--ink);
-    animation:update-toast-in 0.4s cubic-bezier(.22,1,.36,1);
+    border:2.5px solid var(--ink); border-radius:16px;
+    padding:24px 22px 22px;
+    box-shadow:6px 6px 0 var(--ink);
+    text-align:center;
+    animation:update-modal-in 0.35s cubic-bezier(.22,1,.36,1);
   }
-  .update-toast[hidden]{display:none;}
-  .update-toast-close{
-    position:absolute; top:9px; right:9px;
-    background:none; border:none; padding:4px; margin:-4px;
-    line-height:0; color:var(--muted); cursor:pointer;
-  }
-  .update-toast-close svg{width:16px; height:16px; display:block;}
-  .update-toast-close:hover{color:var(--ink);}
-  .update-toast-icon{
-    flex-shrink:0; width:36px; height:36px; border-radius:10px;
-    background:var(--felt); color:#fff;
+  .update-modal-icon{
+    width:52px; height:52px; margin:0 auto 14px;
+    border-radius:14px; background:var(--felt); color:#fff;
     display:flex; align-items:center; justify-content:center;
   }
-  .update-toast-icon svg{width:19px; height:19px; display:block;}
-  .update-toast-text{flex:1 1 160px; min-width:0;}
-  .update-toast-title{font-family:var(--font-display); font-weight:700; font-size:14.5px; margin:0 0 1px;}
-  .update-toast-sub{font-size:12px; color:var(--ink-soft); margin:0; line-height:1.4;}
-  .update-toast-btn{
-    flex:1 1 100%;
-    background:var(--felt); color:#fff; border:2px solid var(--ink); padding:9px 16px;
-    font-family:var(--font-body); font-weight:800; font-size:13px; border-radius:9px; cursor:pointer;
-    box-shadow:3px 3px 0 var(--ink);
-    transition:transform .08s ease, box-shadow .08s ease, background .15s ease;
-  }
-  .update-toast-btn:hover{background:var(--felt-dark);}
-  .update-toast-btn:active{transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink);}
-  @keyframes update-toast-in{
-    from{ opacity:0; transform:translate(-50%, -16px) scale(0.97); }
-    to{ opacity:1; transform:translate(-50%, 0) scale(1); }
+  .update-modal-icon svg{width:26px; height:26px; display:block;}
+  .update-modal-title{font-family:var(--font-display); font-weight:700; font-size:18px; margin:0 0 6px;}
+  .update-modal-sub{font-size:13.5px; color:var(--ink-soft); margin:0 0 18px; line-height:1.5;}
+  @keyframes update-modal-overlay-in{ from{ opacity:0; } to{ opacity:1; } }
+  @keyframes update-modal-in{
+    from{ opacity:0; transform:scale(0.94) translateY(8px); }
+    to{ opacity:1; transform:scale(1) translateY(0); }
   }
   @media (prefers-reduced-motion: reduce){
-    .update-toast{ animation:none; }
+    .update-modal-overlay, .update-modal{ animation:none; }
   }
   .bottom-nav-item.active{color:var(--felt);}
 
@@ -862,18 +855,15 @@
 </head>
 <body>
 <div id="app"></div>
-<div id="update-banner" class="update-toast" role="status" aria-live="polite" hidden>
-  <button type="button" class="update-toast-close" id="update-banner-dismiss" aria-label="Später erinnern">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
-  </button>
-  <div class="update-toast-icon">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m0 0l4-4m-4 4l-4-4"/><path d="M4 16v2a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-2"/></svg>
+<div id="update-banner" class="update-modal-overlay" role="dialog" aria-modal="true" aria-live="polite" hidden>
+  <div class="update-modal">
+    <div class="update-modal-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m0 0l4-4m-4 4l-4-4"/><path d="M4 16v2a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-2"/></svg>
+    </div>
+    <p class="update-modal-title">Update verfügbar</p>
+    <p class="update-modal-sub">Eine neue Version ist bereit zur Installation.</p>
+    <button type="button" class="btn-primary" id="update-banner-btn">Jetzt aktualisieren</button>
   </div>
-  <div class="update-toast-text">
-    <p class="update-toast-title">Update verfügbar</p>
-    <p class="update-toast-sub">Eine neue Version ist bereit zur Installation.</p>
-  </div>
-  <button type="button" class="update-toast-btn" id="update-banner-btn">Jetzt aktualisieren</button>
 </div>
 <div id="pull-refresh-indicator" class="pull-refresh-indicator">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
@@ -9569,13 +9559,6 @@
     document.getElementById('app').innerHTML = `<div class="boot-loading"><div class="boot-loading-ring"><div class="boot-loading-dot"></div></div></div>`;
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
-    const updateDismissBtn = document.getElementById('update-banner-dismiss');
-    // Versteckt den Hinweis nur optisch wieder - updateAvailable bleibt true, damit checkForUpdate()
-    // nicht erneut nachfragt und der Hinweis nicht wiederholt "aufploppt", solange die Seite offen ist.
-    if(updateDismissBtn) updateDismissBtn.addEventListener('click', ()=>{
-      const banner = document.getElementById('update-banner');
-      if(banner) banner.hidden = true;
-    });
     try{
       // WICHTIG: eveningsIndex wird hier bewusst NICHT aus dem Promise.all-Ergebnis in
       // state.eveningsIndex übernommen (siehe unten). getClubJSONOrThrow() startet parallel zu
