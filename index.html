@@ -959,7 +959,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.58';
+  const APP_VERSION = '1.1.59';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -5090,8 +5090,8 @@
         ${rundenRowsHtml}
       </div>` : ''}
       <div class="card">
-        <div class="stat-total-raw"><span>Gesamt (genau)</span><span>${fmtEuro(total)}</span></div>
-        <div class="stat-total"><span>Gesamt (gerundet)</span><span>${fmtEuro(roundUpToFullEuro(total))}</span></div>
+        <div class="stat-total-raw"><span>Gesamt (genau)</span><span id="fine-total-exact">${fmtEuro(total)}</span></div>
+        <div class="stat-total"><span>Gesamt (gerundet)</span><span id="fine-total-rounded">${fmtEuro(roundUpToFullEuro(total))}</span></div>
       </div>
     `;
   }
@@ -5196,6 +5196,30 @@
     ]);
   }
 
+  // Aktualisiert nach einem +/- Tap gezielt nur die betroffene Zeile (Zähler + Ergebnis-Betrag)
+  // sowie die Gesamt-Summe im DOM, statt wie zuvor die komplette Seite per render() neu
+  // aufzubauen und dabei alle Event-Listener neu zu attachen (siehe Issue #67).
+  function updateFineDetailRowDom(fineId, newCount, fine){
+    const row = document.querySelector(`.fine-detail-row[data-fine-id="${fineId}"]`);
+    if(row){
+      const countEl = row.querySelector('.fine-detail-count');
+      if(countEl) countEl.textContent = `${newCount}×`;
+      const resultEl = row.querySelector('.fine-detail-result');
+      if(resultEl && fine){
+        const isFremd = isFremdstrafeType(fine.type);
+        const isRunde = fine.type==='runde';
+        resultEl.textContent = isFremd ? '' : isRunde ? 'Runde' : fmtEuro(newCount * fine.amount);
+      }
+    }
+    const detail = state.currentEveningDetail;
+    const seatId = state.currentFineSeatId;
+    const total = fineTotalForSeat(detail, seatId);
+    const exactEl = document.getElementById('fine-total-exact');
+    const roundedEl = document.getElementById('fine-total-rounded');
+    if(exactEl) exactEl.textContent = fmtEuro(total);
+    if(roundedEl) roundedEl.textContent = fmtEuro(roundUpToFullEuro(total));
+  }
+
   async function adjustFineCount(fineId, delta){
     const detail = state.currentEveningDetail;
     const seatId = state.currentFineSeatId;
@@ -5214,7 +5238,7 @@
     if(isRoundFine && detail.roundsGivenBySeat && detail.roundsGivenBySeat[seatId] && detail.roundsGivenBySeat[seatId][fineId]){
       detail.roundsGivenBySeat[seatId][fineId] = detail.roundsGivenBySeat[seatId][fineId].filter(i=>i<newCount);
     }
-    render();
+    updateFineDetailRowDom(fineId, newCount, fine);
     await saveEveningSeatFinesAndIndex(detail, seatId);
   }
 
