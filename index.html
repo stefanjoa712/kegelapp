@@ -991,7 +991,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.63';
+  const APP_VERSION = '1.1.64';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -8549,23 +8549,42 @@
         row.style.top=rect.top+'px';
         row.style.pointerEvents='none';
 
+        let siblings = cacheSiblingRects();
+        function cacheSiblingRects(){
+          return Array.from(container.querySelectorAll('.draggable-row:not(.dragging)')).map(sib=>({ el: sib, rect: sib.getBoundingClientRect() }));
+        }
+
+        let rafId = null;
+        let lastClientY = startY;
         function onMove(ev){
-          row.style.top = (rect.top + (ev.clientY-startY)) + 'px';
-          const siblings = Array.from(container.querySelectorAll('.draggable-row:not(.dragging)'));
-          let placed = false;
-          for(const sib of siblings){
-            const sRect = sib.getBoundingClientRect();
-            if(ev.clientY < sRect.top + sRect.height/2){
-              container.insertBefore(placeholder, sib);
-              placed = true;
-              break;
+          lastClientY = ev.clientY;
+          if(rafId !== null) return;
+          rafId = requestAnimationFrame(()=>{
+            rafId = null;
+            row.style.top = (rect.top + (lastClientY-startY)) + 'px';
+            let target = null;
+            for(const sib of siblings){
+              if(lastClientY < sib.rect.top + sib.rect.height/2){
+                target = sib.el;
+                break;
+              }
             }
-          }
-          if(!placed) container.appendChild(placeholder);
+            const currentNext = placeholder.nextElementSibling;
+            if(target){
+              if(currentNext !== target){
+                container.insertBefore(placeholder, target);
+                siblings = cacheSiblingRects();
+              }
+            }else if(currentNext !== null){
+              container.appendChild(placeholder);
+              siblings = cacheSiblingRects();
+            }
+          });
         }
         function onUp(){
           document.removeEventListener('pointermove', onMove);
           document.removeEventListener('pointerup', onUp);
+          if(rafId !== null){ cancelAnimationFrame(rafId); rafId = null; }
           row.style.position=''; row.style.zIndex=''; row.style.width=''; row.style.left=''; row.style.top=''; row.style.pointerEvents='';
           row.classList.remove('dragging');
           placeholder.replaceWith(row);
