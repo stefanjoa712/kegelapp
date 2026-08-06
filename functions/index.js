@@ -54,43 +54,81 @@ function isFremdstrafeType(type) {
   return type === 'fremdstrafe' || type === 'fremdstrafe_runde';
 }
 
-// Gesamtbetrag für einen Sitzplatz - inkl. Geldstrafen und umgelegter Fremdstrafen anderer.
-function fineTotalForSeat(detail, seatId) {
-  const seat = detail.seating.find(s => s.seatId === seatId);
-  if (seat && seat.invalid) {
-    if (seat.invalidAmount !== undefined) return seat.invalidAmount;
-    // Dynamisch berechnet (sollte nach Abschluss nicht mehr vorkommen)
-    const validTotals = detail.seating
-      .filter(s => s.name && !s.invalid && s.seatId !== seatId)
-      .map(s => roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
-    return validTotals.length > 0 ? roundUpToFullEuro(validTotals.reduce((a, b) => a + b, 0) / validTotals.length) : 0;
-  }
+// Fremdstrafen-Anteil (inkl. "Fremdstrafe + Runde") EINES Sitzes: Summe aus count*amount über alle
+// Fremdstrafen-Katalogeinträge. Wird sowohl für den Pool-Total (alle Sitze) als auch für den
+// Eigenanteil-Abzug (ein Sitz) verwendet, siehe computeFineTotalsForAllSeats().
+function fremdstrafeAmountForSeat(detail, seatId, fremdstrafeFines) {
   const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
+  let amount = 0;
+  fremdstrafeFines.forEach(f => { amount += (entries[f.id] || 0) * f.amount; });
+  return amount;
+}
+
+// Berechnet die (UNGERUNDETEN) Strafen-Totale für ALLE Sitze eines Abends in einem einzigen
+// Durchlauf (siehe Issue #69: vorher wurde pro Sitz einzeln neu gerechnet - inkl. eines pro Sitz
+// verschachtelten Sitz×Sitz-Scans für die Fremdstrafen-Umlage, zusammen O(Sitze²) sobald man über
+// alle Sitze eines Abends iteriert, z.B. beim Mailversand oder der Rückstands-Buchung). Der
+// Fremdstrafen-Anteil ("wer eine Fremdstrafe auslöst zahlt selbst nichts, alle anderen Anwesenden
+// zahlen") wird stattdessen einmal als Gesamtsumme aggregiert - der Anteil eines einzelnen Sitzes
+// ist dann einfach "Gesamtsumme minus eigener Anteil". Rückgabe ist ein Objekt seatId -> Total,
+// exakte Entsprechung der früheren fineTotalForSeat(detail, seatId) je Sitz (inkl. bereits
+// gerundeter Invaliden-Durchschnitte). Für Einzel-Abfragen (ein Sitz) ist der Aufwand identisch zu
+// vorher (O(Sitze)); der eigentliche Gewinn entsteht, wenn dieselbe Berechnung für mehrere/alle
+// Sitze eines Abends gebraucht wird.
+function computeFineTotalsForAllSeats(detail) {
   const catalog = detail.finesCatalogSnapshot || [];
-  let total = 0;
-
-  catalog.forEach(f => {
-    if (isFremdstrafeType(f.type)) return;
-    if (f.type === 'runde') return; // Runden haben keinen Euro-Betrag
-    const count = entries[f.id] || 0;
-    total += count * f.amount;
-  });
-
-  const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
-  adHocList.forEach(a => { total += a.amount; });
-
   const fremdstrafeFines = catalog.filter(f => isFremdstrafeType(f.type));
+
+  const fremdstrafeAmountBySeat = {};
+  let fremdstrafePoolTotal = 0;
   if (fremdstrafeFines.length > 0) {
-    const otherPresentSeats = detail.seating.filter(s => s.name && s.seatId !== seatId);
-    fremdstrafeFines.forEach(f => {
-      otherPresentSeats.forEach(s => {
-        const otherEntries = (detail.finesBySeat && detail.finesBySeat[s.seatId]) || {};
-        const count = otherEntries[f.id] || 0;
-        total += count * f.amount;
-      });
+    detail.seating.forEach(s => {
+      if (!s.name) return;
+      const amount = fremdstrafeAmountForSeat(detail, s.seatId, fremdstrafeFines);
+      fremdstrafeAmountBySeat[s.seatId] = amount;
+      fremdstrafePoolTotal += amount;
     });
   }
-  return total;
+
+  const totals = {};
+  detail.seating.forEach(seat => {
+    if (seat.invalid) return; // unten aufgelöst - hängt vom (gerundeten) Durchschnitt der gültigen Sitze ab
+    const seatId = seat.seatId;
+    const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
+    let total = 0;
+    catalog.forEach(f => {
+      if (isFremdstrafeType(f.type)) return;
+      if (f.type === 'runde') return; // Runden haben keinen Euro-Betrag
+      total += (entries[f.id] || 0) * f.amount;
+    });
+    const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
+    adHocList.forEach(a => { total += a.amount; });
+    if (fremdstrafeFines.length > 0) {
+      total += fremdstrafePoolTotal - (fremdstrafeAmountBySeat[seatId] || 0);
+    }
+    totals[seatId] = total;
+  });
+
+  // Invalide Sitze: fest hinterlegter Betrag oder Durchschnitt der gültigen, anwesenden Sitze
+  // (deren Totale oben bereits berechnet wurden).
+  detail.seating.forEach(seat => {
+    if (!seat.invalid) return;
+    const seatId = seat.seatId;
+    if (seat.invalidAmount !== undefined) { totals[seatId] = seat.invalidAmount; return; }
+    const validTotals = detail.seating
+      .filter(s => s.name && !s.invalid && s.seatId !== seatId)
+      .map(s => roundUpToFullEuro(totals[s.seatId] || 0));
+    totals[seatId] = validTotals.length > 0 ? roundUpToFullEuro(validTotals.reduce((a, b) => a + b, 0) / validTotals.length) : 0;
+  });
+
+  return totals;
+}
+
+// Gesamtbetrag für einen EINZELNEN Sitzplatz - inkl. Geldstrafen und umgelegter Fremdstrafen
+// anderer. Für Aufrufe über mehrere Sitze desselben Abends computeFineTotalsForAllSeats()
+// verwenden statt diese Funktion in einer Schleife aufzurufen (siehe #69).
+function fineTotalForSeat(detail, seatId) {
+  return computeFineTotalsForAllSeats(detail)[seatId] || 0;
 }
 
 // Drei Bereiche - exakt wie auf der Strafenseite pro Person in der App.
@@ -458,12 +496,13 @@ async function handleEveningClosed(clubId, after, docId) {
   const recipients = [];
 
   const presentSeats = after.seating.filter(s => s.name && !s.isGuest);
+  const fineTotals = computeFineTotalsForAllSeats(after);
   presentSeats.forEach(s => {
     const member = members.find(m => m.id === s.memberId);
     if (member && member.email) {
       if (s.invalid) {
         // Invalide: alle gepflegten Strafen ignorieren, nur der Durchschnittsbetrag zählt.
-        const avgAmount = s.invalidAmount !== undefined ? s.invalidAmount : fineTotalForSeat(after, s.seatId);
+        const avgAmount = s.invalidAmount !== undefined ? s.invalidAmount : (fineTotals[s.seatId] || 0);
         recipients.push({
           email: member.email,
           name: s.name,
@@ -479,7 +518,7 @@ async function handleEveningClosed(clubId, after, docId) {
           catalogLines: buildCatalogLines(after, s.seatId),
           fremdstrafeLines: buildFremdstrafeChargeLines(after, s.seatId),
           adHocLines: buildAdHocLines(after, s.seatId),
-          total: fineTotalForSeat(after, s.seatId),
+          total: fineTotals[s.seatId] || 0,
         });
       }
     }
@@ -557,9 +596,10 @@ async function handleEveningReopened(clubId, before, docId) {
 // Pool für Durchschnittsberechnungen: anwesende, gültige (nicht invalide) Mitglieder - ohne Gäste.
 // Identisch zur Client-Funktion gleichen Namens.
 function validPresentMemberTotals(detail, excludeSeatId) {
+  const fineTotals = computeFineTotalsForAllSeats(detail);
   return detail.seating
     .filter(s => s.name && !s.invalid && s.seatId !== excludeSeatId)
-    .map(s => roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
+    .map(s => roundUpToFullEuro(fineTotals[s.seatId] || 0));
 }
 function averageOfTotalsRounded(totals) {
   if (totals.length === 0) return 0;
@@ -575,8 +615,9 @@ function computeEveningSummaryFields(detail, memberCount) {
   const guestCount = occupied.filter(s => s.isGuest).length;
   const absentList = detail.closed ? (detail.absentMembersFines || []) : [];
   const absentCount = detail.closed ? absentList.length : Math.max(0, memberCount - presentCount);
+  const fineTotals = computeFineTotalsForAllSeats(detail);
   let income = 0;
-  occupied.forEach(s => { income += roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)); });
+  occupied.forEach(s => { income += roundUpToFullEuro(fineTotals[s.seatId] || 0); });
   absentList.forEach(a => { income += a.amount; });
   return { presentCount, guestCount, absentCount, income };
 }
@@ -722,8 +763,9 @@ exports.closeEvening = onCall({}, async (request) => {
     });
     if (!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
   }
+  const arrearsFineTotals = computeFineTotalsForAllSeats(detail);
   detail.seating.filter(s => s.name).forEach(s => {
-    addToArrears(s.name, s.memberId, roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)), s.seatId);
+    addToArrears(s.name, s.memberId, roundUpToFullEuro(arrearsFineTotals[s.seatId] || 0), s.seatId);
   });
   detail.absentMembersFines.forEach(a => { addToArrears(a.name, a.memberId, a.amount); });
 
@@ -819,8 +861,9 @@ function reverseArrearsForEveningServer(detail, arrears, members, noteText) {
     });
     if (!touchedArrearsEntries.includes(entry)) touchedArrearsEntries.push(entry);
   }
+  const reverseFineTotals = computeFineTotalsForAllSeats(detail);
   detail.seating.filter(s => s.name).forEach(s => {
-    subtractFromArrears(s.name, s.memberId, roundUpToFullEuro(fineTotalForSeat(detail, s.seatId)));
+    subtractFromArrears(s.name, s.memberId, roundUpToFullEuro(reverseFineTotals[s.seatId] || 0));
   });
   (detail.absentMembersFines || []).forEach(a => { subtractFromArrears(a.name, a.memberId, a.amount); });
   return touchedArrearsEntries;
