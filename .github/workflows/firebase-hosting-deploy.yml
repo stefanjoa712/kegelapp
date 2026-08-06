@@ -10,6 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Generiert version.json aus der APP_VERSION-Konstante in index.html, damit der schlanke
+      # Update-Check (siehe checkForUpdate() in index.html, #72) nie von der tatsächlich
+      # deployten Version abweicht - ohne diesen Schritt müsste APP_VERSION bei jedem Release
+      # manuell zusätzlich in version.json gepflegt werden.
+      - name: Generate version.json from APP_VERSION
+        run: |
+          VERSION=$(grep -oP "APP_VERSION\s*=\s*'\K[^']+" index.html)
+          if [ -z "$VERSION" ]; then
+            echo "Konnte APP_VERSION nicht aus index.html extrahieren" >&2
+            exit 1
+          fi
+          printf '{"version":"%s"}\n' "$VERSION" > version.json
+          cat version.json
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'

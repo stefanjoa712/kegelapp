@@ -160,17 +160,50 @@
   }
   .bottom-nav-item svg{width:22px; height:22px; display:block;}
 
-  .update-banner{
-    position:fixed; top:0; left:0; right:0; z-index:1100;
-    display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap;
-    background:var(--felt); color:#fff; padding:10px 16px;
-    padding-top:calc(10px + env(safe-area-inset-top));
-    font-size:14px; font-weight:700;
+  .update-toast{
+    position:fixed; left:50%; top:0; z-index:1200;
+    transform:translateX(-50%);
+    display:flex; align-items:center; flex-wrap:wrap; gap:4px 12px;
+    width:calc(100% - 24px); max-width:420px;
+    margin-top:calc(12px + env(safe-area-inset-top));
+    background:var(--surface); color:var(--ink);
+    border:2px solid var(--ink); border-radius:14px;
+    padding:13px 38px 13px 13px;
+    box-shadow:5px 5px 0 var(--ink);
+    animation:update-toast-in 0.4s cubic-bezier(.22,1,.36,1);
   }
-  .update-banner[hidden]{display:none;}
-  .update-banner button{
-    background:#fff; color:var(--felt-dark); border:none; padding:6px 14px; border-radius:6px;
-    font-weight:800; font-size:13px; cursor:pointer;
+  .update-toast[hidden]{display:none;}
+  .update-toast-close{
+    position:absolute; top:9px; right:9px;
+    background:none; border:none; padding:4px; margin:-4px;
+    line-height:0; color:var(--muted); cursor:pointer;
+  }
+  .update-toast-close svg{width:16px; height:16px; display:block;}
+  .update-toast-close:hover{color:var(--ink);}
+  .update-toast-icon{
+    flex-shrink:0; width:36px; height:36px; border-radius:10px;
+    background:var(--felt); color:#fff;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .update-toast-icon svg{width:19px; height:19px; display:block;}
+  .update-toast-text{flex:1 1 160px; min-width:0;}
+  .update-toast-title{font-family:var(--font-display); font-weight:700; font-size:14.5px; margin:0 0 1px;}
+  .update-toast-sub{font-size:12px; color:var(--ink-soft); margin:0; line-height:1.4;}
+  .update-toast-btn{
+    flex:1 1 100%;
+    background:var(--felt); color:#fff; border:2px solid var(--ink); padding:9px 16px;
+    font-family:var(--font-body); font-weight:800; font-size:13px; border-radius:9px; cursor:pointer;
+    box-shadow:3px 3px 0 var(--ink);
+    transition:transform .08s ease, box-shadow .08s ease, background .15s ease;
+  }
+  .update-toast-btn:hover{background:var(--felt-dark);}
+  .update-toast-btn:active{transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink);}
+  @keyframes update-toast-in{
+    from{ opacity:0; transform:translate(-50%, -16px) scale(0.97); }
+    to{ opacity:1; transform:translate(-50%, 0) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .update-toast{ animation:none; }
   }
   .bottom-nav-item.active{color:var(--felt);}
 
@@ -829,9 +862,18 @@
 </head>
 <body>
 <div id="app"></div>
-<div id="update-banner" class="update-banner" hidden>
-  <span>Neue Version verfügbar</span>
-  <button type="button" id="update-banner-btn">Jetzt aktualisieren</button>
+<div id="update-banner" class="update-toast" role="status" aria-live="polite" hidden>
+  <button type="button" class="update-toast-close" id="update-banner-dismiss" aria-label="Später erinnern">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+  <div class="update-toast-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m0 0l4-4m-4 4l-4-4"/><path d="M4 16v2a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-2"/></svg>
+  </div>
+  <div class="update-toast-text">
+    <p class="update-toast-title">Update verfügbar</p>
+    <p class="update-toast-sub">Eine neue Version ist bereit zur Installation.</p>
+  </div>
+  <button type="button" class="update-toast-btn" id="update-banner-btn">Jetzt aktualisieren</button>
 </div>
 <div id="pull-refresh-indicator" class="pull-refresh-indicator">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
@@ -959,7 +1001,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.62';
+  const APP_VERSION = '1.1.63';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -9255,15 +9297,18 @@
   // ---------- Update-Prüfung ----------
   // Löst gezielt das iOS-Problem, dass zum Home-Bildschirm hinzugefügte Seiten neue
   // Versionen nicht automatisch bemerken: aktiv beim Server nachfragen und den Nutzer informieren.
+  // Fragt bewusst nur die schlanke version.json ab statt der kompletten (mehrere tausend Zeilen
+  // langen) index.html - die wird per Timer und bei mehreren Browser-Events wiederholt aufgerufen,
+  // ein voller HTML-Download wäre unnötig Bandbreite/Akku (siehe #72). version.json wird beim
+  // Deploy automatisch aus APP_VERSION generiert (siehe .github/workflows/firebase-hosting-deploy.yml).
   let updateAvailable = false;
   async function checkForUpdate(){
     if(updateAvailable) return;
     try{
-      const res = await fetch(location.pathname + '?_v=' + Date.now(), { cache: 'no-store' });
+      const res = await fetch('/version.json?_v=' + Date.now(), { cache: 'no-store' });
       if(!res.ok) return;
-      const html = await res.text();
-      const match = html.match(/APP_VERSION\s*=\s*'([^']+)'/);
-      if(match && match[1] !== APP_VERSION){
+      const data = await res.json();
+      if(data && data.version && data.version !== APP_VERSION){
         updateAvailable = true;
         const banner = document.getElementById('update-banner');
         if(banner) banner.hidden = false;
@@ -9524,6 +9569,13 @@
     document.getElementById('app').innerHTML = `<div class="boot-loading"><div class="boot-loading-ring"><div class="boot-loading-dot"></div></div></div>`;
     const updateBtn = document.getElementById('update-banner-btn');
     if(updateBtn) updateBtn.addEventListener('click', ()=>{ location.reload(); });
+    const updateDismissBtn = document.getElementById('update-banner-dismiss');
+    // Versteckt den Hinweis nur optisch wieder - updateAvailable bleibt true, damit checkForUpdate()
+    // nicht erneut nachfragt und der Hinweis nicht wiederholt "aufploppt", solange die Seite offen ist.
+    if(updateDismissBtn) updateDismissBtn.addEventListener('click', ()=>{
+      const banner = document.getElementById('update-banner');
+      if(banner) banner.hidden = true;
+    });
     try{
       // WICHTIG: eveningsIndex wird hier bewusst NICHT aus dem Promise.all-Ergebnis in
       // state.eveningsIndex übernommen (siehe unten). getClubJSONOrThrow() startet parallel zu
