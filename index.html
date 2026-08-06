@@ -160,17 +160,43 @@
   }
   .bottom-nav-item svg{width:22px; height:22px; display:block;}
 
-  .update-banner{
-    position:fixed; top:0; left:0; right:0; z-index:1100;
-    display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap;
-    background:var(--felt); color:#fff; padding:10px 16px;
-    padding-top:calc(10px + env(safe-area-inset-top));
-    font-size:14px; font-weight:700;
+  /* Bewusst kein Schließen-Button: das Update ist keine beiläufige Meldung, sondern soll die
+     volle Aufmerksamkeit bekommen, bis der Nutzer aktiv "Jetzt aktualisieren" wählt - daher
+     als echtes modales Dialogfenster mit abdunkelndem Hintergrund statt als wegwischbarer
+     Toast (siehe #72-Folgeanpassung). */
+  .update-modal-overlay{
+    position:fixed; inset:0; z-index:1200;
+    display:flex; align-items:center; justify-content:center;
+    padding:calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));
+    box-sizing:border-box;
+    background:rgba(22,22,22,0.6);
+    animation:update-modal-overlay-in 0.25s ease-out;
   }
-  .update-banner[hidden]{display:none;}
-  .update-banner button{
-    background:#fff; color:var(--felt-dark); border:none; padding:6px 14px; border-radius:6px;
-    font-weight:800; font-size:13px; cursor:pointer;
+  .update-modal-overlay[hidden]{display:none;}
+  .update-modal{
+    width:100%; max-width:340px;
+    background:var(--surface); color:var(--ink);
+    border:2.5px solid var(--ink); border-radius:16px;
+    padding:24px 22px 22px;
+    box-shadow:6px 6px 0 var(--ink);
+    text-align:center;
+    animation:update-modal-in 0.35s cubic-bezier(.22,1,.36,1);
+  }
+  .update-modal-icon{
+    width:52px; height:52px; margin:0 auto 14px;
+    border-radius:14px; background:var(--felt); color:#fff;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .update-modal-icon svg{width:26px; height:26px; display:block;}
+  .update-modal-title{font-family:var(--font-display); font-weight:700; font-size:18px; margin:0 0 6px;}
+  .update-modal-sub{font-size:13.5px; color:var(--ink-soft); margin:0 0 18px; line-height:1.5;}
+  @keyframes update-modal-overlay-in{ from{ opacity:0; } to{ opacity:1; } }
+  @keyframes update-modal-in{
+    from{ opacity:0; transform:scale(0.94) translateY(8px); }
+    to{ opacity:1; transform:scale(1) translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .update-modal-overlay, .update-modal{ animation:none; }
   }
   .bottom-nav-item.active{color:var(--felt);}
 
@@ -829,9 +855,15 @@
 </head>
 <body>
 <div id="app"></div>
-<div id="update-banner" class="update-banner" hidden>
-  <span>Neue Version verfügbar</span>
-  <button type="button" id="update-banner-btn">Jetzt aktualisieren</button>
+<div id="update-banner" class="update-modal-overlay" role="dialog" aria-modal="true" aria-live="polite" hidden>
+  <div class="update-modal">
+    <div class="update-modal-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m0 0l4-4m-4 4l-4-4"/><path d="M4 16v2a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-2"/></svg>
+    </div>
+    <p class="update-modal-title">Update verfügbar</p>
+    <p class="update-modal-sub">Eine neue Version ist bereit zur Installation.</p>
+    <button type="button" class="btn-primary" id="update-banner-btn">Jetzt aktualisieren</button>
+  </div>
 </div>
 <div id="pull-refresh-indicator" class="pull-refresh-indicator">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
@@ -959,7 +991,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.62';
+  const APP_VERSION = '1.1.63';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -9255,15 +9287,18 @@
   // ---------- Update-Prüfung ----------
   // Löst gezielt das iOS-Problem, dass zum Home-Bildschirm hinzugefügte Seiten neue
   // Versionen nicht automatisch bemerken: aktiv beim Server nachfragen und den Nutzer informieren.
+  // Fragt bewusst nur die schlanke version.json ab statt der kompletten (mehrere tausend Zeilen
+  // langen) index.html - die wird per Timer und bei mehreren Browser-Events wiederholt aufgerufen,
+  // ein voller HTML-Download wäre unnötig Bandbreite/Akku (siehe #72). version.json wird beim
+  // Deploy automatisch aus APP_VERSION generiert (siehe .github/workflows/firebase-hosting-deploy.yml).
   let updateAvailable = false;
   async function checkForUpdate(){
     if(updateAvailable) return;
     try{
-      const res = await fetch(location.pathname + '?_v=' + Date.now(), { cache: 'no-store' });
+      const res = await fetch('/version.json?_v=' + Date.now(), { cache: 'no-store' });
       if(!res.ok) return;
-      const html = await res.text();
-      const match = html.match(/APP_VERSION\s*=\s*'([^']+)'/);
-      if(match && match[1] !== APP_VERSION){
+      const data = await res.json();
+      if(data && data.version && data.version !== APP_VERSION){
         updateAvailable = true;
         const banner = document.getElementById('update-banner');
         if(banner) banner.hidden = false;
