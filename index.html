@@ -544,6 +544,14 @@
   .game-score-status.done{color:var(--wine);}
   .fine-type-icon{width:22px; height:22px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
   .fine-type-icon svg{width:16px; height:16px; display:block;}
+  .finance-account-icon{width:22px; height:22px; flex-shrink:0; color:var(--brass); display:flex; align-items:center; justify-content:center;}
+  .finance-account-icon svg{width:16px; height:16px; display:block;}
+  .finance-account-icon-inline{display:inline-flex; align-items:center; justify-content:center; width:13px; height:13px; vertical-align:-2px; margin-right:3px;}
+  .finance-account-icon-inline svg{width:100%; height:100%; display:block;}
+  .finance-icon-picker{display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 16px;}
+  .finance-icon-chip{display:inline-flex; align-items:center; gap:6px; padding:8px 13px; border-radius:999px; border:2px solid var(--ink); background:var(--surface); color:var(--ink); font-family:var(--font-body); font-weight:700; font-size:13px; cursor:pointer;}
+  .finance-icon-chip svg{width:16px; height:16px; display:block; flex-shrink:0;}
+  .finance-icon-chip.active{background:var(--wood); border-color:var(--wood); color:#fff;}
   .fine-row-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .fine-row-amount{font-family:var(--font-mono); font-weight:700; color:var(--ink-soft); white-space:nowrap;}
   .member-row:last-child{border-bottom:none;}
@@ -929,7 +937,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.56';
+  const APP_VERSION = '1.1.57';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2652,6 +2660,7 @@
         <span class="drag-handle" aria-label="Verschieben">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
         </span>
+        <span class="finance-account-icon">${financeAccountIconSvg(acc)}</span>
         <span class="fine-row-name">${escapeHtml(acc.name)}</span>
       </span>
       <span class="row-actions">
@@ -2727,6 +2736,15 @@
         ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart, Admin oder Präsident können die Finanzverwaltung bearbeiten.</p>` : ''}
         <label for="finance-acc-name">Bezeichnung</label>
         <input type="text" id="finance-acc-name" placeholder="z. B. Vereinskasse" value="${isEdit?escapeHtml(acc.name):''}"${readOnly?' disabled':''}>
+        <label>Icon</label>
+        <div class="finance-icon-picker" id="finance-acc-icon-picker">
+          ${Object.keys(FINANCE_ACCOUNT_ICONS).map(key=>{
+            const def = FINANCE_ACCOUNT_ICONS[key];
+            const active = isEdit && acc.icon===key;
+            return `<button type="button" class="finance-icon-chip${active?' active':''}" data-icon="${key}"${readOnly?' disabled':''}>${def.svg}<span>${def.label}</span></button>`;
+          }).join('')}
+        </div>
+        <p class="hint" style="margin-top:-10px;">Ohne Auswahl wird das €-Symbol angezeigt.</p>
         <label for="finance-acc-balance">Start-Kontostand (€)</label>
         <input type="number" id="finance-acc-balance" min="0" step="0.01" placeholder="0,00"
           value="${isEdit?acc.startBalance.toFixed(2):''}"${(isEdit||readOnly)?' readonly disabled':''}>
@@ -2748,6 +2766,20 @@
   // gängige Subscription-Seiten (App Store, Spotify: Preis groß, Haken-Liste darunter).
   const ICON_CHECK_SMALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
   const ICON_INFO_SMALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>`;
+
+  // Konto-Icons (Finanzverwaltung): frei wählbares Symbol je Konto/Kasse (statt Farbpunkt),
+  // sichtbar in der Kontoverwaltung, der Umsätze-Liste und der Konten-Aufteilung. Ist für ein
+  // Konto kein Icon gesetzt (z.B. bei Altbeständen), greift ICON_ACCOUNT_EURO als Fallback -
+  // siehe financeAccountIconSvg().
+  const ICON_ACCOUNT_BANK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6"/><path d="M4 10v10M9 10v10M15 10v10M20 10v10"/><path d="M2 20h20"/></svg>`;
+  const ICON_ACCOUNT_PAYPAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4h6a4 4 0 0 1 0 8H9l-1.5 9"/><path d="M10 8h6a4 4 0 0 1 0 8h-4.5"/></svg>`;
+  const ICON_ACCOUNT_CASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/></svg>`;
+  const ICON_ACCOUNT_EURO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7a6.5 6.5 0 1 0 0 10"/><path d="M4 10h9M4 14h7"/></svg>`;
+  const FINANCE_ACCOUNT_ICONS = {
+    bank: { label:'Konto', svg: ICON_ACCOUNT_BANK },
+    paypal: { label:'PayPal', svg: ICON_ACCOUNT_PAYPAL },
+    cash: { label:'Bargeld', svg: ICON_ACCOUNT_CASH }
+  };
 
   // Formatiert das Abo eines Clubs für die kompakte Statusanzeige in der Clubverwaltung (Plan-
   // Badge + Zusatztext, farblich je Plan unterschieden). Reine Anzeige/Tracking - KEINE
@@ -3046,7 +3078,7 @@
       <div class="member-row">
         <span class="transaction-info">
           <span class="transaction-description">${escapeHtml(r.description)}</span>
-          <span class="transaction-meta">Nächste Ausführung: ${formatDateDE(r.nextDate)} · ${escapeHtml(financeAccountNameById(r.accountId))}${potName?` · Spartopf: ${escapeHtml(potName.name)}`:''}</span>
+          <span class="transaction-meta">Nächste Ausführung: ${formatDateDE(r.nextDate)} · ${financeAccountIconHtmlById(r.accountId)}${escapeHtml(financeAccountNameById(r.accountId))}${potName?` · Spartopf: ${escapeHtml(potName.name)}`:''}</span>
         </span>
         <span class="row-actions">
           <span class="fine-row-amount ${isPositive?'':'amount-due'}">${isPositive?'+':''}${fmtEuro(r.amount)}</span>
@@ -3059,6 +3091,18 @@
   function financeAccountNameById(accountId){
     const acc = state.financeAccounts.find(a=>a.id===accountId);
     return acc ? acc.name : 'Unbekanntes Konto';
+  }
+
+  // Liefert das SVG-Markup für das Konto-Icon; fällt auf das €-Icon zurück, wenn dem Konto
+  // kein Icon zugewiesen wurde (siehe FINANCE_ACCOUNT_ICONS).
+  function financeAccountIconSvg(acc){
+    const def = acc && FINANCE_ACCOUNT_ICONS[acc.icon];
+    return def ? def.svg : ICON_ACCOUNT_EURO;
+  }
+
+  function financeAccountIconHtmlById(accountId){
+    const acc = state.financeAccounts.find(a=>a.id===accountId);
+    return `<span class="finance-account-icon-inline">${financeAccountIconSvg(acc)}</span>`;
   }
 
   function financeAccountBalance(accountId){
@@ -3094,7 +3138,7 @@
           <div class="transaction-row" data-id="${t.id}">
             <span class="transaction-info">
               <span class="transaction-description">${escapeHtml(t.description)}${locked?' <span class="fine-type-icon" title="Aus Rückstandszahlung – nur Bezeichnung bearbeitbar" style="display:inline-flex; width:14px; height:14px; vertical-align:middle;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>':''}</span>
-              <span class="transaction-meta">${formatDateDE(t.date)} · ${escapeHtml(financeAccountNameById(t.accountId))}</span>
+              <span class="transaction-meta">${formatDateDE(t.date)} · ${financeAccountIconHtmlById(t.accountId)}${escapeHtml(financeAccountNameById(t.accountId))}</span>
             </span>
             <span class="transaction-amount${isPositive?' positive':' negative'}">${isPositive?'+':''}${fmtEuro(t.amount)}</span>
           </div>
@@ -3413,7 +3457,7 @@
   function showFinanceBreakdownModal(){
     const rowsHtml = state.financeAccounts.map(a=>`
       <div class="fines-summary-row not-clickable">
-        <span class="fines-summary-name">${escapeHtml(a.name)}</span>
+        <span class="fines-summary-name">${financeAccountIconHtmlById(a.id)}${escapeHtml(a.name)}</span>
         <span class="fines-summary-amount">${fmtEuro(financeAccountBalance(a.id))}</span>
       </div>
     `).join('');
@@ -6936,18 +6980,32 @@
       if(acc) showDeleteFinanceAccountModal(acc);
     });
 
+    const iconPicker = document.getElementById('finance-acc-icon-picker');
+    if(iconPicker){
+      // Klick auf ein bereits aktives Icon hebt die Auswahl wieder auf (-> €-Fallback greift).
+      iconPicker.querySelectorAll('.finance-icon-chip').forEach(chip=>{
+        chip.addEventListener('click', ()=>{
+          const wasActive = chip.classList.contains('active');
+          iconPicker.querySelectorAll('.finance-icon-chip').forEach(c=>c.classList.remove('active'));
+          if(!wasActive) chip.classList.add('active');
+        });
+      });
+    }
+
     const saveBtn = document.getElementById('save-finance-acc-detail-btn');
     if(!saveBtn) return;
     saveBtn.addEventListener('click', async ()=>{
       const errEl = document.getElementById('finance-acc-detail-error');
       const name = document.getElementById('finance-acc-name').value.trim();
       if(!name){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+      const activeChip = iconPicker ? iconPicker.querySelector('.finance-icon-chip.active') : null;
+      const icon = activeChip ? activeChip.dataset.icon : null;
 
       saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
 
       if(isEdit){
         const a = state.financeAccounts.find(x=>x.id===acc.id);
-        if(a){ a.name=name; }
+        if(a){ a.name=name; a.icon=icon; }
       }else{
         const balanceRaw = document.getElementById('finance-acc-balance').value.replace(',', '.');
         const startBalance = parseFloat(balanceRaw);
@@ -6956,7 +7014,7 @@
           saveBtn.disabled = false; saveBtn.textContent = 'Hinzufügen';
           return;
         }
-        state.financeAccounts.push({id:uid('acc'), name, startBalance: Math.round(startBalance*100)/100});
+        state.financeAccounts.push({id:uid('acc'), name, startBalance: Math.round(startBalance*100)/100, icon});
       }
       await setClubJSON('finance-accounts', state.financeAccounts);
       goToFinanceManagement();
