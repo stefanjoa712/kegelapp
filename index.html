@@ -927,7 +927,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.54';
+  const APP_VERSION = '1.1.55';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1139,6 +1139,10 @@
     financeTransactions:[],
     financeArrears:[],
     financeTab:'umsaetze',
+    // Sortierung der Rückstände-Liste ('amount' = Betrag absteigend, 'alpha' = alphabetisch).
+    // Wird dauerhaft in localStorage gemerkt (siehe toggleFinanceArrearsSortMode()), damit die
+    // Präferenz des Kassenwarts über Sitzungen hinweg erhalten bleibt.
+    financeArrearsSortMode: localStorage.getItem('financeArrearsSortMode') || 'amount',
     currentArrearsName:'',
     currentArrearsMemberId:null,
     currentTransactionId:null,
@@ -3107,6 +3111,14 @@
     return `<div class="card"><h2 class="section-title">Umsätze</h2>${listHtml}</div>`;
   }
 
+  // Wechselt die Sortierung der Rückstände-Liste zwischen Betrag (absteigend) und alphabetisch
+  // und merkt sich die Wahl dauerhaft in localStorage (siehe state.financeArrearsSortMode).
+  function toggleFinanceArrearsSortMode(){
+    state.financeArrearsSortMode = state.financeArrearsSortMode==='amount' ? 'alpha' : 'amount';
+    try{ localStorage.setItem('financeArrearsSortMode', state.financeArrearsSortMode); }catch(e){}
+    render();
+  }
+
   function buildFinanceArrearsTab(){
     const memberIds = new Set(state.members.map(m=>m.id));
     // Aktive Mitglieder: immer eine Zeile, auch bei 0 Rückstand (dient als vollständige Übersicht).
@@ -3123,7 +3135,12 @@
         const m = state.members.find(x=>x.id===a.memberId);
         return { memberId:a.memberId, name: m ? displayName(m) : a.name, amount:a.amount, archived: !!m };
       });
-    const allRows = [...memberRows, ...nonActiveRows].sort((a,b)=> a.name.localeCompare(b.name,'de'));
+    const sortMode = state.financeArrearsSortMode || 'amount';
+    const allRows = [...memberRows, ...nonActiveRows].sort((a,b)=>
+      sortMode==='amount'
+        ? (b.amount - a.amount || a.name.localeCompare(b.name,'de'))
+        : a.name.localeCompare(b.name,'de')
+    );
     const totalDue = allRows.reduce((sum,r)=> sum + r.amount, 0);
     const rowsHtml = allRows.map(r=>`
       <div class="fines-summary-row" data-member-id="${escapeHtml(r.memberId)}">
@@ -3131,8 +3148,27 @@
         <span class="fines-summary-amount ${r.amount>0?'amount-due':'amount-clear'}">${fmtEuro(r.amount)}</span>
       </div>
     `).join('');
+    // Sortier-Toggle: zeigt an, wonach AKTUELL sortiert ist; Titel/aria-label beschreiben die
+    // Aktion, die ein Klick auslöst (also den jeweils ANDEREN Modus), analog zu anderen Toggle-
+    // Buttons in der App (siehe z.B. Jahresgruppen-Chevron).
+    const sortToggleTitle = sortMode==='amount' ? 'Nach Name sortieren' : 'Nach Betrag sortieren';
+    const sortToggleIcon = sortMode==='amount' ? `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 7h16M4 12h10M4 17h6"/>
+        </svg>` : `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3"/>
+        </svg>`;
     return `
-      <div class="card"><h2 class="section-title">Rückstände</h2>${rowsHtml}</div>
+      <div class="card">
+        <div class="settings-header-row">
+          <h2 class="section-title">Rückstände</h2>
+          <button type="button" class="header-circle-btn" id="finance-arrears-sort-btn" title="${sortToggleTitle}" aria-label="${sortToggleTitle}">
+            ${sortToggleIcon}
+          </button>
+        </div>
+        ${rowsHtml}
+      </div>
       <div class="card">
         <div class="stat-total"><span>Summe offener Rückstände</span><span>${fmtEuro(totalDue)}</span></div>
       </div>
@@ -7282,6 +7318,8 @@
     document.querySelectorAll('#app .fines-summary-row[data-member-id]').forEach(row=>{
       row.addEventListener('click', ()=>{ goToArrearsDetail(row.dataset.memberId); });
     });
+    const arrearsSortBtn = document.getElementById('finance-arrears-sort-btn');
+    if(arrearsSortBtn) arrearsSortBtn.addEventListener('click', toggleFinanceArrearsSortMode);
   }
 
   function renderGuestList(){
