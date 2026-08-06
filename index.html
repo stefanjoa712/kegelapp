@@ -959,7 +959,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.60';
+  const APP_VERSION = '1.1.61';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -1404,16 +1404,16 @@
   function makeClubEntityStore(collectionName, cacheKey){
     function docRef(id){ return doc(db, 'clubs', CURRENT_CLUB_ID, collectionName, id); }
     function indexRef(){ return docRef(INDEX_DOC_ID); }
+    function collRef(){ return collection(db, 'clubs', CURRENT_CLUB_ID, collectionName); }
 
+    // Liest die gesamte Subcollection über EINE Firestore-Query statt Index-Dokument + einem
+    // getDoc() pro Eintrag (N+1 Reads) - das _index-Dokument wird dabei mit zurückgeliefert und
+    // anhand seiner Dokument-ID herausgefiltert (siehe Issue #68).
     async function getAll(){
-      const indexSnap = await withTimeout(getDoc(indexRef()), STORAGE_TIMEOUT_MS);
-      const index = indexSnap.exists() ? JSON.parse(indexSnap.data().value) : [];
-      if(index.length===0) return [];
-      const snaps = await withTimeout(
-        Promise.all(index.map(id=> getDoc(docRef(id)))),
-        STORAGE_TIMEOUT_MS
-      );
-      return snaps.filter(s=>s.exists()).map(s=> JSON.parse(s.data().value));
+      const snap = await withTimeout(getDocs(collRef()), STORAGE_TIMEOUT_MS);
+      return snap.docs
+        .filter(s=> s.id!==INDEX_DOC_ID)
+        .map(s=> JSON.parse(s.data().value));
     }
 
     async function save(entry){
@@ -1461,16 +1461,14 @@
   const MEMBERS_INDEX_ID = '_index';
   function memberIndexDocRef(){ return clubMemberDocRef(MEMBERS_INDEX_ID); }
 
-  // Lädt alle Mitglieder: erst den Index (Liste der IDs), dann alle zugehörigen Dokumente parallel.
+  // Lädt alle Mitglieder über EINE Firestore-Query auf die gesamte Subcollection statt Index-
+  // Dokument + einem getDoc() pro Mitglied (N+1 Reads) - das _index-Dokument kommt dabei mit
+  // zurück und wird anhand seiner Dokument-ID herausgefiltert (siehe Issue #68).
   async function getAllMembers(){
-    const indexSnap = await withTimeout(getDoc(memberIndexDocRef()), STORAGE_TIMEOUT_MS);
-    const index = indexSnap.exists() ? JSON.parse(indexSnap.data().value) : [];
-    if(index.length===0) return [];
-    const snaps = await withTimeout(
-      Promise.all(index.map(id=> getDoc(clubMemberDocRef(id)))),
-      STORAGE_TIMEOUT_MS
-    );
-    return snaps.filter(s=>s.exists()).map(s=> JSON.parse(s.data().value));
+    const snap = await withTimeout(getDocs(clubMembersCollection()), STORAGE_TIMEOUT_MS);
+    return snap.docs
+      .filter(s=> s.id!==MEMBERS_INDEX_ID)
+      .map(s=> JSON.parse(s.data().value));
   }
 
   // Legt ein neues Mitglied an oder aktualisiert ein bestehendes. Läuft in einer Transaktion:
