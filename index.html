@@ -343,7 +343,9 @@
   .evening-row-income strong{font-weight:700;}
   .closed-icon{display:inline-flex; align-items:center; margin-left:6px; color:var(--muted); vertical-align:middle;}
   .closed-icon svg{width:13px; height:13px; display:block;}
-  .finance-total-card{background:var(--felt); text-align:center; padding:28px 20px; cursor:pointer;}
+  .finance-total-card{background:var(--felt); text-align:center; padding:28px 20px; cursor:pointer; position:relative;}
+  .finance-total-info-icon{position:absolute; top:10px; right:12px; width:16px; height:16px; color:rgba(255,255,255,0.7); pointer-events:none;}
+  .finance-total-info-icon svg{width:100%; height:100%; display:block;}
   .own-arrears-card{text-align:center; padding:18px 20px;}
   .own-arrears-card.amount-due{background:var(--wine); cursor:pointer;}
   .own-arrears-card.amount-clear{background:#1a7a3c;}
@@ -927,7 +929,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.55';
+  const APP_VERSION = '1.1.56';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3395,6 +3397,7 @@
 
     return `
       <div class="card finance-total-card" id="finance-total-card-clickable">
+        <span class="finance-total-info-icon" aria-hidden="true">${ICON_INFO_SMALL}</span>
         <div class="finance-total-amount">${fmtEuro(totalAmount)}</div>
         <div class="finance-total-label">Gesamtbetrag</div>
       </div>
