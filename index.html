@@ -959,7 +959,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.61';
+  const APP_VERSION = '1.1.62';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4024,10 +4024,27 @@
     return state.currentUserRole==='Kassenwart';
   }
 
-  function getCurrentMemberName(){
+  // Gecachtes Ergebnis der "aktuelles Mitglied"-Suche: bleibt gültig, solange sich weder die
+  // state.members-Referenz (neu zugewiesen bei jedem Reload/Refresh) noch die eingeloggte
+  // E-Mail ändern. Vermeidet mehrfache O(members)-Scans pro Render, siehe getCurrentMemberName(),
+  // getCurrentMemberId() und getOwnArrearsInfo(), die früher jeweils unabhängig gescannt haben.
+  let _currentMemberCache = { members: null, email: undefined, member: null };
+
+  function getCurrentMember(){
     const user = auth.currentUser;
-    if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
-    const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
+    const email = user && user.email;
+    if(!email || email===ADMIN_EMAIL) return null;
+    if(_currentMemberCache.members === state.members && _currentMemberCache.email === email){
+      return _currentMemberCache.member;
+    }
+    const lower = email.toLowerCase();
+    const member = state.members.find(m=> (m.email||'').toLowerCase()===lower) || null;
+    _currentMemberCache = { members: state.members, email, member };
+    return member;
+  }
+
+  function getCurrentMemberName(){
+    const member = getCurrentMember();
     return member ? displayName(member) : null;
   }
 
@@ -4035,9 +4052,7 @@
   // datenrelevanten Vergleiche (Bearbeitungsrechte, RSVP-Zuordnung, Termin-Ersteller). Der
   // Name bleibt nur noch für reine Anzeigezwecke (z.B. Vorbelegung von Freitextfeldern) im Einsatz.
   function getCurrentMemberId(){
-    const user = auth.currentUser;
-    if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
-    const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
+    const member = getCurrentMember();
     return member ? member.id : null;
   }
 
@@ -4058,9 +4073,7 @@
   // Nutzer kein verknüpftes Mitglied ist (z.B. Admin-Login). Gemeinsame Grundlage für die große
   // Kartenvariante (buildOwnArrearsCardHtml) und die kompakte Chip-Variante (buildOwnArrearsChipHtml).
   function getOwnArrearsInfo(){
-    const user = auth.currentUser;
-    if(!user || !user.email || user.email===ADMIN_EMAIL) return null;
-    const member = state.members.find(m=> (m.email||'').toLowerCase()===user.email.toLowerCase());
+    const member = getCurrentMember();
     if(!member) return null;
     const entry = state.financeArrears.find(a=>a.memberId===member.id);
     const amount = entry ? entry.amount : 0;
