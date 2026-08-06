@@ -959,7 +959,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.59';
+  const APP_VERSION = '1.1.60';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -4429,49 +4429,80 @@
     `;
   }
 
-  function fineTotalForSeat(detail, seatId){
-    const seat = detail.seating.find(s=>s.seatId===seatId);
-    if(seat && seat.invalid){
-      // Fest eingetragens (nach Abschluss) oder dynamisch berechnet (während des Abends)
-      if(seat.invalidAmount !== undefined) return seat.invalidAmount;
-      return averageOfTotalsRounded(validPresentMemberTotals(detail, seatId));
-    }
+  // Fremdstrafen-Anteil (inkl. "Fremdstrafe + Runde") EINES Sitzes: Summe aus count*amount über
+  // alle Fremdstrafen-Katalogeinträge. Wird sowohl für den Pool-Total (alle Sitze) als auch für den
+  // Eigenanteil-Abzug (ein Sitz) verwendet, siehe computeFineTotalsForAllSeats().
+  function fremdstrafeAmountForSeat(detail, seatId, fremdstrafeFines){
     const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
-    const catalog = detail.finesCatalogSnapshot || [];
-    let total = 0;
-    catalog.forEach(f=>{
-      if(isFremdstrafeType(f.type)) return;
-      if(f.type==='runde') return; // Runden haben keinen Euro-Betrag
-      const count = entries[f.id] || 0;
-      total += count * f.amount;
-    });
-    const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
-    adHocList.forEach(a=>{ total += a.amount; });
+    let amount = 0;
+    fremdstrafeFines.forEach(f=>{ amount += (entries[f.id]||0) * f.amount; });
+    return amount;
+  }
 
-    // Fremdstrafen (inkl. "Fremdstrafe + Runde"): wer sie auslöst zahlt selbst nichts,
-    // stattdessen zahlen alle anderen Anwesenden.
+  // Berechnet die (UNGERUNDETEN) Strafen-Totale für ALLE Sitze eines Abends in einem einzigen
+  // Durchlauf (siehe #69: vorher wurde pro Sitz einzeln neu gerechnet - inkl. eines pro Sitz
+  // verschachtelten Sitz×Sitz-Scans für die Fremdstrafen-Umlage, zusammen O(Sitze²) sobald man über
+  // alle Sitze eines Abends iteriert). Der Fremdstrafen-Anteil ("wer eine Fremdstrafe auslöst zahlt
+  // selbst nichts, alle anderen Anwesenden zahlen") wird stattdessen einmal als Gesamtsumme
+  // aggregiert - der Anteil eines einzelnen Sitzes ist dann einfach "Gesamtsumme minus eigener
+  // Anteil". Rückgabe ist ein Objekt seatId -> Total, 1:1 äquivalent zu dem, was früher
+  // fineTotalForSeat(detail, seatId) für jeden Sitz einzeln geliefert hätte (inkl. bereits
+  // gerundeter Invaliden-Durchschnitte).
+  function computeFineTotalsForAllSeats(detail){
+    const catalog = detail.finesCatalogSnapshot || [];
     const fremdstrafeFines = catalog.filter(f=>isFremdstrafeType(f.type));
+
+    const fremdstrafeAmountBySeat = {};
+    let fremdstrafePoolTotal = 0;
     if(fremdstrafeFines.length>0){
-      const otherPresentSeats = detail.seating.filter(s=>s.name && s.seatId!==seatId);
-      fremdstrafeFines.forEach(f=>{
-        otherPresentSeats.forEach(s=>{
-          const otherEntries = (detail.finesBySeat && detail.finesBySeat[s.seatId]) || {};
-          const count = otherEntries[f.id] || 0;
-          total += count * f.amount;
-        });
+      detail.seating.forEach(s=>{
+        if(!s.name) return;
+        const amount = fremdstrafeAmountForSeat(detail, s.seatId, fremdstrafeFines);
+        fremdstrafeAmountBySeat[s.seatId] = amount;
+        fremdstrafePoolTotal += amount;
       });
     }
-    return total;
-  }
-  function roundedFineTotalForSeat(detail, seatId){
-    return roundUpToFullEuro(fineTotalForSeat(detail, seatId));
+
+    const totals = {};
+    detail.seating.forEach(seat=>{
+      if(seat.invalid) return; // unten aufgelöst - hängt vom (gerundeten) Durchschnitt der gültigen Sitze ab
+      const seatId = seat.seatId;
+      const entries = (detail.finesBySeat && detail.finesBySeat[seatId]) || {};
+      let total = 0;
+      catalog.forEach(f=>{
+        if(isFremdstrafeType(f.type)) return;
+        if(f.type==='runde') return; // Runden haben keinen Euro-Betrag
+        total += (entries[f.id]||0) * f.amount;
+      });
+      const adHocList = (detail.adHocFinesBySeat && detail.adHocFinesBySeat[seatId]) || [];
+      adHocList.forEach(a=>{ total += a.amount; });
+      if(fremdstrafeFines.length>0){
+        total += fremdstrafePoolTotal - (fremdstrafeAmountBySeat[seatId] || 0);
+      }
+      totals[seatId] = total;
+    });
+
+    // Invalide Sitze: fest hinterlegter Betrag oder Durchschnitt der gültigen, anwesenden Sitze
+    // (deren Totale oben bereits berechnet wurden).
+    detail.seating.forEach(seat=>{
+      if(!seat.invalid) return;
+      const seatId = seat.seatId;
+      if(seat.invalidAmount !== undefined){ totals[seatId] = seat.invalidAmount; return; }
+      const validTotals = detail.seating
+        .filter(s=> s.name && !s.invalid && s.seatId!==seatId)
+        .map(s=> roundUpToFullEuro(totals[s.seatId] || 0));
+      totals[seatId] = averageOfTotalsRounded(validTotals);
+    });
+
+    return totals;
   }
 
   // Pool für Durchschnittsberechnungen: anwesende, gültige (nicht invalide) Mitglieder - ohne Gäste.
   function validPresentMemberTotals(detail, excludeSeatId){
+    const fineTotals = computeFineTotalsForAllSeats(detail);
     return detail.seating
       .filter(s=> s.name && !s.invalid && s.seatId!==excludeSeatId)
-      .map(s=> roundedFineTotalForSeat(detail, s.seatId));
+      .map(s=> roundUpToFullEuro(fineTotals[s.seatId] || 0));
   }
   function averageOfTotalsRounded(totals){
     if(totals.length===0) return 0;
@@ -4491,8 +4522,9 @@
     const guestCount = occupied.filter(s=>s.isGuest).length;
     const absentList = detail.closed ? (detail.absentMembersFines || []) : [];
     const absentCount = detail.closed ? absentList.length : Math.max(0, activeMembers().length - presentCount);
+    const fineTotals = computeFineTotalsForAllSeats(detail);
     let income = 0;
-    occupied.forEach(s=>{ income += roundedFineTotalForSeat(detail, s.seatId); });
+    occupied.forEach(s=>{ income += roundUpToFullEuro(fineTotals[s.seatId] || 0); });
     absentList.forEach(a=>{ income += a.amount; });
     return { presentCount, guestCount, absentCount, income };
   }
@@ -4906,6 +4938,7 @@
     const occupied = interleavedOrder.map(id=>bySeatId[id]).filter(s=>s && s.name);
 
     const crownSeatIds = computePudelCrownSeatIds(detail);
+    const fineTotals = computeFineTotalsForAllSeats(detail);
 
     const rowsHtml = occupied.length===0
       ? `<p class="empty-state">Keine Teilnehmer für diesen Abend.</p>`
@@ -4915,7 +4948,7 @@
         return `
         <div class="fines-summary-row" data-seat-id="${s.seatId}" data-name="${escapeHtml(s.name)}">
           <span class="fines-summary-name">${escapeHtml(s.name)}${crownHtml}${s.invalid ? `<span class="invalid-icon" title="Invalide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg></span>` : ''}</span>
-          <span class="fines-summary-amount">${fmtEuro(roundedFineTotalForSeat(detail, s.seatId))}</span>
+          <span class="fines-summary-amount">${fmtEuro(roundUpToFullEuro(fineTotals[s.seatId] || 0))}</span>
         </div>
       `;
       }).join('');
@@ -4935,7 +4968,7 @@
     `;
 
     let totalEinnahme = 0;
-    occupied.forEach(s=>{ totalEinnahme += roundedFineTotalForSeat(detail, s.seatId); });
+    occupied.forEach(s=>{ totalEinnahme += roundUpToFullEuro(fineTotals[s.seatId] || 0); });
     absentList.forEach(a=>{ totalEinnahme += a.amount; });
 
     return `
@@ -4988,12 +5021,9 @@
 
     if(invalid){
       const isClosed = !!detail.closed;
-      const exactAvg = seat.invalidAmount !== undefined
-        ? seat.invalidAmount
-        : averageOfTotalsExact(validPresentMemberTotals(detail, seatId));
-      const roundedAvg = seat.invalidAmount !== undefined
-        ? seat.invalidAmount
-        : averageOfTotalsRounded(validPresentMemberTotals(detail, seatId));
+      const validTotals = seat.invalidAmount !== undefined ? null : validPresentMemberTotals(detail, seatId);
+      const exactAvg = seat.invalidAmount !== undefined ? seat.invalidAmount : averageOfTotalsExact(validTotals);
+      const roundedAvg = seat.invalidAmount !== undefined ? seat.invalidAmount : averageOfTotalsRounded(validTotals);
       const hintText = isClosed
         ? 'Diese Person ist als <strong>invalide</strong> markiert. Es werden keine Strafen gepflegt. Der Durchschnitt der anderen Anwesenden wurde beim Abschließen des Abends fest hinterlegt.'
         : 'Diese Person ist als <strong>invalide</strong> markiert. Es werden keine Strafen gepflegt. Beim Abschließen des Abends wird der Durchschnitt der anderen Anwesenden fest hinterlegt.';
@@ -5069,7 +5099,7 @@
       </div>
     `).join('');
 
-    const total = fineTotalForSeat(detail, seatId);
+    const total = computeFineTotalsForAllSeats(detail)[seatId] || 0;
     return `
       <div class="card">
         <h3 class="section-title-small">Strafen</h3>
@@ -5213,7 +5243,7 @@
     }
     const detail = state.currentEveningDetail;
     const seatId = state.currentFineSeatId;
-    const total = fineTotalForSeat(detail, seatId);
+    const total = computeFineTotalsForAllSeats(detail)[seatId] || 0;
     const exactEl = document.getElementById('fine-total-exact');
     const roundedEl = document.getElementById('fine-total-rounded');
     if(exactEl) exactEl.textContent = fmtEuro(total);
@@ -5678,7 +5708,7 @@
     const memberSeats = interleavedSeatOrder.map(id=>bySeatIdForBulk[id]).filter(s=>s && s.name && !s.invalid);
     const fineOptionsHtml = catalog.map(f=>`<option value="fine:${f.id}">${escapeHtml(f.name)} (${fmtEuro(f.amount)})</option>`).join('');
     // Runden ohne Geldbetrag in Klammern - Runden haben grundsätzlich keinen Euro-Betrag (siehe
-    // fineTotalForSeat()). "Freiwillige Runde" (value "voluntary-round") ist keine echte
+    // computeFineTotalsForAllSeats()). "Freiwillige Runde" (value "voluntary-round") ist keine echte
     // Strafenart aus dem Katalog, sondern landet analog zu Geburtstagsrunden direkt in
     // carriedOverRounds (siehe handleBulkAddConfirm unten) - kein Zähler auf der Personenseite.
     const roundOptionsHtml = roundsCatalog.map(f=>`<option value="fine:${f.id}">${escapeHtml(f.name)}</option>`).join('')
