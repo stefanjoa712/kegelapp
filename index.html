@@ -9813,6 +9813,18 @@
     });
   }
 
+  // Club-Wechsel innerhalb einer laufenden Session (Issue #88): zeigt dieselbe Auswahl wie beim
+  // Login, legt die gewählte clubId danach einmalig in sessionStorage ab und erzwingt einen vollen
+  // Reload - resolveActiveClub() übernimmt den Override beim Neustart über consumeClubSwitchOverride(),
+  // BEVOR die reguläre Auswahl-Logik greift. Ein voller Reload (statt In-App-Umbau) ist bewusst
+  // gewählt, damit alle clubspezifischen Firestore-Listener/-Caches sauber neu aufgebaut werden,
+  // genau wie bei einem normalen Login-Wechsel.
+  async function switchClub(){
+    const clubId = await showClubSelectionScreen(AVAILABLE_CLUB_IDS);
+    sessionStorage.setItem(CLUB_SWITCH_STORAGE_KEY, clubId);
+    location.reload();
+  }
+
   async function renderSetPasswordScreen(oobCode){
     document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div>Link wird geprüft…</div>`;
     let email;
