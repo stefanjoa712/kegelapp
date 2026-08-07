@@ -314,6 +314,7 @@
   .settings-menu-item-icon.cat-green{background:#2F7A5E;}
   .settings-menu-item-icon.cat-blue{background:#3A6EA5;}
   .settings-menu-item-icon.cat-wine{background:var(--wine);}
+  .settings-menu-item-icon.cat-purple{background:#6C4F94;}
   .settings-menu-item-text{flex:1; min-width:0; display:flex; flex-direction:column; text-align:left; gap:1px;}
   .settings-menu-item-label{display:block;}
   .settings-menu-item-subtitle{
@@ -328,7 +329,6 @@
     text-transform:uppercase; color:var(--muted); margin:14px 2px 0;
   }
   .group-label:first-child{margin-top:0;}
-  .profile-divider{height:1px; background:var(--line); margin:2px 0 4px;}
   .profile-item{
     display:flex; align-items:center; gap:10px;
     background:none; border:none; padding:8px 2px;
@@ -2579,7 +2579,7 @@
     // zugeordnet werden kann - beim Admin-Sonderaccount (kein Mitgliedsdokument) liefert
     // getCurrentMember() null, siehe dort.
     const accountItem = getCurrentMember() ? settingsMenuItemHtml({
-      id:'settings-menu-account-btn', colorClass:'cat-blue', label:'Mein Konto',
+      id:'settings-menu-account-btn', colorClass:'cat-purple', label:'Mein Konto',
       subtitle: settingsMenuAccountSubtitle(),
       iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="8" r="4"/>
@@ -2599,9 +2599,8 @@
           <div class="group-label">Verwaltung</div>
           ${finanzenItem}
           ${termineItem}
-          <div class="group-label">Profil</div>
+          <div class="group-label">Kontenübersicht</div>
           ${accountItem}
-          <div class="profile-divider"></div>
           <button type="button" class="profile-item" id="settings-menu-logout-btn">
             <svg class="profile-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -2636,7 +2635,7 @@
       </svg>`
     });
     const unlinkItem = settingsMenuItemHtml({
-      id:'account-unlink-btn', colorClass:'cat-wine', label:'Konto-Verknüpfung aufheben',
+      id:'account-unlink-btn', colorClass:'cat-wine', label:'Verknüpfung aufheben',
       subtitle: clubDisplayName(),
       iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 9v4"/>
@@ -2652,10 +2651,10 @@
           <div class="account-info-email">${escapeHtml(email)}</div>
         </div>
         <div class="settings-menu-list">
-          <div class="group-label">Sicherheit</div>
+          <div class="group-label">Passwort und Sicherheit</div>
           ${resetPasswordItem}
           ${changeEmailItem}
-          <div class="group-label">Gefahrenzone</div>
+          <div class="group-label">Konto-Verknüpfung</div>
           ${unlinkItem}
         </div>
       </div>
@@ -8053,7 +8052,13 @@
         const recordPendingFn = httpsCallable(functions, 'recordPendingEmailChange');
         await recordPendingFn({ newEmail });
         await verifyBeforeUpdateEmail(user, newEmail);
-        localStorage.setItem('pendingEmailChange', JSON.stringify({ oldEmail: currentEmail, newEmail }));
+        // Nur ein Hinweis fürs SCHNELLE Nachprüfen auf GENAU DIESEM Gerät nach einem Neustart -
+        // die eigentliche, sicherheitsrelevante alte/neue Adresse steht bereits serverseitig unter
+        // pendingEmailChanges/{uid} (siehe oben). Wird der Bestätigungslink auf einem ANDEREN Gerät
+        // geöffnet (z.B. E-Mail-Änderung am PC gestartet, Link im Postfach auf dem Smartphone
+        // angeklickt), hat dieses lokale Flag dort keine Wirkung - checkPendingEmailChange() holt
+        // den serverseitigen Stand in diesem Fall trotzdem nach (siehe dortiger Fallback-Zweig).
+        localStorage.setItem('pendingEmailChange', JSON.stringify({ newEmail }));
         hideModalLoadingOverlay();
         document.getElementById('change-email-actions').outerHTML = `<p class="form-success">Bestätigungslink wurde an ${escapeHtml(newEmail)} gesendet. Prüfe dein Postfach.</p>`;
       }catch(e){
@@ -9953,14 +9958,54 @@
   // Server; stimmt die E-Mail noch nicht mit der erwarteten neuen überein, wurde der Link noch
   // nicht angeklickt - der Eintrag bleibt dann einfach stehen und wird beim nächsten Start erneut
   // geprüft.
+  // Übernimmt eine bestätigte Self-Service-E-Mail-Änderung (Issue #60) in state.members, indem
+  // syncOwnEmailAcrossClubs aufgerufen und bei Erfolg die Mitgliederliste neu geladen wird.
+  async function applyEmailChangeSync(){
+    let result;
+    try{
+      const syncFn = httpsCallable(functions, 'syncOwnEmailAcrossClubs');
+      const res = await syncFn({});
+      result = res.data;
+    }catch(e){ return null; }
+    if(result && result.applied){
+      try{
+        state.members = await getAllMembers();
+        markFetched('members');
+      }catch(e){ /* nicht kritisch - der nächste normale Reload holt die Daten nach */ }
+      render();
+    }
+    return result;
+  }
+
+  // Prüft bei jedem App-Start, ob eine per showChangeEmailModal() angestoßene E-Mail-Änderung
+  // (Issue #60) inzwischen bestätigt wurde, und übernimmt sie dann in alle betroffenen Clubs.
+  //
+  // localStorage['pendingEmailChange'] ist NUR ein geräte-/browserlokaler Hinweis fürs schnelle
+  // Nachprüfen auf GENAU DEM Gerät, auf dem die Änderung gestartet wurde - die sicherheitsrelevante
+  // Wahrheit (alte/neue Adresse) liegt serverseitig unter pendingEmailChanges/{uid} (siehe
+  // recordPendingEmailChange()/syncOwnEmailAcrossClubs() in functions/index.js). Wird der von
+  // Firebase verschickte Bestätigungslink auf einem ANDEREN Gerät geöffnet (E-Mail-Änderung z.B.
+  // am PC gestartet, Link im Postfach auf dem Smartphone angeklickt), hat dieses Gerät gar keinen
+  // localStorage-Eintrag - deshalb der Fallback-Zweig unten: fehlt der lokale Hinweis, aber lässt
+  // sich das eigene Mitglied in diesem Club nicht auflösen (getCurrentMember() null), wird trotzdem
+  // einmal versucht zu synchronisieren. Das deckt jedes Gerät ab, nicht nur das ursprüngliche, ohne
+  // bei jedem normalen Login (Mitglied bereits zugeordnet) einen unnötigen Zusatz-Request auszulösen.
   async function checkPendingEmailChange(){
-    const raw = localStorage.getItem('pendingEmailChange');
-    if(!raw) return;
-    let pending;
-    try{ pending = JSON.parse(raw); }catch(e){ localStorage.removeItem('pendingEmailChange'); return; }
-    if(!pending || !pending.oldEmail || !pending.newEmail) { localStorage.removeItem('pendingEmailChange'); return; }
     const user = auth.currentUser;
-    if(!user) return;
+    if(!user || user.email===ADMIN_EMAIL) return;
+    const raw = localStorage.getItem('pendingEmailChange');
+    let pending = null;
+    if(raw){
+      try{ pending = JSON.parse(raw); }catch(e){ localStorage.removeItem('pendingEmailChange'); }
+      if(pending && !pending.newEmail){ pending = null; localStorage.removeItem('pendingEmailChange'); }
+    }
+
+    if(!pending){
+      if(getCurrentMember()) return; // schon zugeordnet, nichts zu tun
+      await applyEmailChangeSync(); // Wiederherstellungsversuch für ein anderes Gerät, siehe oben
+      return;
+    }
+
     try{
       await user.reload();
       // ID-Token erzwungen neu holen (nicht nur den User-Datensatz per reload()) - Callable
@@ -9971,29 +10016,8 @@
       await user.getIdToken(true);
     }catch(e){ return; }
     if((auth.currentUser.email||'').toLowerCase() !== pending.newEmail.toLowerCase()) return;
-    // oldEmail wird NICHT mehr an syncOwnEmailAcrossClubs übergeben - die Function liest die
-    // vertrauenswürdige alte Adresse serverseitig aus dem per recordPendingEmailChange() (siehe
-    // showChangeEmailModal()) hinterlegten Datensatz, keyed auf die eigene Nutzer-ID. Ein vom
-    // Client übergebenes oldEmail hätte es erlaubt, ein beliebiges fremdes Mitgliedsdokument auf
-    // die eigene Adresse umzubiegen (siehe Security-Fix-Kommentar in functions/index.js).
-    let result;
-    try{
-      const syncFn = httpsCallable(functions, 'syncOwnEmailAcrossClubs');
-      const res = await syncFn({});
-      result = res.data;
-    }catch(e){ return; }
-    if(result && result.applied){
-      // Neue Array-Referenz statt In-Place-Mutation: getCurrentMember() cached sein Ergebnis
-      // unter (state.members-Referenz, E-Mail) - eine In-Place-Änderung hätte diesen Cache-Key
-      // nicht gebrochen und getCurrentMember() hätte für den Rest der Session weiter null
-      // zurückgegeben (kein "Mein Konto", keine eigene Rückstandsanzeige), falls es zuvor schon
-      // einmal mit der neuen Adresse aufgerufen wurde, bevor der Sync durchlief.
-      state.members = state.members.map(x=>
-        (x.email||'').toLowerCase()===pending.oldEmail.toLowerCase() ? { ...x, email: pending.newEmail } : x
-      );
-      invalidate('members');
-      render();
-    }
+
+    const result = await applyEmailChangeSync();
     if(!result || result.applied || result.reason==='no-pending'){
       localStorage.removeItem('pendingEmailChange');
     }
