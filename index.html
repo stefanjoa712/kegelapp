@@ -1012,7 +1012,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.66';
+  const APP_VERSION = '1.1.67';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2470,19 +2470,13 @@
     const daysLeft = (Date.parse(sub.freeUntil) - Date.parse(todayISO())) / 86400000;
     return daysLeft >= 0 && daysLeft <= 14;
   }
-  // Untertitel für das Terminserien-Item: leitet aus den bereits beim App-Start geladenen
-  // state.calendarEvents (siehe init()) die Wiederholungs-Serien ab, ohne extra nachzuladen.
+  // Untertitel für das Terminserien-Item: Anzahl der Wiederholungs-Serien, abgeleitet aus den
+  // bereits beim App-Start geladenen state.calendarEvents (siehe init()), ohne extra nachzuladen.
   function settingsMenuTermineSubtitle(){
     if(!hasLoaded('calendarEvents')) return '';
-    const series = state.calendarEvents.filter(ev=> ev.recurrence && ev.recurrence!=='none');
-    if(series.length===0) return 'Noch keine Terminserie';
-    if(series.length>1) return `${series.length} Terminserien`;
-    const ev = series[0];
-    const weekday = new Date(ev.start+'T00:00:00').toLocaleDateString('de-DE', {weekday:'long'});
-    if(ev.recurrence==='weekly') return `Jeden ${weekday}`;
-    if(ev.recurrence==='biweekly') return `Alle 2 Wochen (${weekday})`;
-    if(ev.recurrence==='every4weeks') return `Alle 4 Wochen (${weekday})`;
-    return RECURRENCE_LABELS_DE[ev.recurrence] || '';
+    const seriesCount = state.calendarEvents.filter(ev=> ev.recurrence && ev.recurrence!=='none').length;
+    if(seriesCount===0) return 'Noch keine Terminserie';
+    return seriesCount===1 ? '1 Terminserie' : `${seriesCount} Terminserien`;
   }
   function settingsMenuItemHtml(opts){
     const badgeHtml = opts.badge ? `<span class="badge-dot" aria-hidden="true"></span>` : '';
@@ -9690,10 +9684,33 @@
       });
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
+      // Lädt Strafen-/Spielekatalog einmalig im Hintergrund (nicht blockierend fürs Hauptbild),
+      // damit die entsprechenden Untertitel im Einstellungen-Menü (siehe viewSettingsMenu()) direkt
+      // verfügbar sind, ohne dass der Nutzer vorher die jeweilige Verwaltungsseite besucht haben muss.
+      prefetchSettingsMenuCatalogs();
     }catch(e){
       state.view = 'main';
       renderError('Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', init);
     }
+  }
+
+  // Lädt fines-catalog/games-catalog einmalig direkt nach dem Start im Hintergrund (nicht Teil des
+  // kritischen Promise.all in init(), um das erste Rendern des Hauptbildschirms nicht zu verzögern).
+  // Ergebnis landet in state.finesCatalog/gamesCatalog inkl. markFetched(), sodass hasLoaded() in
+  // viewSettingsMenu() den Untertitel schon beim allerersten Öffnen des Einstellungen-Menüs zeigt,
+  // ohne dass der Nutzer zuvor die Strafen-/Spieleverwaltung besucht haben muss.
+  async function prefetchSettingsMenuCatalogs(){
+    try{
+      const [finesCatalog, gamesCatalog] = await Promise.all([
+        getClubJSONOrThrow('fines-catalog', []),
+        getClubJSONOrThrow('games-catalog', [])
+      ]);
+      state.finesCatalog = finesCatalog;
+      state.gamesCatalog = gamesCatalog;
+      markFetched('finesCatalog');
+      markFetched('gamesCatalog');
+      if(state.view==='settingsMenu') render();
+    }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: settingsMenuCatalogs', e); }
   }
 
   // Trägt beim Login den Zeitpunkt beim verknüpften Mitglied ein (Admin-Account übersprungen).
