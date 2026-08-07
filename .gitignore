@@ -3,3 +3,5 @@ functions/.env
 functions/.env.*
 *.log
 .DS_Store
+.claude/
+.superpowers/
