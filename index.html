@@ -1274,6 +1274,10 @@
     currentArrearsName:'',
     currentArrearsMemberId:null,
     currentTransactionId:null,
+    // Ausgewählter Reiter im Umsatz-Formular ('income'/'expense'/'transfer', Issue #83) - wird von
+    // goToTransactionDetail() beim Öffnen gesetzt und von den Segment-Buttons in
+    // attachTransactionDetailListeners() aktualisiert (siehe viewTransactionDetail()).
+    newTxSegment:'income',
     financeRecurring:[],
     financeSavingsPots:[],
     calendarEvents:[],
@@ -8774,6 +8778,10 @@
 
   function goToTransactionDetail(transactionId){
     state.currentTransactionId = transactionId || null;
+    // Segmented Control (Issue #83): Startzustand richtet sich nach dem Vorzeichen einer
+    // bestehenden Transaktion, sonst Default "Einnahme".
+    const t = transactionId ? state.financeTransactions.find(x=>x.id===transactionId) : null;
+    state.newTxSegment = t ? (t.amount>=0 ? 'income' : 'expense') : 'income';
     state.view = 'transactionDetail';
     render();
   }
