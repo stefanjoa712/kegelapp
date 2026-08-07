@@ -3410,13 +3410,17 @@
   }
 
   function buildFinanceTransactionsTab(){
-    const sorted = state.financeTransactions.slice().sort((a,b)=>{
-      const dateCompare = b.date.localeCompare(a.date);
-      if(dateCompare!==0) return dateCompare;
-      const aCreated = a.createdAt || new Date(a.date).getTime();
-      const bCreated = b.createdAt || new Date(b.date).getTime();
-      return bCreated - aCreated;
-    });
+    // Umbuchungen (Issue #83) bestehen aus zwei gekoppelten Transaktionen (transferRole 'out'/'in')
+    // - hier wird nur die 'out'-Seite gerendert, damit pro Umbuchung genau eine Zeile erscheint.
+    const sorted = state.financeTransactions
+      .filter(t=> !t.transferId || t.transferRole==='out')
+      .slice().sort((a,b)=>{
+        const dateCompare = b.date.localeCompare(a.date);
+        if(dateCompare!==0) return dateCompare;
+        const aCreated = a.createdAt || new Date(a.date).getTime();
+        const bCreated = b.createdAt || new Date(b.date).getTime();
+        return bCreated - aCreated;
+      });
     if(sorted.length===0){
       return `<div class="card"><p class="empty-state">Noch keine Umsätze eingetragen. Über das „+" oben hinzufügen.</p></div>`;
     }
@@ -3431,13 +3435,20 @@
       const rows = byYear[year].map(t=>{
         const isPositive = t.amount>=0;
         const locked = !!t.fromArrears;
+        const isTransfer = !!t.transferId;
+        const metaHtml = isTransfer
+          ? `${formatDateDE(t.date)} · <span class="finance-account-icon-inline">${ICON_TRANSFER}</span>Von ${escapeHtml(financeAccountNameById(t.accountId))} nach ${escapeHtml(financeAccountNameById(state.financeTransactions.find(p=>p.transferId===t.transferId && p.id!==t.id).accountId))}`
+          : `${formatDateDE(t.date)} · ${financeAccountIconHtmlById(t.accountId)}${escapeHtml(financeAccountNameById(t.accountId))}`;
+        const amountHtml = isTransfer
+          ? `<span class="transaction-amount transfer">${fmtEuro(Math.abs(t.amount))}</span>`
+          : `<span class="transaction-amount${isPositive?' positive':' negative'}">${isPositive?'+':''}${fmtEuro(t.amount)}</span>`;
         return `
           <div class="transaction-row" data-id="${t.id}">
             <span class="transaction-info">
               <span class="transaction-description">${escapeHtml(t.description)}${locked?' <span class="fine-type-icon" title="Aus Rückstandszahlung – nur Bezeichnung bearbeitbar" style="display:inline-flex; width:14px; height:14px; vertical-align:middle;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>':''}</span>
-              <span class="transaction-meta">${formatDateDE(t.date)} · ${financeAccountIconHtmlById(t.accountId)}${escapeHtml(financeAccountNameById(t.accountId))}</span>
+              <span class="transaction-meta">${metaHtml}</span>
             </span>
-            <span class="transaction-amount${isPositive?' positive':' negative'}">${isPositive?'+':''}${fmtEuro(t.amount)}</span>
+            ${amountHtml}
           </div>
         `;
       }).join('');
