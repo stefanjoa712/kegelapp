@@ -6984,6 +6984,8 @@
   // Wird pro Feature in Task 5-7 um je einen Button-Listener ergänzt (Passwort zurücksetzen,
   // E-Mail ändern, Konto-Verknüpfung aufheben).
   function attachAccountSettingsListeners(){
+    const resetPwBtn = document.getElementById('account-reset-password-btn');
+    if(resetPwBtn) resetPwBtn.addEventListener('click', showPasswordResetModal);
   }
 
   function attachSettingsMenuListeners(){
@@ -7944,6 +7946,33 @@
         hideModalLoadingOverlay();
         btn.disabled = false; btn.textContent = 'Einladung senden';
         if(errEl) errEl.textContent = 'Einladung konnte nicht gesendet werden. Bitte später erneut versuchen.';
+      }
+    });
+  }
+
+  function showPasswordResetModal(){
+    const member = getCurrentMember();
+    const email = member ? member.email : '';
+    showModal(`
+      <h3>Passwort zurücksetzen</h3>
+      <p>Wir senden einen Link an <strong>${escapeHtml(email)}</strong>, mit dem du ein neues Passwort festlegen kannst.</p>
+      <p class="form-error" id="password-reset-error"></p>
+      <div class="confirm-row-buttons" id="password-reset-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+        <button type="button" class="btn-primary" id="confirm-password-reset-btn">Link senden</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-password-reset-btn').addEventListener('click', async ()=>{
+      const btn = document.getElementById('confirm-password-reset-btn');
+      const errEl = document.getElementById('password-reset-error');
+      btn.disabled = true; btn.textContent = 'Wird gesendet…';
+      try{
+        await sendPasswordResetEmail(auth, email);
+        document.getElementById('password-reset-actions').outerHTML = `<p class="form-success">E-Mail wurde gesendet. Prüfe dein Postfach.</p>`;
+      }catch(e){
+        btn.disabled = false; btn.textContent = 'Link senden';
+        errEl.textContent = 'Konnte nicht gesendet werden. Bitte später erneut versuchen.';
       }
     });
   }
