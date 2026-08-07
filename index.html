@@ -310,10 +310,31 @@
     display:flex; align-items:center; justify-content:center; flex-shrink:0;
   }
   .settings-menu-item-icon svg{width:20px; height:20px; display:block;}
-  .settings-menu-item-icon.logout-icon{background:var(--wine);}
-  .settings-menu-item-label{flex:1; text-align:left;}
+  .settings-menu-item-icon.cat-red{background:var(--wood);}
+  .settings-menu-item-icon.cat-green{background:#2F7A5E;}
+  .settings-menu-item-icon.cat-blue{background:#3A6EA5;}
+  .settings-menu-item-text{flex:1; min-width:0; display:flex; flex-direction:column; text-align:left; gap:1px;}
+  .settings-menu-item-label{display:block;}
+  .settings-menu-item-subtitle{
+    display:block; min-height:15px; font-family:var(--font-body); font-size:12.5px; font-weight:500;
+    color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
   .settings-menu-item-chevron{width:18px; height:18px; color:var(--muted); flex-shrink:0;}
   .settings-menu-item:hover{border-color:var(--wood); background:var(--bg);}
+  .badge-dot{width:8px; height:8px; border-radius:50%; background:var(--wine); flex-shrink:0;}
+  .group-label{
+    font-family:var(--font-body); font-size:11.5px; font-weight:800; letter-spacing:0.06em;
+    text-transform:uppercase; color:var(--muted); margin:14px 2px 0;
+  }
+  .group-label:first-child{margin-top:0;}
+  .profile-divider{height:1px; background:var(--line); margin:2px 0 4px;}
+  .profile-item{
+    display:flex; align-items:center; gap:10px;
+    background:none; border:none; padding:8px 2px;
+    font-family:var(--font-body); font-size:15px; font-weight:700; color:var(--wine);
+    cursor:pointer;
+  }
+  .profile-item-icon{width:19px; height:19px; flex-shrink:0; color:var(--wine);}
   .settings-header-row .section-title{margin-bottom:0;}
   .member-count{font-family:var(--font-body); font-size:15px; font-weight:600; color:var(--muted);}
   .section-title-small{font-family:var(--font-display); font-size:16px; margin:0 0 10px; font-weight:700; letter-spacing:-0.01em;}
@@ -1381,6 +1402,13 @@
   function invalidate(key){
     delete state._lastFetched[key];
   }
+  // Wurde dieser Datentyp in dieser Sitzung schon mindestens einmal geladen (unabhängig davon,
+  // ob er laut isFresh() noch "frisch" ist)? Dient dazu, im Einstellungen-Menü Untertitel nur aus
+  // bereits im Speicher vorhandenen Daten zu bilden, statt dafür einen zusätzlichen Firestore-Request
+  // auszulösen (siehe viewSettingsMenu()).
+  function hasLoaded(key){
+    return Object.prototype.hasOwnProperty.call(state._lastFetched, key);
+  }
   // Lädt einen Datentyp nur neu, wenn er nicht mehr "frisch" ist (siehe FRESH_MS oben) - sonst
   // wird sofort der vorhandene state[stateKey]-Wert zurückgegeben, ohne Firestore-Request. Nach
   // erfolgreichem Laden wird der Zeitstempel aktualisiert. fetchFn darf state[stateKey] NICHT
@@ -2422,103 +2450,138 @@
     render();
   }
 
+  // Untertitel für das Club-Item: Clubname + Zahlungsdaten-Status, jeweils bereits als
+  // CURRENT_CLUB_DATA im Speicher (seit bootstrapAuth()) - kein zusätzlicher Firestore-Request.
+  function settingsMenuClubSubtitle(){
+    if(!CURRENT_CLUB_DATA) return '';
+    const bits = [];
+    if(CURRENT_CLUB_DATA.paypalName) bits.push('PayPal');
+    if(CURRENT_CLUB_DATA.iban) bits.push('IBAN');
+    const paymentText = bits.length ? `${bits.join(', ')} hinterlegt` : 'Keine Zahlungsdaten hinterlegt';
+    return `${clubDisplayName()} · ${paymentText}`;
+  }
+  // Badge-Punkt am Club-Item: signalisiert Handlungsbedarf, wenn der Free-Zeitraum bereits
+  // abgelaufen ist (accessBlocked) oder in Kürze abläuft. Nutzt ebenfalls nur bereits geladene
+  // CURRENT_CLUB_DATA.subscription-Werte.
+  function settingsMenuClubNeedsAttention(){
+    const sub = (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.subscription) || {};
+    if(sub.accessBlocked) return true;
+    if(!sub.freeUntil) return false;
+    const daysLeft = (Date.parse(sub.freeUntil) - Date.parse(todayISO())) / 86400000;
+    return daysLeft >= 0 && daysLeft <= 14;
+  }
+  // Untertitel für das Terminserien-Item: leitet aus den bereits beim App-Start geladenen
+  // state.calendarEvents (siehe init()) die Wiederholungs-Serien ab, ohne extra nachzuladen.
+  function settingsMenuTermineSubtitle(){
+    if(!hasLoaded('calendarEvents')) return '';
+    const series = state.calendarEvents.filter(ev=> ev.recurrence && ev.recurrence!=='none');
+    if(series.length===0) return 'Noch keine Terminserie';
+    if(series.length>1) return `${series.length} Terminserien`;
+    const ev = series[0];
+    const weekday = new Date(ev.start+'T00:00:00').toLocaleDateString('de-DE', {weekday:'long'});
+    if(ev.recurrence==='weekly') return `Jeden ${weekday}`;
+    if(ev.recurrence==='biweekly') return `Alle 2 Wochen (${weekday})`;
+    if(ev.recurrence==='every4weeks') return `Alle 4 Wochen (${weekday})`;
+    return RECURRENCE_LABELS_DE[ev.recurrence] || '';
+  }
+  function settingsMenuItemHtml(opts){
+    const badgeHtml = opts.badge ? `<span class="badge-dot" aria-hidden="true"></span>` : '';
+    return `
+      <button type="button" class="settings-menu-item" id="${opts.id}">
+        <span class="settings-menu-item-icon ${opts.colorClass}">${opts.iconSvg}</span>
+        <span class="settings-menu-item-text">
+          <span class="settings-menu-item-label">${opts.label}</span>
+          <span class="settings-menu-item-subtitle">${escapeHtml(opts.subtitle || '')}</span>
+        </span>
+        ${badgeHtml}
+        <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 6l6 6-6 6"/>
+        </svg>
+      </button>
+    `;
+  }
   function viewSettingsMenu(){
+    const clubItem = settingsMenuItemHtml({
+      id:'settings-menu-club-btn', colorClass:'cat-red', label:'Club',
+      subtitle: settingsMenuClubSubtitle(), badge: settingsMenuClubNeedsAttention(),
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 21V9l9-6 9 6v12"/>
+        <path d="M9 21v-7h6v7"/>
+      </svg>`
+    });
+    const mitgliederItem = settingsMenuItemHtml({
+      id:'settings-menu-mitglieder-btn', colorClass:'cat-red', label:'Mitglieder',
+      subtitle: `${state.members.length} aktiv`,
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="9" cy="8" r="3.2"/>
+        <path d="M3.5 20c0-3.5 2.7-6 5.5-6s5.5 2.5 5.5 6"/>
+        <circle cx="17" cy="9" r="2.6"/>
+        <path d="M15 20c0-2.8 1-5 3.8-5.4"/>
+      </svg>`
+    });
+    const strafenItem = settingsMenuItemHtml({
+      id:'settings-menu-strafen-btn', colorClass:'cat-green', label:'Strafen',
+      subtitle: hasLoaded('finesCatalog') ? (state.finesCatalog.length ? `${state.finesCatalog.length} Strafenarten` : 'Noch nicht eingerichtet') : '',
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M15 8.3a3.6 4.6 0 0 0-3-1.4c-2.3 0-4.1 2.3-4.1 5.1s1.8 5.1 4.1 5.1a3.6 4.6 0 0 0 3-1.4"/>
+        <line x1="6.7" y1="10.6" x2="12.5" y2="10.6"/>
+        <line x1="6.7" y1="13.4" x2="12.5" y2="13.4"/>
+      </svg>`
+    });
+    const spieleItem = settingsMenuItemHtml({
+      id:'settings-menu-spiele-btn', colorClass:'cat-green', label:'Spiele',
+      subtitle: hasLoaded('gamesCatalog') ? (state.gamesCatalog.length ? `${state.gamesCatalog.length} Spiele` : 'Noch nicht eingerichtet') : '',
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="4"/>
+        <circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"/>
+        <circle cx="16" cy="8" r="1.3" fill="currentColor" stroke="none"/>
+        <circle cx="8" cy="16" r="1.3" fill="currentColor" stroke="none"/>
+        <circle cx="16" cy="16" r="1.3" fill="currentColor" stroke="none"/>
+        <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/>
+      </svg>`
+    });
+    const finanzenItem = settingsMenuItemHtml({
+      id:'settings-menu-finanzen-btn', colorClass:'cat-blue', label:'Finanzen',
+      subtitle: hasLoaded('financeAccounts') ? `${state.financeAccounts.length} Konten` : '',
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9.5"/>
+        <path d="M15.2 8.7a4 5 0 0 0-3.4-1.7c-2.5 0-4.5 2.4-4.5 5s2 5 4.5 5a4 5 0 0 0 3.4-1.7"/>
+        <line x1="6.5" y1="10.6" x2="13" y2="10.6"/>
+        <line x1="6.5" y1="13.4" x2="13" y2="13.4"/>
+      </svg>`
+    });
+    const termineItem = settingsMenuItemHtml({
+      id:'settings-menu-termine-btn', colorClass:'cat-blue', label:'Terminserien',
+      subtitle: settingsMenuTermineSubtitle(),
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="17" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="7" y1="2" x2="7" y2="6"/>
+        <line x1="17" y1="2" x2="17" y2="6"/>
+      </svg>`
+    });
     return `
       <div class="card">
         <h2 class="section-title">Einstellungen</h2>
         <div class="settings-menu-list">
-          <button type="button" class="settings-menu-item" id="settings-menu-club-btn">
-            <span class="settings-menu-item-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 21V9l9-6 9 6v12"/>
-                <path d="M9 21v-7h6v7"/>
-              </svg>
-            </span>
-            <span class="settings-menu-item-label">Clubverwaltung</span>
-            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 6l6 6-6 6"/>
+          <div class="group-label">Stammdaten</div>
+          ${clubItem}
+          ${mitgliederItem}
+          <div class="group-label">Spielinhalte</div>
+          ${strafenItem}
+          ${spieleItem}
+          <div class="group-label">Verwaltung</div>
+          ${finanzenItem}
+          ${termineItem}
+          <div class="group-label">Profil</div>
+          <div class="profile-divider"></div>
+          <button type="button" class="profile-item" id="settings-menu-logout-btn">
+            <svg class="profile-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
             </svg>
-          </button>
-          <button type="button" class="settings-menu-item" id="settings-menu-mitglieder-btn">
-            <span class="settings-menu-item-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="9" cy="8" r="3.2"/>
-                <path d="M3.5 20c0-3.5 2.7-6 5.5-6s5.5 2.5 5.5 6"/>
-                <circle cx="17" cy="9" r="2.6"/>
-                <path d="M15 20c0-2.8 1-5 3.8-5.4"/>
-              </svg>
-            </span>
-            <span class="settings-menu-item-label">Mitgliederverwaltung</span>
-            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 6l6 6-6 6"/>
-            </svg>
-          </button>
-          <button type="button" class="settings-menu-item" id="settings-menu-strafen-btn">
-            <span class="settings-menu-item-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="9"/>
-                <path d="M15 8.3a3.6 4.6 0 0 0-3-1.4c-2.3 0-4.1 2.3-4.1 5.1s1.8 5.1 4.1 5.1a3.6 4.6 0 0 0 3-1.4"/>
-                <line x1="6.7" y1="10.6" x2="12.5" y2="10.6"/>
-                <line x1="6.7" y1="13.4" x2="12.5" y2="13.4"/>
-              </svg>
-            </span>
-            <span class="settings-menu-item-label">Strafenverwaltung</span>
-            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 6l6 6-6 6"/>
-            </svg>
-          </button>
-          <button type="button" class="settings-menu-item" id="settings-menu-spiele-btn">
-            <span class="settings-menu-item-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="4"/>
-                <circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"/>
-                <circle cx="16" cy="8" r="1.3" fill="currentColor" stroke="none"/>
-                <circle cx="8" cy="16" r="1.3" fill="currentColor" stroke="none"/>
-                <circle cx="16" cy="16" r="1.3" fill="currentColor" stroke="none"/>
-                <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/>
-              </svg>
-            </span>
-            <span class="settings-menu-item-label">Spieleverwaltung</span>
-            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 6l6 6-6 6"/>
-            </svg>
-          </button>
-          <button type="button" class="settings-menu-item" id="settings-menu-finanzen-btn">
-            <span class="settings-menu-item-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="9.5"/>
-                <path d="M15.2 8.7a4 5 0 0 0-3.4-1.7c-2.5 0-4.5 2.4-4.5 5s2 5 4.5 5a4 5 0 0 0 3.4-1.7"/>
-                <line x1="6.5" y1="10.6" x2="13" y2="10.6"/>
-                <line x1="6.5" y1="13.4" x2="13" y2="13.4"/>
-              </svg>
-            </span>
-            <span class="settings-menu-item-label">Finanzverwaltung</span>
-            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 6l6 6-6 6"/>
-            </svg>
-          </button>
-          <button type="button" class="settings-menu-item" id="settings-menu-termine-btn">
-            <span class="settings-menu-item-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="4" width="18" height="17" rx="2"/>
-                <line x1="3" y1="9" x2="21" y2="9"/>
-                <line x1="7" y1="2" x2="7" y2="6"/>
-                <line x1="17" y1="2" x2="17" y2="6"/>
-              </svg>
-            </span>
-            <span class="settings-menu-item-label">Terminverwaltung</span>
-            <svg class="settings-menu-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 6l6 6-6 6"/>
-            </svg>
-          </button>
-          <button type="button" class="settings-menu-item" id="settings-menu-logout-btn">
-            <span class="settings-menu-item-icon logout-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                <polyline points="16 17 21 12 16 7"/>
-                <line x1="21" y1="12" x2="9" y2="12"/>
-              </svg>
-            </span>
             <span class="settings-menu-item-label">Abmelden</span>
           </button>
         </div>
