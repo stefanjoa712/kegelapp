@@ -8566,6 +8566,10 @@
     const isFromArrears = !!transaction.fromArrears;
     const arrearsName = transaction.arrearsName || (transaction.description.includes(' – ') ? transaction.description.split(' – ').pop() : null);
     const arrearsMemberId = transaction.arrearsMemberId || null;
+    // Umbuchungen (Issue #83) bestehen aus zwei per transferId gekoppelten Dokumenten - beide
+    // werden beim Löschen gemeinsam über deleteTransactions() entfernt, damit nie nur eine Seite
+    // übrig bleibt. Der Bestätigungsdialog bleibt bewusst generisch (siehe Design-Spec).
+    const pairedTransferTx = transaction.transferId ? state.financeTransactions.find(t=>t.transferId===transaction.transferId && t.id!==transaction.id) : null;
     showModal(`
       <h3>Umsatz löschen</h3>
       <p>„${escapeHtml(transaction.description)}" wirklich löschen?</p>
@@ -8579,9 +8583,16 @@
     document.getElementById('confirm-delete-transaction-yes').addEventListener('click', async ()=>{
       const yesBtn = document.getElementById('confirm-delete-transaction-yes');
       yesBtn.disabled = true; yesBtn.textContent = 'Löscht…';
-      state.financeTransactions = state.financeTransactions.filter(t=>t.id!==transaction.id);
 
-      const saves = [deleteTransaction(transaction.id)];
+      const saves = [];
+      if(pairedTransferTx){
+        state.financeTransactions = state.financeTransactions.filter(t=>t.id!==transaction.id && t.id!==pairedTransferTx.id);
+        saves.push(deleteTransactions([transaction.id, pairedTransferTx.id]));
+      }else{
+        state.financeTransactions = state.financeTransactions.filter(t=>t.id!==transaction.id);
+        saves.push(deleteTransaction(transaction.id));
+      }
+
       // arrearsMemberId ist bei allen seit dem ID-Umbau erfassten Zahlungen gesetzt. Für
       // Alttransaktionen (vor der Migration, ohne arrearsMemberId) wird hier einmalig noch per
       // Name auf ein aktuelles Mitglied aufgelöst - reiner Fallback für Bestandsdaten, keine
