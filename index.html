@@ -8043,6 +8043,15 @@
         const user = auth.currentUser;
         const credential = EmailAuthProvider.credential(currentEmail, password);
         await reauthenticateWithCredential(user, credential);
+        // Serverseitig hinterlegen, WÄHREND der Aufrufer noch mit der ALTEN E-Mail authentifiziert
+        // ist (verifyBeforeUpdateEmail ändert auth.currentUser.email erst nach Klick auf den
+        // Bestätigungslink) - das macht request.auth.token.email zum vertrauenswürdigen Beweis der
+        // alten Adresse. syncOwnEmailAcrossClubs übernimmt oldEmail NICHT mehr vom Client (siehe
+        // dort): sonst könnte ein Aufrufer eine beliebige fremde E-Mail als "oldEmail" angeben und
+        // damit ein fremdes Mitgliedsdokument - inkl. dessen role-Feld, das syncMemberRoleClaim als
+        // Custom-Claim übernimmt - auf die eigene Adresse umbiegen (Privilegien-Eskalation).
+        const recordPendingFn = httpsCallable(functions, 'recordPendingEmailChange');
+        await recordPendingFn({ newEmail });
         await verifyBeforeUpdateEmail(user, newEmail);
         localStorage.setItem('pendingEmailChange', JSON.stringify({ oldEmail: currentEmail, newEmail }));
         hideModalLoadingOverlay();
@@ -9952,16 +9961,44 @@
     if(!pending || !pending.oldEmail || !pending.newEmail) { localStorage.removeItem('pendingEmailChange'); return; }
     const user = auth.currentUser;
     if(!user) return;
-    try{ await user.reload(); }catch(e){ return; }
+    try{
+      await user.reload();
+      // ID-Token erzwungen neu holen (nicht nur den User-Datensatz per reload()) - Callable
+      // Functions senden sonst weiterhin das bis zu 1h alte gecachte Token, das nach einer
+      // gerade bestätigten E-Mail-Änderung noch die ALTE Adresse trägt. syncOwnEmailAcrossClubs
+      // liest die neue Adresse serverseitig aus request.auth.token.email - mit einem veralteten
+      // Token würde der Abgleich sonst still fehlschlagen (Server sieht scheinbar "keine Änderung").
+      await user.getIdToken(true);
+    }catch(e){ return; }
     if((auth.currentUser.email||'').toLowerCase() !== pending.newEmail.toLowerCase()) return;
+    // oldEmail wird NICHT mehr an syncOwnEmailAcrossClubs übergeben - die Function liest die
+    // vertrauenswürdige alte Adresse serverseitig aus dem per recordPendingEmailChange() (siehe
+    // showChangeEmailModal()) hinterlegten Datensatz, keyed auf die eigene Nutzer-ID. Ein vom
+    // Client übergebenes oldEmail hätte es erlaubt, ein beliebiges fremdes Mitgliedsdokument auf
+    // die eigene Adresse umzubiegen (siehe Security-Fix-Kommentar in functions/index.js).
+    let result;
     try{
       const syncFn = httpsCallable(functions, 'syncOwnEmailAcrossClubs');
-      await syncFn({ oldEmail: pending.oldEmail });
-      const m = state.members.find(x=> (x.email||'').toLowerCase()===pending.oldEmail.toLowerCase());
-      if(m) m.email = pending.newEmail;
-      invalidate('members');
+      const res = await syncFn({});
+      result = res.data;
     }catch(e){ return; }
-    localStorage.removeItem('pendingEmailChange');
+    if(result && result.applied){
+      // Neue Array-Referenz statt In-Place-Mutation: getCurrentMember() cached sein Ergebnis
+      // unter (state.members-Referenz, E-Mail) - eine In-Place-Änderung hätte diesen Cache-Key
+      // nicht gebrochen und getCurrentMember() hätte für den Rest der Session weiter null
+      // zurückgegeben (kein "Mein Konto", keine eigene Rückstandsanzeige), falls es zuvor schon
+      // einmal mit der neuen Adresse aufgerufen wurde, bevor der Sync durchlief.
+      state.members = state.members.map(x=>
+        (x.email||'').toLowerCase()===pending.oldEmail.toLowerCase() ? { ...x, email: pending.newEmail } : x
+      );
+      invalidate('members');
+      render();
+    }
+    if(!result || result.applied || result.reason==='no-pending'){
+      localStorage.removeItem('pendingEmailChange');
+    }
+    // Sonst (result.reason==='token-stale' o.ä.): Eintrag bewusst stehen lassen, nächster
+    // App-Start versucht es mit einem dann garantiert frischen Token erneut.
   }
 
   (function bootstrapAuth(){

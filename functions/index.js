@@ -1420,22 +1420,49 @@ exports.updateOwnLastLogin = onCall({}, async (request) => {
   return { success: true };
 });
 
+// Hinterlegt die Absicht einer Self-Service-E-Mail-Änderung (Issue #60), WÄHREND der Aufrufer noch
+// mit der ALTEN Adresse authentifiziert ist - der Client ruft dies direkt nach erfolgreichem
+// reauthenticateWithCredential() aber VOR verifyBeforeUpdateEmail() auf (siehe showChangeEmailModal()
+// im Client), denn verifyBeforeUpdateEmail() ändert auth.currentUser.email erst nach Klick auf den
+// Bestätigungslink. request.auth.token.email ist zu diesem Zeitpunkt also noch nachweislich die
+// alte, echte Adresse des Aufrufers - genau der vertrauenswürdige Wert, den syncOwnEmailAcrossClubs
+// später braucht, um das richtige Mitgliedsdokument zu finden, ohne sich auf eine vom Client
+// behauptete oldEmail verlassen zu müssen (siehe dortiger Sicherheits-Kommentar).
+exports.recordPendingEmailChange = onCall({}, async (request) => {
+  const { newEmail } = request.data || {};
+  if (!newEmail || typeof newEmail !== 'string') {
+    throw new HttpsError('invalid-argument', 'Neue E-Mail-Adresse fehlt.');
+  }
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  const oldEmail = request.auth.token.email;
+  if (!oldEmail) {
+    throw new HttpsError('failed-precondition', 'Keine E-Mail-Adresse am Account hinterlegt.');
+  }
+  await db.collection('pendingEmailChanges').doc(request.auth.uid).set({
+    oldEmail: oldEmail.toLowerCase(),
+    newEmail: newEmail.toLowerCase(),
+    createdAt: new Date().toISOString(),
+  });
+  return { success: true };
+});
+
 // Synchronisiert eine per Self-Service geänderte E-Mail-Adresse (Issue #60) in JEDEM
 // Mitgliedsdokument aller Clubs, denen der Aufrufer laut Custom Claim 'clubIds' angehört. Nötig,
 // weil Member-Dokumente keine authUid-Referenz haben, sondern per E-Mail-Match gefunden werden
 // (siehe getCurrentMember() im Client, updateOwnLastLogin oben) - bleibt die E-Mail in einem
-// zweiten Club auf dem alten Stand stehen, bricht dort der Match. Der Client ruft diese Function
-// erst auf, NACHDEM der Nutzer den von verifyBeforeUpdateEmail() verschickten Bestätigungslink
-// angeklickt hat (auth.currentUser.email zeigt dann bereits auf die neue Adresse) - die neue
-// Adresse wird deshalb bewusst NICHT vom Client übernommen, sondern aus request.auth.token.email
-// gelesen, damit ein Aufrufer damit nicht ein fremdes Mitgliedsdokument auf eine beliebige E-Mail
-// umbiegen kann. 'oldEmail' muss der Client mitgeben, da sie nach der Änderung nirgends mehr im
-// Auth-Token steht.
+// zweiten Club auf dem alten Stand stehen, bricht dort der Match.
+//
+// SICHERHEIT: weder die alte noch die neue Adresse werden vom Client übernommen. Die neue Adresse
+// kommt aus request.auth.token.email (dem eigenen, verifizierten Auth-Token). Die alte Adresse
+// kommt aus dem von recordPendingEmailChange() serverseitig hinterlegten Datensatz unter
+// 'pendingEmailChanges/{uid}', keyed auf die eigene Nutzer-ID - NICHT aus einem Funktionsparameter.
+// Ein früherer Entwurf ließ den Client 'oldEmail' als Parameter angeben; das hätte es jedem
+// Clubmitglied erlaubt, ein beliebiges fremdes Mitgliedsdokument (inkl. dessen role-Feld, das
+// syncMemberRoleClaim als Custom-Claim übernimmt) auf die eigene Adresse umzubiegen und sich damit
+// z.B. selbst zum Präsidenten hochzustufen - siehe Review-Fund zu Issue #60.
 exports.syncOwnEmailAcrossClubs = onCall({}, async (request) => {
-  const { oldEmail } = request.data || {};
-  if (!oldEmail || typeof oldEmail !== 'string') {
-    throw new HttpsError('invalid-argument', 'Alte E-Mail-Adresse fehlt.');
-  }
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
   }
@@ -1443,7 +1470,24 @@ exports.syncOwnEmailAcrossClubs = onCall({}, async (request) => {
   if (!newEmail) {
     throw new HttpsError('failed-precondition', 'Keine E-Mail-Adresse am Account hinterlegt.');
   }
-  const oldEmailLower = oldEmail.toLowerCase();
+
+  const pendingRef = db.collection('pendingEmailChanges').doc(request.auth.uid);
+  const pendingSnap = await pendingRef.get();
+  if (!pendingSnap.exists) {
+    // Kein hinterlegter Änderungswunsch (z.B. schon synchronisiert, oder gar keine E-Mail-Änderung
+    // im Gange) - für den Aufrufer kein Fehler, nur nichts zu tun.
+    return { success: true, applied: false, reason: 'no-pending', updatedClubs: 0 };
+  }
+  const pending = pendingSnap.data() || {};
+  if ((pending.newEmail || '') !== newEmail) {
+    // Der hinterlegte Datensatz passt nicht zur aktuellen Token-E-Mail - typischerweise ein noch
+    // nicht aufgefrischtes (bis zu 1h altes gecachtes) ID-Token, das nach der gerade bestätigten
+    // Änderung noch die alte Adresse trägt. Datensatz bewusst NICHT löschen, damit ein erneuter
+    // Aufruf mit frischerem Token es später noch nachholen kann.
+    return { success: true, applied: false, reason: 'token-stale', updatedClubs: 0 };
+  }
+
+  const oldEmailLower = pending.oldEmail || '';
   const clubIds = Array.isArray(request.auth.token.clubIds) ? request.auth.token.clubIds : [];
 
   let updatedClubs = 0;
@@ -1458,7 +1502,8 @@ exports.syncOwnEmailAcrossClubs = onCall({}, async (request) => {
     updatedClubs++;
   }
 
-  return { success: true, updatedClubs };
+  await pendingRef.delete();
+  return { success: true, applied: true, updatedClubs };
 });
 
 // -------- Die eigentliche Cloud Function --------
