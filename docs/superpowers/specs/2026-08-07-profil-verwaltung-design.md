@@ -105,11 +105,17 @@ nächsten `onAuthStateChanged`/App-Start, ähnlich `bootstrapAuth()`).
 E-Mail-Änderung nicht mehr über `auth.currentUser.email` finden (die zeigt ja
 bereits auf die neue Adresse). Das Frontend merkt sich deshalb die alte
 Adresse selbst: unmittelbar bevor `verifyBeforeUpdateEmail()` aufgerufen
-wird, schreibt es `{oldEmail, newEmail}` in `sessionStorage`
-(`pendingEmailChange`). Beim nächsten App-Start prüft `bootstrapAuth()`, ob
-dieser Eintrag existiert und `auth.currentUser.email === newEmail` bereits
-zutrifft — dann wird `syncOwnEmailAcrossClubs({oldEmail, newEmail})` genau
-einmal aufgerufen und der `sessionStorage`-Eintrag danach gelöscht.
+wird, schreibt es `{oldEmail, newEmail}` in `localStorage`
+(`pendingEmailChange`) — bewusst `localStorage`, nicht `sessionStorage`, da
+der Bestätigungslink typischerweise in einer separaten Mail-App geöffnet
+wird und zwischen Versand und Klick durchaus ein App-Neustart liegen kann.
+Bei jedem App-Start ruft `bootstrapAuth()` nach erfolgreichem Login
+`checkPendingEmailChange()` auf: liest den `localStorage`-Eintrag, ruft
+`user.reload()` auf, und vergleicht `auth.currentUser.email` mit `newEmail`.
+Stimmt es überein, wird `syncOwnEmailAcrossClubs({oldEmail, newEmail})` genau
+einmal aufgerufen und der `localStorage`-Eintrag danach gelöscht. Stimmt es
+noch nicht überein (Link noch nicht angeklickt), bleibt der Eintrag stehen
+und wird beim nächsten App-Start erneut geprüft.
 
 - Function-Parameter: `{ oldEmail, newEmail }` (String, jeweils
   clientseitig übergeben — die Function verifiziert selbst nicht erneut, ob
