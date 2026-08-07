@@ -999,11 +999,20 @@
   // 'forceRefresh=true' erzwingt einen neuen ID-Token vom Server (Firebase cached Tokens bis zu
   // einer Stunde) - wichtig direkt nach einer frischen Einladung, wo der Claim serverseitig
   // gerade erst gesetzt wurde und ein gecachtes Token ihn noch nicht enthält.
+  // Cacht außerdem die ermittelte Club-Liste in AVAILABLE_CLUB_IDS (Issue #88, für die Sichtbarkeit
+  // des "Club wechseln"-Menüpunkts) und konsumiert einen evtl. per switchClub() gesetzten
+  // sessionStorage-Override: liegt einer vor UND ist er Teil der gerade ermittelten Club-Liste,
+  // wird er direkt übernommen und die Auswahl-Anzeige übersprungen. Die Prüfung gegen die frisch
+  // ermittelte Liste schützt davor, dass ein veralteter/manipulierter Override-Wert auf einen Club
+  // verweist, auf den der Account inzwischen keinen Zugriff mehr hat.
   async function resolveActiveClub(user, forceRefresh){
     if(user.email===ADMIN_EMAIL){
       let allClubIds = [];
       try{ allClubIds = await getAllClubIds(); }catch(e){ /* fällt unten auf "Kein Zugriff" zurück */ }
+      AVAILABLE_CLUB_IDS = allClubIds;
       if(allClubIds.length===0){ renderNoClubAccessScreen(); return null; }
+      const override = consumeClubSwitchOverride();
+      if(override && allClubIds.includes(override)) return override;
       if(allClubIds.length===1) return allClubIds[0];
       return await showClubSelectionScreen(allClubIds);
     }
@@ -1017,10 +1026,13 @@
       // kennt - einmal mit erzwungenem Refresh nachschauen, bevor wir aufgeben.
       return resolveActiveClub(user, true);
     }
+    AVAILABLE_CLUB_IDS = clubIds;
     if(clubIds.length===0){
       renderNoClubAccessScreen();
       return null;
     }
+    const override = consumeClubSwitchOverride();
+    if(override && clubIds.includes(override)) return override;
     if(clubIds.length===1){
       return clubIds[0];
     }
