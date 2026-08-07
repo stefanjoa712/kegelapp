@@ -4065,6 +4065,11 @@
           }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: transactionDetail', e); }
         }
         state.currentTransactionId = txId==='new' ? null : txId;
+        // Segment aus der wiederhergestellten Transaktion ableiten (Issue #83) - sonst bleibt beim
+        // Zurück-/Vorwärts-Navigieren ein veralteter state.newTxSegment stehen und kippt beim
+        // Speichern das Vorzeichen (siehe goToTransactionDetail()).
+        const restoredTx = state.currentTransactionId ? state.financeTransactions.find(x=>x.id===state.currentTransactionId) : null;
+        state.newTxSegment = restoredTx ? (restoredTx.amount>=0 ? 'income' : 'expense') : 'income';
         state.view = 'transactionDetail';
         render();
       }else if(sig.startsWith('memberDetail:')){
