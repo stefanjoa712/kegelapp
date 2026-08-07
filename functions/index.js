@@ -1420,6 +1420,47 @@ exports.updateOwnLastLogin = onCall({}, async (request) => {
   return { success: true };
 });
 
+// Synchronisiert eine per Self-Service geänderte E-Mail-Adresse (Issue #60) in JEDEM
+// Mitgliedsdokument aller Clubs, denen der Aufrufer laut Custom Claim 'clubIds' angehört. Nötig,
+// weil Member-Dokumente keine authUid-Referenz haben, sondern per E-Mail-Match gefunden werden
+// (siehe getCurrentMember() im Client, updateOwnLastLogin oben) - bleibt die E-Mail in einem
+// zweiten Club auf dem alten Stand stehen, bricht dort der Match. Der Client ruft diese Function
+// erst auf, NACHDEM der Nutzer den von verifyBeforeUpdateEmail() verschickten Bestätigungslink
+// angeklickt hat (auth.currentUser.email zeigt dann bereits auf die neue Adresse) - die neue
+// Adresse wird deshalb bewusst NICHT vom Client übernommen, sondern aus request.auth.token.email
+// gelesen, damit ein Aufrufer damit nicht ein fremdes Mitgliedsdokument auf eine beliebige E-Mail
+// umbiegen kann. 'oldEmail' muss der Client mitgeben, da sie nach der Änderung nirgends mehr im
+// Auth-Token steht.
+exports.syncOwnEmailAcrossClubs = onCall({}, async (request) => {
+  const { oldEmail } = request.data || {};
+  if (!oldEmail || typeof oldEmail !== 'string') {
+    throw new HttpsError('invalid-argument', 'Alte E-Mail-Adresse fehlt.');
+  }
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  const newEmail = (request.auth.token.email || '').toLowerCase();
+  if (!newEmail) {
+    throw new HttpsError('failed-precondition', 'Keine E-Mail-Adresse am Account hinterlegt.');
+  }
+  const oldEmailLower = oldEmail.toLowerCase();
+  const clubIds = Array.isArray(request.auth.token.clubIds) ? request.auth.token.clubIds : [];
+
+  let updatedClubs = 0;
+  for (const clubId of clubIds) {
+    const members = await loadMembers(clubId);
+    if (!members) continue;
+    const member = members.find(m => (m.email || '').toLowerCase() === oldEmailLower);
+    if (!member) continue;
+    member.email = newEmail;
+    await db.collection('clubs').doc(clubId).collection('members').doc(member.id)
+      .set({ value: JSON.stringify(member) });
+    updatedClubs++;
+  }
+
+  return { success: true, updatedClubs };
+});
+
 // -------- Die eigentliche Cloud Function --------
 // Trigger-Pfad mit Wildcard {clubId} statt fest verdrahteter CLUB_ID: reagiert auf
 // Kegelabend-Änderungen in JEDEM Club, nicht nur dem einen aktuell existierenden. clubId kommt
