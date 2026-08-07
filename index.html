@@ -8857,7 +8857,7 @@
         ${canTransfer ? `<button type="button" class="tab-btn${segment==='transfer'?' active':''}" id="tx-type-transfer-btn"${disabledAttr}>Umbuchung</button>` : ''}
       </div>
     `;
-    if(segment==='transfer'){
+    if(segment==='transfer' && canTransfer){
       const fromAccountId = state.financeAccounts[0].id;
       const toAccounts = state.financeAccounts.filter(a=>a.id!==fromAccountId);
       const fromOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${a.id===fromAccountId?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
@@ -8984,7 +8984,7 @@
 
       const segment = state.newTxSegment || 'income';
 
-      if(segment==='transfer'){
+      if(segment==='transfer' && !isEdit){
         const fromAccountId = document.getElementById('new-tx-from-account').value;
         const toAccountId = document.getElementById('new-tx-to-account').value;
         const amountRaw = document.getElementById('new-tx-transfer-amount').value.replace(',', '.');
