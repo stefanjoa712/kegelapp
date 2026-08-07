@@ -6986,6 +6986,8 @@
   function attachAccountSettingsListeners(){
     const resetPwBtn = document.getElementById('account-reset-password-btn');
     if(resetPwBtn) resetPwBtn.addEventListener('click', showPasswordResetModal);
+    const unlinkBtn = document.getElementById('account-unlink-btn');
+    if(unlinkBtn) unlinkBtn.addEventListener('click', showUnlinkOwnAccountModal);
   }
 
   function attachSettingsMenuListeners(){
@@ -7973,6 +7975,37 @@
       }catch(e){
         btn.disabled = false; btn.textContent = 'Link senden';
         errEl.textContent = 'Konnte nicht gesendet werden. Bitte später erneut versuchen.';
+      }
+    });
+  }
+
+  function showUnlinkOwnAccountModal(){
+    const clubName = escapeHtml(clubDisplayName());
+    showModal(`
+      <h3>Konto-Verknüpfung aufheben</h3>
+      <p>Dein Login-Zugang zu <strong>${clubName}</strong> wird entfernt. Deine Daten (Historie, Strafen, Beiträge) bleiben erhalten. Ein Vorstandsmitglied kann dich jederzeit erneut einladen.</p>
+      <p>Bist du in keinem weiteren Verein mit diesem Konto angemeldet, wird dein Login komplett gelöscht und du wirst automatisch abgemeldet.</p>
+      <p class="form-error" id="unlink-own-account-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+        <button type="button" class="btn-danger" id="confirm-unlink-own-yes">Verknüpfung aufheben</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-unlink-own-yes').addEventListener('click', async ()=>{
+      const btn = document.getElementById('confirm-unlink-own-yes');
+      const errEl = document.getElementById('unlink-own-account-error');
+      btn.disabled = true; btn.textContent = 'Wird entfernt…';
+      showModalLoadingOverlay('Verknüpfung wird aufgehoben…');
+      try{
+        const unlinkFn = httpsCallable(functions, 'unlinkOwnAccount');
+        await unlinkFn({ clubId: CURRENT_CLUB_ID });
+        closeGenericModal();
+        await logout();
+      }catch(e){
+        hideModalLoadingOverlay();
+        btn.disabled = false; btn.textContent = 'Verknüpfung aufheben';
+        errEl.textContent = 'Konnte nicht entfernt werden. Bitte später erneut versuchen.';
       }
     });
   }
