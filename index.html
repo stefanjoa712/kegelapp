@@ -313,6 +313,7 @@
   .settings-menu-item-icon.cat-red{background:var(--wood);}
   .settings-menu-item-icon.cat-green{background:#2F7A5E;}
   .settings-menu-item-icon.cat-blue{background:#3A6EA5;}
+  .settings-menu-item-icon.cat-wine{background:var(--wine);}
   .settings-menu-item-text{flex:1; min-width:0; display:flex; flex-direction:column; text-align:left; gap:1px;}
   .settings-menu-item-label{display:block;}
   .settings-menu-item-subtitle{
@@ -335,6 +336,13 @@
     cursor:pointer;
   }
   .profile-item-icon{width:19px; height:19px; flex-shrink:0; color:var(--wine);}
+  .account-info-card{
+    background:var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:12px 14px; margin-bottom:16px;
+  }
+  .account-info-name{font-family:var(--font-display); font-weight:700; font-size:15px;}
+  .account-info-email{font-family:var(--font-body); font-size:13px; color:var(--muted); margin-top:2px;}
+  .form-success{color:#2F7A5E; font-size:13px; margin:6px 0;}
   .settings-header-row .section-title{margin-bottom:0;}
   .member-count{font-family:var(--font-body); font-size:15px; font-weight:600; color:var(--muted);}
   .section-title-small{font-family:var(--font-display); font-size:16px; margin:0 0 10px; font-weight:700; letter-spacing:-0.01em;}
@@ -2205,6 +2213,10 @@
     state.view = 'settingsMenu';
     render();
   }
+  function goToAccountSettings(){
+    state.view = 'accountSettings';
+    render();
+  }
   async function goToClubManagement(){
     state.view = 'clubManagement';
     if(!isFresh('clubData')) renderLoading('Clubdaten werden geladen…');
@@ -2428,7 +2440,7 @@
   }
 
   function goBackFromHeaderInner(){
-    if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
+    if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement' || state.view==='accountSettings') goToSettingsMenu();
     else if(state.view==='subscriptionPlans') goToClubManagement();
     else if(state.view==='memberDetail') goToSettings();
     else if(state.view==='fineDetail') goToFinesManagement();
@@ -2478,6 +2490,13 @@
     const seriesCount = state.calendarEvents.filter(ev=> ev.recurrence && ev.recurrence!=='none').length;
     if(seriesCount===0) return 'Noch keine Terminserie';
     return seriesCount===1 ? '1 Terminserie' : `${seriesCount} Terminserien`;
+  }
+  // Untertitel für das "Mein Konto"-Item: die eigene hinterlegte E-Mail-Adresse, aus dem bereits
+  // geladenen state.members (kein extra Firestore-Request, gleiches Prinzip wie die übrigen
+  // settingsMenu*Subtitle()-Funktionen).
+  function settingsMenuAccountSubtitle(){
+    const member = getCurrentMember();
+    return member ? (member.email || '') : '';
   }
   function settingsMenuItemHtml(opts){
     const badgeHtml = opts.badge ? `<span class="badge-dot" aria-hidden="true"></span>` : '';
@@ -2556,6 +2575,17 @@
         <line x1="17" y1="2" x2="17" y2="6"/>
       </svg>`
     });
+    // Nur anzeigen, wenn der eingeloggte Auth-User einem Mitgliedsdokument in diesem Club
+    // zugeordnet werden kann - beim Admin-Sonderaccount (kein Mitgliedsdokument) liefert
+    // getCurrentMember() null, siehe dort.
+    const accountItem = getCurrentMember() ? settingsMenuItemHtml({
+      id:'settings-menu-account-btn', colorClass:'cat-blue', label:'Mein Konto',
+      subtitle: settingsMenuAccountSubtitle(),
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="8" r="4"/>
+        <path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
+      </svg>`
+    }) : '';
     return `
       <div class="card">
         <h2 class="section-title">Einstellungen</h2>
@@ -2570,6 +2600,7 @@
           ${finanzenItem}
           ${termineItem}
           <div class="group-label">Profil</div>
+          ${accountItem}
           <div class="profile-divider"></div>
           <button type="button" class="profile-item" id="settings-menu-logout-btn">
             <svg class="profile-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2579,6 +2610,53 @@
             </svg>
             <span class="settings-menu-item-label">Abmelden</span>
           </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function viewAccountSettings(){
+    const member = getCurrentMember();
+    const email = member ? (member.email || '') : '';
+    const name = member ? displayName(member) : '';
+    const resetPasswordItem = settingsMenuItemHtml({
+      id:'account-reset-password-btn', colorClass:'cat-blue', label:'Passwort zurücksetzen',
+      subtitle:'Link per E-Mail erhalten',
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="11" width="14" height="9" rx="2"/>
+        <path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+      </svg>`
+    });
+    const changeEmailItem = settingsMenuItemHtml({
+      id:'account-change-email-btn', colorClass:'cat-blue', label:'E-Mail-Adresse ändern',
+      subtitle: email,
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="5" width="18" height="14" rx="2"/>
+        <path d="M3 7l9 6 9-6"/>
+      </svg>`
+    });
+    const unlinkItem = settingsMenuItemHtml({
+      id:'account-unlink-btn', colorClass:'cat-wine', label:'Konto-Verknüpfung aufheben',
+      subtitle: clubDisplayName(),
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 9v4"/>
+        <path d="M12 17h.01"/>
+        <path d="M10.3 3.9L2.5 17a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
+      </svg>`
+    });
+    return `
+      <div class="card">
+        <h2 class="section-title">Mein Konto</h2>
+        <div class="account-info-card">
+          <div class="account-info-name">${escapeHtml(name)}</div>
+          <div class="account-info-email">${escapeHtml(email)}</div>
+        </div>
+        <div class="settings-menu-list">
+          <div class="group-label">Sicherheit</div>
+          ${resetPasswordItem}
+          ${changeEmailItem}
+          <div class="group-label">Gefahrenzone</div>
+          ${unlinkItem}
         </div>
       </div>
     `;
@@ -3715,6 +3793,7 @@
   const VIEWS = {
     main: { body: viewMain, title: null, attach: attachMainListeners },
     settingsMenu: { body: viewSettingsMenu, title: 'Einstellungen', attach: attachSettingsMenuListeners },
+    accountSettings: { body: viewAccountSettings, title: 'Mein Konto', attach: attachAccountSettingsListeners },
     clubManagement: { body: viewClubManagement, title: 'Clubverwaltung', attach: attachClubManagementListeners },
     subscriptionPlans: { body: viewSubscriptionPlans, title: 'Abonnement anpassen', attach: attachSubscriptionPlansListeners },
     settings: { body: viewSettings, title: 'Mitgliederverwaltung', attach: attachSettingsListeners },
@@ -6902,6 +6981,11 @@
     });
   }
 
+  // Wird pro Feature in Task 5-7 um je einen Button-Listener ergänzt (Passwort zurücksetzen,
+  // E-Mail ändern, Konto-Verknüpfung aufheben).
+  function attachAccountSettingsListeners(){
+  }
+
   function attachSettingsMenuListeners(){
     const clubBtn = document.getElementById('settings-menu-club-btn');
     if(clubBtn) clubBtn.addEventListener('click', goToClubManagement);
@@ -6915,6 +6999,8 @@
     if(finanzenBtn) finanzenBtn.addEventListener('click', goToFinanceManagement);
     const termineBtn = document.getElementById('settings-menu-termine-btn');
     if(termineBtn) termineBtn.addEventListener('click', goToEventManagement);
+    const accountBtn = document.getElementById('settings-menu-account-btn');
+    if(accountBtn) accountBtn.addEventListener('click', goToAccountSettings);
     const logoutBtn = document.getElementById('settings-menu-logout-btn');
     if(logoutBtn) logoutBtn.addEventListener('click', logout);
   }
