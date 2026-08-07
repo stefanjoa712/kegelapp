@@ -969,9 +969,11 @@
   // danach gelöscht) und überspringt bei Treffer die erneute Club-Auswahl.
   const CLUB_SWITCH_STORAGE_KEY = 'clubSwitchOverrideClubId';
   function consumeClubSwitchOverride(){
-    const value = sessionStorage.getItem(CLUB_SWITCH_STORAGE_KEY);
-    if(value) sessionStorage.removeItem(CLUB_SWITCH_STORAGE_KEY);
-    return value;
+    try{
+      const value = sessionStorage.getItem(CLUB_SWITCH_STORAGE_KEY);
+      if(value !== null) sessionStorage.removeItem(CLUB_SWITCH_STORAGE_KEY);
+      return value;
+    }catch(e){ return null; } // Storage gesperrt (Privatmodus o.ä.) - Boot darf daran nicht scheitern
   }
   const CLUB_NAME_FALLBACK = 'Kegelclub';
   function clubDisplayName(){ return (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.name) || CLUB_NAME_FALLBACK; }
@@ -9837,7 +9839,7 @@
   // genau wie bei einem normalen Login-Wechsel.
   async function switchClub(){
     const clubId = await showClubSelectionScreen(AVAILABLE_CLUB_IDS);
-    sessionStorage.setItem(CLUB_SWITCH_STORAGE_KEY, clubId);
+    try{ sessionStorage.setItem(CLUB_SWITCH_STORAGE_KEY, clubId); }catch(e){ /* Storage gesperrt - Reload greift trotzdem, Auswahl wird beim Neustart erneut gezeigt */ }
     location.reload();
   }
 
