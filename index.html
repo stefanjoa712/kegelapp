@@ -957,6 +957,22 @@
   // generischer Platzhalter, solange die echten Stammdaten noch nicht geladen sind (Ladebildschirm,
   // Meta-Tags vor dem Login).
   let CURRENT_CLUB_DATA = null;
+  // Alle Club-IDs, denen der eingeloggte Account zugeordnet ist (bzw. bei ADMIN_EMAIL: alle
+  // existierenden Clubs) - wird von resolveActiveClub() gecacht (Issue #88), damit das
+  // Einstellungen-Menü weiß, ob ein "Club wechseln"-Menüpunkt nötig ist (>1 Eintrag), ohne bei
+  // jedem Menü-Aufbau einen neuen Token-Request auszulösen. null vor dem ersten Login, wird beim
+  // Logout in bootstrapAuth() wieder zurückgesetzt.
+  let AVAILABLE_CLUB_IDS = null;
+  // sessionStorage-Key für den Club-Wechsel innerhalb einer laufenden Session (Issue #88): switchClub()
+  // legt hier einmalig die vom Nutzer gewählte Ziel-clubId ab und löst dann location.reload() aus;
+  // resolveActiveClub() liest den Wert beim Neustart per consumeClubSwitchOverride() (einmalig,
+  // danach gelöscht) und überspringt bei Treffer die erneute Club-Auswahl.
+  const CLUB_SWITCH_STORAGE_KEY = 'clubSwitchOverrideClubId';
+  function consumeClubSwitchOverride(){
+    const value = sessionStorage.getItem(CLUB_SWITCH_STORAGE_KEY);
+    if(value) sessionStorage.removeItem(CLUB_SWITCH_STORAGE_KEY);
+    return value;
+  }
   const CLUB_NAME_FALLBACK = 'Kegelclub';
   function clubDisplayName(){ return (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.name) || CLUB_NAME_FALLBACK; }
   // Initialen aus dem Clubnamen (max. 2 Buchstaben) als Avatar-Fallback, solange kein Logo
