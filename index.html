@@ -446,6 +446,9 @@
   .finance-tab-bar{padding:0; margin:14px 0 16px; background:var(--surface); border:2px solid var(--ink); border-radius:10px; overflow:hidden;}
   .finance-tab-bar .tab-btn{color:var(--ink); background:none; border-radius:0;}
   .finance-tab-bar .tab-btn.active{background:var(--wood); color:#fff;}
+  /* Segmented Control Einnahme/Ausgabe/Umbuchung im Umsatz-Formular (Issue #83) - wiederverwendet
+     .finance-tab-bar, nur ohne den oberen Card-Abstand, da sie das erste Element der Karte ist. */
+  .tx-type-bar{margin-top:0;}
 
   /* Mitglieder-Filter: Suchfeld + Rollen-Chips oberhalb der Liste. Die Chip-Leiste folgt dem
      gleichen Fluent-2-Muster wie .finance-tab-bar (durchgehende Kapsel, aktives Segment in
@@ -534,6 +537,7 @@
   .transaction-amount{font-family:var(--font-mono); font-weight:700; white-space:nowrap; flex-shrink:0;}
   .transaction-amount.positive{color:#1a7a3c;}
   .transaction-amount.negative{color:var(--wine);}
+  .transaction-amount.transfer{color:var(--muted);}
 
   .year-group{border-bottom:1px solid var(--line);}
   .year-group:last-child{border-bottom:none;}
@@ -1543,7 +1547,40 @@
       if(cacheKey) invalidate(cacheKey);
     }
 
-    return { getAll, save, remove };
+    // saveMany/removeMany schreiben bzw. löschen mehrere Dokumente + das Index-Dokument in EINER
+    // runTransaction (Issue #83, Umbuchungen: zwei per transferId gekoppelte Transaktionen, die
+    // nie nur einseitig existieren dürfen). Gleiches Muster wie save()/remove(), nur mit einer
+    // Schleife über mehrere Doc-Refs statt einem einzelnen.
+    async function saveMany(entries){
+      assertNotAccessBlocked();
+      await withTimeout(runTransaction(db, async (tx)=>{
+        const iRef = indexRef();
+        const indexSnap = await tx.get(iRef);
+        const index = indexSnap.exists() ? JSON.parse(indexSnap.data().value) : [];
+        let indexChanged = false;
+        entries.forEach(entry=>{
+          tx.set(docRef(entry.id), { value: JSON.stringify(entry) });
+          if(!index.includes(entry.id)){ index.push(entry.id); indexChanged = true; }
+        });
+        if(indexChanged) tx.set(iRef, { value: JSON.stringify(index) });
+      }), STORAGE_TIMEOUT_MS);
+      if(cacheKey) invalidate(cacheKey);
+    }
+
+    async function removeMany(ids){
+      assertNotAccessBlocked();
+      await withTimeout(runTransaction(db, async (tx)=>{
+        const iRef = indexRef();
+        const indexSnap = await tx.get(iRef);
+        const index = indexSnap.exists() ? JSON.parse(indexSnap.data().value) : [];
+        ids.forEach(id=> tx.delete(docRef(id)));
+        const newIndex = index.filter(existingId=> !ids.includes(existingId));
+        tx.set(iRef, { value: JSON.stringify(newIndex) });
+      }), STORAGE_TIMEOUT_MS);
+      if(cacheKey) invalidate(cacheKey);
+    }
+
+    return { getAll, save, remove, saveMany, removeMany };
   }
 
 
@@ -1655,6 +1692,11 @@
   async function getAllTransactions(){ return transactionsStore.getAll(); }
   async function saveTransaction(tx){ return transactionsStore.save(tx); }
   async function deleteTransaction(id){ return transactionsStore.remove(id); }
+  // Umbuchungen (Issue #83) bestehen aus zwei per transferId gekoppelten Transaktionen, die immer
+  // gemeinsam geschrieben/gelöscht werden müssen, damit nie nur eine Seite existiert - nutzt
+  // saveMany()/removeMany() (eine einzelne Firestore-runTransaction für beide Dokumente).
+  async function saveTransactions(txs){ return transactionsStore.saveMany(txs); }
+  async function deleteTransactions(ids){ return transactionsStore.removeMany(ids); }
 
   // ---------- Kegelabende ----------
   // Ein Kegelabend besteht aus einem Hauptdokument (Datum, Sitzordnung/Namen, Strafenkatalog-
@@ -3014,6 +3056,10 @@
   const ICON_ACCOUNT_PAYPAL = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.607 4.653H8.941L6.645 19.251H1.82L4.862 0h7.995c3.754 0 6.375 2.294 6.473 5.513-.648-.478-2.105-.86-3.722-.86m6.57 5.546c0 3.41-3.01 6.853-6.958 6.853h-2.493L11.595 24H6.74l1.845-11.538h3.592c4.208 0 7.346-3.634 7.153-6.949a5.24 5.24 0 0 1 2.848 4.686M9.653 5.546h6.408c.907 0 1.942.222 2.363.541-.195 2.741-2.655 5.483-6.441 5.483H8.714Z"/></svg>`;
   const ICON_ACCOUNT_CASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/></svg>`;
   const ICON_ACCOUNT_EURO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7a6.5 6.5 0 1 0 0 10"/><path d="M4 10h9M4 14h7"/></svg>`;
+  // Icon für Umbuchungs-Zeilen in der Umsätze-Liste (Issue #83): zwei gegenläufige Pfeile statt
+  // der Konto-Icons, ersetzt dort auch die +/- Farbcodierung des Betrags (siehe
+  // buildFinanceTransactionsTab()) - eine Umbuchung ist weder Einnahme noch Ausgabe.
+  const ICON_TRANSFER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h11l-3-3"/><path d="M18 7l-3 3"/><path d="M17 17H6l3 3"/><path d="M6 17l3-3"/></svg>`;
   const FINANCE_ACCOUNT_ICONS = {
     bank: { label:'Konto', svg: ICON_ACCOUNT_BANK },
     paypal: { label:'PayPal', svg: ICON_ACCOUNT_PAYPAL },
