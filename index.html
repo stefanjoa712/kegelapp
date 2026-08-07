@@ -1055,7 +1055,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.69';
+  const APP_VERSION = '1.1.70';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -3413,7 +3413,7 @@
     // Umbuchungen (Issue #83) bestehen aus zwei gekoppelten Transaktionen (transferRole 'out'/'in')
     // - hier wird nur die 'out'-Seite gerendert, damit pro Umbuchung genau eine Zeile erscheint.
     const sorted = state.financeTransactions
-      .filter(t=> !t.transferId || t.transferRole==='out')
+      .filter(t=> !t.transferId || t.transferRole!=='in')
       .slice().sort((a,b)=>{
         const dateCompare = b.date.localeCompare(a.date);
         if(dateCompare!==0) return dateCompare;
@@ -3436,8 +3436,9 @@
         const isPositive = t.amount>=0;
         const locked = !!t.fromArrears;
         const isTransfer = !!t.transferId;
+        const pairedTransferTx = isTransfer ? state.financeTransactions.find(p=>p.transferId===t.transferId && p.id!==t.id) : null;
         const metaHtml = isTransfer
-          ? `${formatDateDE(t.date)} · <span class="finance-account-icon-inline">${ICON_TRANSFER}</span>Von ${escapeHtml(financeAccountNameById(t.accountId))} nach ${escapeHtml(financeAccountNameById(state.financeTransactions.find(p=>p.transferId===t.transferId && p.id!==t.id).accountId))}`
+          ? `${formatDateDE(t.date)} · <span class="finance-account-icon-inline">${ICON_TRANSFER}</span>Von ${escapeHtml(financeAccountNameById(t.accountId))} nach ${escapeHtml(financeAccountNameById(pairedTransferTx ? pairedTransferTx.accountId : null))}`
           : `${formatDateDE(t.date)} · ${financeAccountIconHtmlById(t.accountId)}${escapeHtml(financeAccountNameById(t.accountId))}`;
         const amountHtml = isTransfer
           ? `<span class="transaction-amount transfer">${fmtEuro(Math.abs(t.amount))}</span>`
@@ -8848,8 +8849,11 @@
     // gemeinsam aktualisiert (siehe attachTransactionDetailListeners()).
     if(isTransfer){
       const pairedTx = state.financeTransactions.find(t=>t.transferId===existingTransaction.transferId && t.id!==existingTransaction.id);
-      const fromTx = existingTransaction.amount<0 ? existingTransaction : pairedTx;
-      const toTx = existingTransaction.amount<0 ? pairedTx : existingTransaction;
+      if(!pairedTx){
+        return `<div class="card"><p class="empty-state">Die gekoppelte Buchung dieser Umbuchung fehlt. Bitte im Kassenwart-Team klären.</p></div>`;
+      }
+      const fromTx = existingTransaction.transferRole==='out' ? existingTransaction : pairedTx;
+      const toTx = existingTransaction.transferRole==='out' ? pairedTx : existingTransaction;
       return `
         <div class="card">
           ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Admin können Umsätze bearbeiten.</p>` : `<p class="hint">Diese Umbuchung verschiebt Geld zwischen zwei Konten. Von/Nach sind nach dem Anlegen nicht mehr änderbar.</p>`}
@@ -8991,6 +8995,7 @@
 
       if(isTransfer){
         const pairedTx = state.financeTransactions.find(t=>t.transferId===existingTransaction.transferId && t.id!==existingTransaction.id);
+        if(!pairedTx){ errEl.textContent='Die gekoppelte Buchung dieser Umbuchung fehlt. Bitte im Kassenwart-Team klären.'; return; }
         const description = document.getElementById('new-tx-description').value.trim();
         const date = document.getElementById('new-tx-date').value;
         const amountRaw = document.getElementById('new-tx-transfer-amount').value.replace(',', '.');
@@ -9000,8 +9005,8 @@
         if(isNaN(amount) || amount<=0){ errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
         saveBtn.disabled = true; saveBtn.textContent = 'Speichert…';
         const rounded = Math.round(amount*100)/100;
-        const outTx = existingTransaction.amount<0 ? existingTransaction : pairedTx;
-        const inTx = existingTransaction.amount<0 ? pairedTx : existingTransaction;
+        const outTx = existingTransaction.transferRole==='out' ? existingTransaction : pairedTx;
+        const inTx = existingTransaction.transferRole==='out' ? pairedTx : existingTransaction;
         outTx.description = description; outTx.date = date; outTx.amount = -rounded;
         inTx.description = description; inTx.date = date; inTx.amount = rounded;
         await saveTransactions([outTx, inTx]);
