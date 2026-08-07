@@ -8790,6 +8790,7 @@
     const existingTransaction = state.currentTransactionId ? state.financeTransactions.find(t=>t.id===state.currentTransactionId) : null;
     const isEdit = !!existingTransaction;
     const isLocked = isEdit && !!existingTransaction.fromArrears;
+    const isTransfer = isEdit && !!existingTransaction.transferId;
     // Read-Only für Nutzer ohne Finanz-Verwaltungsrechte (siehe canManageFinances()) - enger
     // gefasst als canManageMembers(): hier nur Kassenwart oder Admin, kein Präsident.
     const readOnly = !canManageFinances();
@@ -8814,21 +8815,85 @@
         </div>
       `;
     }
-    const isExpenseEdit = isEdit && existingTransaction.amount<0;
+    // Umbuchungen bestehen aus zwei per transferId gekoppelten Transaktionen (Issue #83) - beim
+    // Bearbeiten bleiben Von-/Nach-Konto fix (analog zur fromArrears-Sperre oben), nur Betrag,
+    // Datum und Bezeichnung sind änderbar. Beide gekoppelten Dokumente werden beim Speichern
+    // gemeinsam aktualisiert (siehe attachTransactionDetailListeners()).
+    if(isTransfer){
+      const pairedTx = state.financeTransactions.find(t=>t.transferId===existingTransaction.transferId && t.id!==existingTransaction.id);
+      const fromTx = existingTransaction.amount<0 ? existingTransaction : pairedTx;
+      const toTx = existingTransaction.amount<0 ? pairedTx : existingTransaction;
+      return `
+        <div class="card">
+          ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Admin können Umsätze bearbeiten.</p>` : `<p class="hint">Diese Umbuchung verschiebt Geld zwischen zwei Konten. Von/Nach sind nach dem Anlegen nicht mehr änderbar.</p>`}
+          <label for="new-tx-description">Bezeichnung</label>
+          <input type="text" id="new-tx-description" value="${escapeHtml(existingTransaction.description)}"${disabledAttr}>
+          <label>Von Konto/Kasse</label>
+          <input type="text" value="${escapeHtml(financeAccountNameById(fromTx.accountId))}" disabled>
+          <label>Nach Konto/Kasse</label>
+          <input type="text" value="${escapeHtml(financeAccountNameById(toTx.accountId))}" disabled>
+          <label for="new-tx-date">Datum</label>
+          <input type="date" id="new-tx-date" value="${existingTransaction.date}"${disabledAttr}>
+          <label for="new-tx-transfer-amount">Betrag (€)</label>
+          <input type="number" id="new-tx-transfer-amount" min="0" step="0.01" value="${Math.abs(existingTransaction.amount).toFixed(2)}"${disabledAttr}>
+          ${readOnly ? '' : `<p class="form-error" id="tx-form-error"></p>
+          <button type="button" class="btn-primary" id="save-tx-btn" style="width:100%;">Speichern</button>`}
+        </div>
+      `;
+    }
+    // Einnahme/Ausgabe/Umbuchung als Segmented Control (Issue #83) statt der früheren zwei
+    // Zahlenfelder Einnahme/Ausgabe mit "genau eines von beiden"-Validierung. state.newTxSegment
+    // wird von goToTransactionDetail() beim Öffnen gesetzt und von den Segment-Buttons in
+    // attachTransactionDetailListeners() aktualisiert (jeweils mit anschließendem render(), gleiches
+    // Muster wie die bestehenden Finance-Tab-Buttons). "Umbuchung" nur bei einer neuen Transaction
+    // und >1 Konto - eine bestehende Einnahme/Ausgabe lässt sich nicht nachträglich in eine
+    // Umbuchung umwandeln (siehe Design-Spec).
+    const segment = state.newTxSegment || 'income';
+    const canTransfer = !isEdit && state.financeAccounts.length>1;
+    const segmentedControlHtml = `
+      <div class="tab-bar finance-tab-bar tx-type-bar">
+        <button type="button" class="tab-btn${segment==='income'?' active':''}" id="tx-type-income-btn"${disabledAttr}>Einnahme</button>
+        <button type="button" class="tab-btn${segment==='expense'?' active':''}" id="tx-type-expense-btn"${disabledAttr}>Ausgabe</button>
+        ${canTransfer ? `<button type="button" class="tab-btn${segment==='transfer'?' active':''}" id="tx-type-transfer-btn"${disabledAttr}>Umbuchung</button>` : ''}
+      </div>
+    `;
+    if(segment==='transfer'){
+      const fromAccountId = state.financeAccounts[0].id;
+      const toAccounts = state.financeAccounts.filter(a=>a.id!==fromAccountId);
+      const fromOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${a.id===fromAccountId?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
+      const toOptionsHtml = toAccounts.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
+      return `
+        <div class="card">
+          ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Admin können Umsätze bearbeiten.</p>` : ''}
+          ${segmentedControlHtml}
+          <label for="new-tx-from-account">Von Konto/Kasse</label>
+          <select id="new-tx-from-account"${disabledAttr}>${fromOptionsHtml}</select>
+          <label for="new-tx-to-account">Nach Konto/Kasse</label>
+          <select id="new-tx-to-account"${disabledAttr}>${toOptionsHtml}</select>
+          <label for="new-tx-transfer-amount">Betrag (€)</label>
+          <input type="number" id="new-tx-transfer-amount" min="0" step="0.01" placeholder="0,00"${disabledAttr}>
+          <label for="new-tx-date">Datum</label>
+          <input type="date" id="new-tx-date" value="${todayISO()}"${disabledAttr}>
+          <label for="new-tx-description">Bezeichnung</label>
+          <input type="text" id="new-tx-description" placeholder="z. B. Bargeld einzahlen"${disabledAttr}>
+          ${readOnly ? '' : `<p class="form-error" id="tx-form-error"></p>
+          <button type="button" class="btn-primary" id="save-tx-btn" style="width:100%;">Hinzufügen</button>`}
+        </div>
+      `;
+    }
     const accountOptionsHtml = state.financeAccounts.map(a=>`<option value="${a.id}"${(isEdit && existingTransaction.accountId===a.id)?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
     return `
       <div class="card">
         ${readOnly ? `<p class="hint" style="margin-top:0;">Nur Kassenwart oder Admin können Umsätze bearbeiten.</p>` : ''}
+        ${segmentedControlHtml}
         <label for="new-tx-account">Konto/Kasse</label>
         <select id="new-tx-account"${disabledAttr}>${accountOptionsHtml}</select>
         <label for="new-tx-description">Bezeichnung</label>
         <input type="text" id="new-tx-description" placeholder="z. B. Kegelbahn Miete" value="${isEdit?escapeHtml(existingTransaction.description):''}"${disabledAttr}>
         <label for="new-tx-date">Datum</label>
         <input type="date" id="new-tx-date" value="${isEdit?existingTransaction.date:todayISO()}"${disabledAttr}>
-        <label for="new-tx-income">Einnahme (€)</label>
-        <input type="number" id="new-tx-income" min="0" step="0.01" placeholder="0,00" value="${(isEdit && !isExpenseEdit)?Math.abs(existingTransaction.amount).toFixed(2):''}"${disabledAttr}>
-        <label for="new-tx-expense">Ausgabe (€)</label>
-        <input type="number" id="new-tx-expense" min="0" step="0.01" placeholder="0,00" value="${isExpenseEdit?Math.abs(existingTransaction.amount).toFixed(2):''}"${disabledAttr}>
+        <label for="new-tx-amount">Betrag (€)</label>
+        <input type="number" id="new-tx-amount" min="0" step="0.01" placeholder="0,00" value="${isEdit?Math.abs(existingTransaction.amount).toFixed(2):''}"${disabledAttr}>
         ${readOnly ? '' : `<p class="form-error" id="tx-form-error"></p>
         <button type="button" class="btn-primary" id="save-tx-btn" style="width:100%;">${isEdit?'Speichern':'Hinzufügen'}</button>`}
       </div>
@@ -8850,12 +8915,40 @@
       const t = state.financeTransactions.find(x=>x.id===state.currentTransactionId);
       if(t) showDeleteTransactionModal(t);
     });
+
+    // Segmented Control Einnahme/Ausgabe/Umbuchung (Issue #83) - Klick setzt state.newTxSegment und
+    // rendert die Ansicht neu (gleiches Muster wie die Finance-Tab-Buttons in
+    // attachFinanceListeners()). Nur vorhanden, wenn viewTransactionDetail() gerade den
+    // Segmented-Control-Zweig zeigt (nicht bei fromArrears- oder Umbuchungs-Bearbeiten).
+    const typeIncomeBtn = document.getElementById('tx-type-income-btn');
+    if(typeIncomeBtn) typeIncomeBtn.addEventListener('click', ()=>{ state.newTxSegment='income'; render(); });
+    const typeExpenseBtn = document.getElementById('tx-type-expense-btn');
+    if(typeExpenseBtn) typeExpenseBtn.addEventListener('click', ()=>{ state.newTxSegment='expense'; render(); });
+    const typeTransferBtn = document.getElementById('tx-type-transfer-btn');
+    if(typeTransferBtn) typeTransferBtn.addEventListener('click', ()=>{ state.newTxSegment='transfer'; render(); });
+
+    // Von-Konto-Auswahl bei der Umbuchung: das gewählte Konto wird direkt aus der Nach-Liste
+    // entfernt (Issue #83) statt nur per Validierung abgefangen - gezieltes Options-Rebuild statt
+    // render(), damit ein bereits eingegebener Betrag nicht verloren geht. Bei genau 2 Konten
+    // bleibt danach automatisch nur ein Nach-Konto übrig.
+    const fromAccountSelect = document.getElementById('new-tx-from-account');
+    const toAccountSelect = document.getElementById('new-tx-to-account');
+    if(fromAccountSelect && toAccountSelect){
+      fromAccountSelect.addEventListener('change', ()=>{
+        const previousToValue = toAccountSelect.value;
+        const options = state.financeAccounts.filter(a=>a.id!==fromAccountSelect.value);
+        toAccountSelect.innerHTML = options.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
+        if(options.some(a=>a.id===previousToValue)) toAccountSelect.value = previousToValue;
+      });
+    }
+
     const saveBtn = document.getElementById('save-tx-btn');
     if(!saveBtn) return;
     saveBtn.addEventListener('click', async ()=>{
       const existingTransaction = state.currentTransactionId ? state.financeTransactions.find(t=>t.id===state.currentTransactionId) : null;
       const isEdit = !!existingTransaction;
       const isLocked = isEdit && !!existingTransaction.fromArrears;
+      const isTransfer = isEdit && !!existingTransaction.transferId;
       const errEl = document.getElementById('tx-form-error');
 
       if(isLocked){
@@ -8869,20 +8962,62 @@
         return;
       }
 
+      if(isTransfer){
+        const pairedTx = state.financeTransactions.find(t=>t.transferId===existingTransaction.transferId && t.id!==existingTransaction.id);
+        const description = document.getElementById('new-tx-description').value.trim();
+        const date = document.getElementById('new-tx-date').value;
+        const amountRaw = document.getElementById('new-tx-transfer-amount').value.replace(',', '.');
+        const amount = amountRaw==='' ? NaN : parseFloat(amountRaw);
+        if(!description){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
+        if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
+        if(isNaN(amount) || amount<=0){ errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
+        saveBtn.disabled = true; saveBtn.textContent = 'Speichert…';
+        const rounded = Math.round(amount*100)/100;
+        const outTx = existingTransaction.amount<0 ? existingTransaction : pairedTx;
+        const inTx = existingTransaction.amount<0 ? pairedTx : existingTransaction;
+        outTx.description = description; outTx.date = date; outTx.amount = -rounded;
+        inTx.description = description; inTx.date = date; inTx.amount = rounded;
+        await saveTransactions([outTx, inTx]);
+        history.back();
+        return;
+      }
+
+      const segment = state.newTxSegment || 'income';
+
+      if(segment==='transfer'){
+        const fromAccountId = document.getElementById('new-tx-from-account').value;
+        const toAccountId = document.getElementById('new-tx-to-account').value;
+        const amountRaw = document.getElementById('new-tx-transfer-amount').value.replace(',', '.');
+        const amount = amountRaw==='' ? NaN : parseFloat(amountRaw);
+        const date = document.getElementById('new-tx-date').value;
+        let description = document.getElementById('new-tx-description').value.trim();
+        if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
+        if(isNaN(amount) || amount<=0){ errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
+        if(fromAccountId===toAccountId){ errEl.textContent='Von und Nach dürfen nicht identisch sein.'; return; }
+        if(!description) description = `Umbuchung ${financeAccountNameById(fromAccountId)} → ${financeAccountNameById(toAccountId)}`;
+        saveBtn.disabled = true; saveBtn.textContent = 'Wird hinzugefügt…';
+        const rounded = Math.round(amount*100)/100;
+        const transferId = uid('transfer');
+        const createdAt = Date.now();
+        const outTx = {id:uid('tx'), accountId:fromAccountId, amount:-rounded, description, date, transferId, transferRole:'out', createdAt};
+        const inTx = {id:uid('tx'), accountId:toAccountId, amount:rounded, description, date, transferId, transferRole:'in', createdAt};
+        state.financeTransactions.push(outTx, inTx);
+        await saveTransactions([outTx, inTx]);
+        history.back();
+        return;
+      }
+
       const accountId = document.getElementById('new-tx-account').value;
       const description = document.getElementById('new-tx-description').value.trim();
       const date = document.getElementById('new-tx-date').value;
-      const incomeRaw = document.getElementById('new-tx-income').value.replace(',', '.');
-      const expenseRaw = document.getElementById('new-tx-expense').value.replace(',', '.');
-      const income = incomeRaw==='' ? 0 : parseFloat(incomeRaw);
-      const expense = expenseRaw==='' ? 0 : parseFloat(expenseRaw);
+      const amountRaw = document.getElementById('new-tx-amount').value.replace(',', '.');
+      const amountAbs = amountRaw==='' ? NaN : parseFloat(amountRaw);
 
       if(!description){ errEl.textContent='Bitte eine Bezeichnung angeben.'; return; }
       if(!date){ errEl.textContent='Bitte ein Datum angeben.'; return; }
-      if(isNaN(income) || isNaN(expense) || income<0 || expense<0){ errEl.textContent='Bitte gültige Beträge angeben.'; return; }
-      if((income>0) === (expense>0)){ errEl.textContent='Bitte entweder eine Einnahme oder eine Ausgabe angeben (nicht beides oder keins).'; return; }
+      if(isNaN(amountAbs) || amountAbs<=0){ errEl.textContent='Bitte einen gültigen Betrag angeben.'; return; }
 
-      const amount = income>0 ? Math.round(income*100)/100 : -Math.round(expense*100)/100;
+      const amount = segment==='expense' ? -Math.round(amountAbs*100)/100 : Math.round(amountAbs*100)/100;
       saveBtn.disabled = true; saveBtn.textContent = isEdit ? 'Speichert…' : 'Wird hinzugefügt…';
 
       let savedTx;
