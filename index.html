@@ -313,6 +313,8 @@
   .settings-menu-item-icon.cat-red{background:var(--wood);}
   .settings-menu-item-icon.cat-green{background:#2F7A5E;}
   .settings-menu-item-icon.cat-blue{background:#3A6EA5;}
+  .settings-menu-item-icon.cat-wine{background:var(--wine);}
+  .settings-menu-item-icon.cat-purple{background:#6C4F94;}
   .settings-menu-item-text{flex:1; min-width:0; display:flex; flex-direction:column; text-align:left; gap:1px;}
   .settings-menu-item-label{display:block;}
   .settings-menu-item-subtitle{
@@ -327,7 +329,6 @@
     text-transform:uppercase; color:var(--muted); margin:14px 2px 0;
   }
   .group-label:first-child{margin-top:0;}
-  .profile-divider{height:1px; background:var(--line); margin:2px 0 4px;}
   .profile-item{
     display:flex; align-items:center; gap:10px;
     background:none; border:none; padding:8px 2px;
@@ -335,6 +336,13 @@
     cursor:pointer;
   }
   .profile-item-icon{width:19px; height:19px; flex-shrink:0; color:var(--wine);}
+  .account-info-card{
+    background:var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:12px 14px; margin-bottom:16px;
+  }
+  .account-info-name{font-family:var(--font-display); font-weight:700; font-size:15px;}
+  .account-info-email{font-family:var(--font-body); font-size:13px; color:var(--muted); margin-top:2px;}
+  .form-success{color:#2F7A5E; font-size:13px; margin:6px 0;}
   .settings-header-row .section-title{margin-bottom:0;}
   .member-count{font-family:var(--font-body); font-size:15px; font-weight:600; color:var(--muted);}
   .section-title-small{font-family:var(--font-display); font-size:16px; margin:0 0 10px; font-weight:700; letter-spacing:-0.01em;}
@@ -898,7 +906,8 @@
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
     setPersistence, browserLocalPersistence, browserSessionPersistence,
-    verifyPasswordResetCode, confirmPasswordReset
+    verifyPasswordResetCode, confirmPasswordReset, sendPasswordResetEmail,
+    EmailAuthProvider, reauthenticateWithCredential, verifyBeforeUpdateEmail
   } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
   import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
   import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-storage.js";
@@ -2204,6 +2213,10 @@
     state.view = 'settingsMenu';
     render();
   }
+  function goToAccountSettings(){
+    state.view = 'accountSettings';
+    render();
+  }
   async function goToClubManagement(){
     state.view = 'clubManagement';
     if(!isFresh('clubData')) renderLoading('Clubdaten werden geladen…');
@@ -2427,7 +2440,7 @@
   }
 
   function goBackFromHeaderInner(){
-    if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement') goToSettingsMenu();
+    if(state.view==='settings' || state.view==='clubManagement' || state.view==='finesManagement' || state.view==='gamesManagement' || state.view==='financeManagement' || state.view==='eventManagement' || state.view==='accountSettings') goToSettingsMenu();
     else if(state.view==='subscriptionPlans') goToClubManagement();
     else if(state.view==='memberDetail') goToSettings();
     else if(state.view==='fineDetail') goToFinesManagement();
@@ -2477,6 +2490,13 @@
     const seriesCount = state.calendarEvents.filter(ev=> ev.recurrence && ev.recurrence!=='none').length;
     if(seriesCount===0) return 'Noch keine Terminserie';
     return seriesCount===1 ? '1 Terminserie' : `${seriesCount} Terminserien`;
+  }
+  // Untertitel für das "Mein Konto"-Item: die eigene hinterlegte E-Mail-Adresse, aus dem bereits
+  // geladenen state.members (kein extra Firestore-Request, gleiches Prinzip wie die übrigen
+  // settingsMenu*Subtitle()-Funktionen).
+  function settingsMenuAccountSubtitle(){
+    const member = getCurrentMember();
+    return member ? (member.email || '') : '';
   }
   function settingsMenuItemHtml(opts){
     const badgeHtml = opts.badge ? `<span class="badge-dot" aria-hidden="true"></span>` : '';
@@ -2555,6 +2575,17 @@
         <line x1="17" y1="2" x2="17" y2="6"/>
       </svg>`
     });
+    // Nur anzeigen, wenn der eingeloggte Auth-User einem Mitgliedsdokument in diesem Club
+    // zugeordnet werden kann - beim Admin-Sonderaccount (kein Mitgliedsdokument) liefert
+    // getCurrentMember() null, siehe dort.
+    const accountItem = getCurrentMember() ? settingsMenuItemHtml({
+      id:'settings-menu-account-btn', colorClass:'cat-purple', label:'Mein Konto',
+      subtitle: settingsMenuAccountSubtitle(),
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="8" r="4"/>
+        <path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
+      </svg>`
+    }) : '';
     return `
       <div class="card">
         <h2 class="section-title">Einstellungen</h2>
@@ -2568,8 +2599,8 @@
           <div class="group-label">Verwaltung</div>
           ${finanzenItem}
           ${termineItem}
-          <div class="group-label">Profil</div>
-          <div class="profile-divider"></div>
+          <div class="group-label">Kontenübersicht</div>
+          ${accountItem}
           <button type="button" class="profile-item" id="settings-menu-logout-btn">
             <svg class="profile-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -2578,6 +2609,53 @@
             </svg>
             <span class="settings-menu-item-label">Abmelden</span>
           </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function viewAccountSettings(){
+    const member = getCurrentMember();
+    const email = member ? (member.email || '') : '';
+    const name = member ? displayName(member) : '';
+    const resetPasswordItem = settingsMenuItemHtml({
+      id:'account-reset-password-btn', colorClass:'cat-blue', label:'Passwort zurücksetzen',
+      subtitle:'Link per E-Mail erhalten',
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="11" width="14" height="9" rx="2"/>
+        <path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+      </svg>`
+    });
+    const changeEmailItem = settingsMenuItemHtml({
+      id:'account-change-email-btn', colorClass:'cat-blue', label:'E-Mail-Adresse ändern',
+      subtitle: email,
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="5" width="18" height="14" rx="2"/>
+        <path d="M3 7l9 6 9-6"/>
+      </svg>`
+    });
+    const unlinkItem = settingsMenuItemHtml({
+      id:'account-unlink-btn', colorClass:'cat-wine', label:'Verknüpfung aufheben',
+      subtitle: clubDisplayName(),
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 9v4"/>
+        <path d="M12 17h.01"/>
+        <path d="M10.3 3.9L2.5 17a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
+      </svg>`
+    });
+    return `
+      <div class="card">
+        <h2 class="section-title">Mein Konto</h2>
+        <div class="account-info-card">
+          <div class="account-info-name">${escapeHtml(name)}</div>
+          <div class="account-info-email">${escapeHtml(email)}</div>
+        </div>
+        <div class="settings-menu-list">
+          <div class="group-label">Passwort und Sicherheit</div>
+          ${resetPasswordItem}
+          ${changeEmailItem}
+          <div class="group-label">Konto-Verknüpfung</div>
+          ${unlinkItem}
         </div>
       </div>
     `;
@@ -3714,6 +3792,7 @@
   const VIEWS = {
     main: { body: viewMain, title: null, attach: attachMainListeners },
     settingsMenu: { body: viewSettingsMenu, title: 'Einstellungen', attach: attachSettingsMenuListeners },
+    accountSettings: { body: viewAccountSettings, title: 'Mein Konto', attach: attachAccountSettingsListeners },
     clubManagement: { body: viewClubManagement, title: 'Clubverwaltung', attach: attachClubManagementListeners },
     subscriptionPlans: { body: viewSubscriptionPlans, title: 'Abonnement anpassen', attach: attachSubscriptionPlansListeners },
     settings: { body: viewSettings, title: 'Mitgliederverwaltung', attach: attachSettingsListeners },
@@ -6901,6 +6980,17 @@
     });
   }
 
+  // Wird pro Feature in Task 5-7 um je einen Button-Listener ergänzt (Passwort zurücksetzen,
+  // E-Mail ändern, Konto-Verknüpfung aufheben).
+  function attachAccountSettingsListeners(){
+    const resetPwBtn = document.getElementById('account-reset-password-btn');
+    if(resetPwBtn) resetPwBtn.addEventListener('click', showPasswordResetModal);
+    const changeEmailBtn = document.getElementById('account-change-email-btn');
+    if(changeEmailBtn) changeEmailBtn.addEventListener('click', showChangeEmailModal);
+    const unlinkBtn = document.getElementById('account-unlink-btn');
+    if(unlinkBtn) unlinkBtn.addEventListener('click', showUnlinkOwnAccountModal);
+  }
+
   function attachSettingsMenuListeners(){
     const clubBtn = document.getElementById('settings-menu-club-btn');
     if(clubBtn) clubBtn.addEventListener('click', goToClubManagement);
@@ -6914,6 +7004,8 @@
     if(finanzenBtn) finanzenBtn.addEventListener('click', goToFinanceManagement);
     const termineBtn = document.getElementById('settings-menu-termine-btn');
     if(termineBtn) termineBtn.addEventListener('click', goToEventManagement);
+    const accountBtn = document.getElementById('settings-menu-account-btn');
+    if(accountBtn) accountBtn.addEventListener('click', goToAccountSettings);
     const logoutBtn = document.getElementById('settings-menu-logout-btn');
     if(logoutBtn) logoutBtn.addEventListener('click', logout);
   }
@@ -7857,6 +7949,130 @@
         hideModalLoadingOverlay();
         btn.disabled = false; btn.textContent = 'Einladung senden';
         if(errEl) errEl.textContent = 'Einladung konnte nicht gesendet werden. Bitte später erneut versuchen.';
+      }
+    });
+  }
+
+  function showPasswordResetModal(){
+    const member = getCurrentMember();
+    const email = member ? member.email : '';
+    showModal(`
+      <h3>Passwort zurücksetzen</h3>
+      <p>Wir senden einen Link an <strong>${escapeHtml(email)}</strong>, mit dem du ein neues Passwort festlegen kannst.</p>
+      <p class="form-error" id="password-reset-error"></p>
+      <div class="confirm-row-buttons" id="password-reset-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+        <button type="button" class="btn-primary" id="confirm-password-reset-btn">Link senden</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-password-reset-btn').addEventListener('click', async ()=>{
+      const btn = document.getElementById('confirm-password-reset-btn');
+      const errEl = document.getElementById('password-reset-error');
+      btn.disabled = true; btn.textContent = 'Wird gesendet…';
+      try{
+        await sendPasswordResetEmail(auth, email);
+        document.getElementById('password-reset-actions').outerHTML = `<p class="form-success">E-Mail wurde gesendet. Prüfe dein Postfach.</p>`;
+      }catch(e){
+        btn.disabled = false; btn.textContent = 'Link senden';
+        errEl.textContent = 'Konnte nicht gesendet werden. Bitte später erneut versuchen.';
+      }
+    });
+  }
+
+  function showUnlinkOwnAccountModal(){
+    const clubName = escapeHtml(clubDisplayName());
+    showModal(`
+      <h3>Konto-Verknüpfung aufheben</h3>
+      <p>Dein Login-Zugang zu <strong>${clubName}</strong> wird entfernt. Deine Daten (Historie, Strafen, Beiträge) bleiben erhalten. Ein Vorstandsmitglied kann dich jederzeit erneut einladen.</p>
+      <p>Bist du in keinem weiteren Verein mit diesem Konto angemeldet, wird dein Login komplett gelöscht und du wirst automatisch abgemeldet.</p>
+      <p class="form-error" id="unlink-own-account-error"></p>
+      <div class="confirm-row-buttons">
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+        <button type="button" class="btn-danger" id="confirm-unlink-own-yes">Verknüpfung aufheben</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-unlink-own-yes').addEventListener('click', async ()=>{
+      const btn = document.getElementById('confirm-unlink-own-yes');
+      const errEl = document.getElementById('unlink-own-account-error');
+      btn.disabled = true; btn.textContent = 'Wird entfernt…';
+      showModalLoadingOverlay('Verknüpfung wird aufgehoben…');
+      try{
+        const unlinkFn = httpsCallable(functions, 'unlinkOwnAccount');
+        await unlinkFn({ clubId: CURRENT_CLUB_ID });
+        closeGenericModal();
+        await logout();
+      }catch(e){
+        hideModalLoadingOverlay();
+        btn.disabled = false; btn.textContent = 'Verknüpfung aufheben';
+        errEl.textContent = 'Konnte nicht entfernt werden. Bitte später erneut versuchen.';
+      }
+    });
+  }
+
+  function showChangeEmailModal(){
+    const member = getCurrentMember();
+    const currentEmail = member ? member.email : '';
+    showModal(`
+      <h3>E-Mail-Adresse ändern</h3>
+      <p>Aus Sicherheitsgründen benötigen wir dein aktuelles Passwort. Nach dem Speichern erhältst du einen Bestätigungslink an die neue Adresse - erst danach wird sie aktiv.</p>
+      <label for="change-email-new">Neue E-Mail-Adresse</label>
+      <input type="email" id="change-email-new" placeholder="neue@email.de" autocomplete="email">
+      <label for="change-email-password">Aktuelles Passwort</label>
+      <input type="password" id="change-email-password" placeholder="••••••••" autocomplete="current-password">
+      <p class="form-error" id="change-email-error"></p>
+      <div class="confirm-row-buttons" id="change-email-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+        <button type="button" class="btn-primary" id="confirm-change-email-btn">Bestätigungslink senden</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-change-email-btn').addEventListener('click', async ()=>{
+      const newEmail = document.getElementById('change-email-new').value.trim();
+      const password = document.getElementById('change-email-password').value;
+      const errEl = document.getElementById('change-email-error');
+      errEl.textContent = '';
+      if(!newEmail || !newEmail.includes('@')){ errEl.textContent = 'Bitte eine gültige E-Mail-Adresse eingeben.'; return; }
+      if(!password){ errEl.textContent = 'Bitte dein aktuelles Passwort eingeben.'; return; }
+      const btn = document.getElementById('confirm-change-email-btn');
+      btn.disabled = true; btn.textContent = 'Wird gesendet…';
+      showModalLoadingOverlay('Bestätigungslink wird gesendet…');
+      try{
+        const user = auth.currentUser;
+        const credential = EmailAuthProvider.credential(currentEmail, password);
+        await reauthenticateWithCredential(user, credential);
+        // Serverseitig hinterlegen, WÄHREND der Aufrufer noch mit der ALTEN E-Mail authentifiziert
+        // ist (verifyBeforeUpdateEmail ändert auth.currentUser.email erst nach Klick auf den
+        // Bestätigungslink) - das macht request.auth.token.email zum vertrauenswürdigen Beweis der
+        // alten Adresse. syncOwnEmailAcrossClubs übernimmt oldEmail NICHT mehr vom Client (siehe
+        // dort): sonst könnte ein Aufrufer eine beliebige fremde E-Mail als "oldEmail" angeben und
+        // damit ein fremdes Mitgliedsdokument - inkl. dessen role-Feld, das syncMemberRoleClaim als
+        // Custom-Claim übernimmt - auf die eigene Adresse umbiegen (Privilegien-Eskalation).
+        const recordPendingFn = httpsCallable(functions, 'recordPendingEmailChange');
+        await recordPendingFn({ newEmail });
+        await verifyBeforeUpdateEmail(user, newEmail);
+        // Nur ein Hinweis fürs SCHNELLE Nachprüfen auf GENAU DIESEM Gerät nach einem Neustart -
+        // die eigentliche, sicherheitsrelevante alte/neue Adresse steht bereits serverseitig unter
+        // pendingEmailChanges/{uid} (siehe oben). Wird der Bestätigungslink auf einem ANDEREN Gerät
+        // geöffnet (z.B. E-Mail-Änderung am PC gestartet, Link im Postfach auf dem Smartphone
+        // angeklickt), hat dieses lokale Flag dort keine Wirkung - checkPendingEmailChange() holt
+        // den serverseitigen Stand in diesem Fall trotzdem nach (siehe dortiger Fallback-Zweig).
+        localStorage.setItem('pendingEmailChange', JSON.stringify({ newEmail }));
+        hideModalLoadingOverlay();
+        document.getElementById('change-email-actions').outerHTML = `<p class="form-success">Bestätigungslink wurde an ${escapeHtml(newEmail)} gesendet. Prüfe dein Postfach.</p>`;
+      }catch(e){
+        hideModalLoadingOverlay();
+        btn.disabled = false; btn.textContent = 'Bestätigungslink senden';
+        if(e.code==='auth/wrong-password' || e.code==='auth/invalid-credential'){
+          errEl.textContent = 'Passwort ist falsch.';
+        }else if(e.code==='auth/email-already-in-use'){
+          errEl.textContent = 'Diese E-Mail-Adresse wird bereits verwendet.';
+        }else if(e.code==='auth/requires-recent-login'){
+          errEl.textContent = 'Bitte melde dich erneut an und versuche es noch einmal.';
+        }else{
+          errEl.textContent = 'Konnte nicht gesendet werden. Bitte später erneut versuchen.';
+        }
       }
     });
   }
@@ -9684,6 +9900,7 @@
       });
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
+      checkPendingEmailChange();
       // Lädt Strafen-/Spielekatalog und Finanzkonten einmalig im Hintergrund (nicht blockierend
       // fürs Hauptbild), damit die entsprechenden Untertitel im Einstellungen-Menü (siehe
       // viewSettingsMenu()) direkt verfügbar sind, ohne dass der Nutzer vorher die jeweilige
@@ -9731,6 +9948,81 @@
       await updateOwnLastLoginFn({ clubId: CURRENT_CLUB_ID });
       invalidate('members');
     }catch(e){ /* nicht kritisch, einfach ignorieren */ }
+  }
+
+  // Prüft bei jedem App-Start, ob eine per showChangeEmailModal() angestoßene E-Mail-Änderung
+  // (Issue #60) inzwischen bestätigt wurde. verifyBeforeUpdateEmail() ändert auth.currentUser.email
+  // erst NACH Klick auf den von Firebase verschickten Bestätigungslink - der Link wird typischerweise
+  // in einer separaten Mail-App geöffnet, daher steht der Eintrag in localStorage (nicht
+  // sessionStorage) und übersteht einen App-Neustart. user.reload() holt den aktuellen Stand vom
+  // Server; stimmt die E-Mail noch nicht mit der erwarteten neuen überein, wurde der Link noch
+  // nicht angeklickt - der Eintrag bleibt dann einfach stehen und wird beim nächsten Start erneut
+  // geprüft.
+  // Übernimmt eine bestätigte Self-Service-E-Mail-Änderung (Issue #60) in state.members, indem
+  // syncOwnEmailAcrossClubs aufgerufen und bei Erfolg die Mitgliederliste neu geladen wird.
+  async function applyEmailChangeSync(){
+    let result;
+    try{
+      const syncFn = httpsCallable(functions, 'syncOwnEmailAcrossClubs');
+      const res = await syncFn({});
+      result = res.data;
+    }catch(e){ return null; }
+    if(result && result.applied){
+      try{
+        state.members = await getAllMembers();
+        markFetched('members');
+      }catch(e){ /* nicht kritisch - der nächste normale Reload holt die Daten nach */ }
+      render();
+    }
+    return result;
+  }
+
+  // Prüft bei jedem App-Start, ob eine per showChangeEmailModal() angestoßene E-Mail-Änderung
+  // (Issue #60) inzwischen bestätigt wurde, und übernimmt sie dann in alle betroffenen Clubs.
+  //
+  // localStorage['pendingEmailChange'] ist NUR ein geräte-/browserlokaler Hinweis fürs schnelle
+  // Nachprüfen auf GENAU DEM Gerät, auf dem die Änderung gestartet wurde - die sicherheitsrelevante
+  // Wahrheit (alte/neue Adresse) liegt serverseitig unter pendingEmailChanges/{uid} (siehe
+  // recordPendingEmailChange()/syncOwnEmailAcrossClubs() in functions/index.js). Wird der von
+  // Firebase verschickte Bestätigungslink auf einem ANDEREN Gerät geöffnet (E-Mail-Änderung z.B.
+  // am PC gestartet, Link im Postfach auf dem Smartphone angeklickt), hat dieses Gerät gar keinen
+  // localStorage-Eintrag - deshalb der Fallback-Zweig unten: fehlt der lokale Hinweis, aber lässt
+  // sich das eigene Mitglied in diesem Club nicht auflösen (getCurrentMember() null), wird trotzdem
+  // einmal versucht zu synchronisieren. Das deckt jedes Gerät ab, nicht nur das ursprüngliche, ohne
+  // bei jedem normalen Login (Mitglied bereits zugeordnet) einen unnötigen Zusatz-Request auszulösen.
+  async function checkPendingEmailChange(){
+    const user = auth.currentUser;
+    if(!user || user.email===ADMIN_EMAIL) return;
+    const raw = localStorage.getItem('pendingEmailChange');
+    let pending = null;
+    if(raw){
+      try{ pending = JSON.parse(raw); }catch(e){ localStorage.removeItem('pendingEmailChange'); }
+      if(pending && !pending.newEmail){ pending = null; localStorage.removeItem('pendingEmailChange'); }
+    }
+
+    if(!pending){
+      if(getCurrentMember()) return; // schon zugeordnet, nichts zu tun
+      await applyEmailChangeSync(); // Wiederherstellungsversuch für ein anderes Gerät, siehe oben
+      return;
+    }
+
+    try{
+      await user.reload();
+      // ID-Token erzwungen neu holen (nicht nur den User-Datensatz per reload()) - Callable
+      // Functions senden sonst weiterhin das bis zu 1h alte gecachte Token, das nach einer
+      // gerade bestätigten E-Mail-Änderung noch die ALTE Adresse trägt. syncOwnEmailAcrossClubs
+      // liest die neue Adresse serverseitig aus request.auth.token.email - mit einem veralteten
+      // Token würde der Abgleich sonst still fehlschlagen (Server sieht scheinbar "keine Änderung").
+      await user.getIdToken(true);
+    }catch(e){ return; }
+    if((auth.currentUser.email||'').toLowerCase() !== pending.newEmail.toLowerCase()) return;
+
+    const result = await applyEmailChangeSync();
+    if(!result || result.applied || result.reason==='no-pending'){
+      localStorage.removeItem('pendingEmailChange');
+    }
+    // Sonst (result.reason==='token-stale' o.ä.): Eintrag bewusst stehen lassen, nächster
+    // App-Start versucht es mit einem dann garantiert frischen Token erneut.
   }
 
   (function bootstrapAuth(){
