@@ -957,6 +957,24 @@
   // generischer Platzhalter, solange die echten Stammdaten noch nicht geladen sind (Ladebildschirm,
   // Meta-Tags vor dem Login).
   let CURRENT_CLUB_DATA = null;
+  // Alle Club-IDs, denen der eingeloggte Account zugeordnet ist (bzw. bei ADMIN_EMAIL: alle
+  // existierenden Clubs) - wird von resolveActiveClub() gecacht (Issue #88), damit das
+  // Einstellungen-Menü weiß, ob ein "Club wechseln"-Menüpunkt nötig ist (>1 Eintrag), ohne bei
+  // jedem Menü-Aufbau einen neuen Token-Request auszulösen. null vor dem ersten Login, wird beim
+  // Logout in bootstrapAuth() wieder zurückgesetzt.
+  let AVAILABLE_CLUB_IDS = null;
+  // sessionStorage-Key für den Club-Wechsel innerhalb einer laufenden Session (Issue #88): switchClub()
+  // legt hier einmalig die vom Nutzer gewählte Ziel-clubId ab und löst dann location.reload() aus;
+  // resolveActiveClub() liest den Wert beim Neustart per consumeClubSwitchOverride() (einmalig,
+  // danach gelöscht) und überspringt bei Treffer die erneute Club-Auswahl.
+  const CLUB_SWITCH_STORAGE_KEY = 'clubSwitchOverrideClubId';
+  function consumeClubSwitchOverride(){
+    try{
+      const value = sessionStorage.getItem(CLUB_SWITCH_STORAGE_KEY);
+      if(value !== null) sessionStorage.removeItem(CLUB_SWITCH_STORAGE_KEY);
+      return value;
+    }catch(e){ return null; } // Storage gesperrt (Privatmodus o.ä.) - Boot darf daran nicht scheitern
+  }
   const CLUB_NAME_FALLBACK = 'Kegelclub';
   function clubDisplayName(){ return (CURRENT_CLUB_DATA && CURRENT_CLUB_DATA.name) || CLUB_NAME_FALLBACK; }
   // Initialen aus dem Clubnamen (max. 2 Buchstaben) als Avatar-Fallback, solange kein Logo
@@ -983,11 +1001,20 @@
   // 'forceRefresh=true' erzwingt einen neuen ID-Token vom Server (Firebase cached Tokens bis zu
   // einer Stunde) - wichtig direkt nach einer frischen Einladung, wo der Claim serverseitig
   // gerade erst gesetzt wurde und ein gecachtes Token ihn noch nicht enthält.
+  // Cacht außerdem die ermittelte Club-Liste in AVAILABLE_CLUB_IDS (Issue #88, für die Sichtbarkeit
+  // des "Club wechseln"-Menüpunkts) und konsumiert einen evtl. per switchClub() gesetzten
+  // sessionStorage-Override: liegt einer vor UND ist er Teil der gerade ermittelten Club-Liste,
+  // wird er direkt übernommen und die Auswahl-Anzeige übersprungen. Die Prüfung gegen die frisch
+  // ermittelte Liste schützt davor, dass ein veralteter/manipulierter Override-Wert auf einen Club
+  // verweist, auf den der Account inzwischen keinen Zugriff mehr hat.
   async function resolveActiveClub(user, forceRefresh){
     if(user.email===ADMIN_EMAIL){
       let allClubIds = [];
       try{ allClubIds = await getAllClubIds(); }catch(e){ /* fällt unten auf "Kein Zugriff" zurück */ }
+      AVAILABLE_CLUB_IDS = allClubIds;
       if(allClubIds.length===0){ renderNoClubAccessScreen(); return null; }
+      const override = consumeClubSwitchOverride();
+      if(override && allClubIds.includes(override)) return override;
       if(allClubIds.length===1) return allClubIds[0];
       return await showClubSelectionScreen(allClubIds);
     }
@@ -1001,10 +1028,13 @@
       // kennt - einmal mit erzwungenem Refresh nachschauen, bevor wir aufgeben.
       return resolveActiveClub(user, true);
     }
+    AVAILABLE_CLUB_IDS = clubIds;
     if(clubIds.length===0){
       renderNoClubAccessScreen();
       return null;
     }
+    const override = consumeClubSwitchOverride();
+    if(override && clubIds.includes(override)) return override;
     if(clubIds.length===1){
       return clubIds[0];
     }
@@ -1021,7 +1051,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.68';
+  const APP_VERSION = '1.1.69';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -2586,6 +2616,19 @@
         <path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
       </svg>`
     }) : '';
+    // Nur bei Zugehörigkeit zu mehr als einem Club (Issue #88) - AVAILABLE_CLUB_IDS wird von
+    // resolveActiveClub() beim Login/Reload gecacht (gleiche Quelle/Logik für Mitglied und Admin),
+    // damit hier kein neuer Token-Request nötig ist.
+    const switchClubItem = (AVAILABLE_CLUB_IDS && AVAILABLE_CLUB_IDS.length > 1) ? settingsMenuItemHtml({
+      id:'settings-menu-switch-club-btn', colorClass:'cat-purple', label:'Club wechseln',
+      subtitle: clubDisplayName(),
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 3l4 4-4 4"/>
+        <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+        <path d="M7 21l-4-4 4-4"/>
+        <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+      </svg>`
+    }) : '';
     return `
       <div class="card">
         <h2 class="section-title">Einstellungen</h2>
@@ -2601,6 +2644,7 @@
           ${termineItem}
           <div class="group-label">Kontenübersicht</div>
           ${accountItem}
+          ${switchClubItem}
           <button type="button" class="profile-item" id="settings-menu-logout-btn">
             <svg class="profile-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -7006,6 +7050,8 @@
     if(termineBtn) termineBtn.addEventListener('click', goToEventManagement);
     const accountBtn = document.getElementById('settings-menu-account-btn');
     if(accountBtn) accountBtn.addEventListener('click', goToAccountSettings);
+    const switchClubBtn = document.getElementById('settings-menu-switch-club-btn');
+    if(switchClubBtn) switchClubBtn.addEventListener('click', switchClub);
     const logoutBtn = document.getElementById('settings-menu-logout-btn');
     if(logoutBtn) logoutBtn.addEventListener('click', logout);
   }
@@ -9785,6 +9831,18 @@
     });
   }
 
+  // Club-Wechsel innerhalb einer laufenden Session (Issue #88): zeigt dieselbe Auswahl wie beim
+  // Login, legt die gewählte clubId danach einmalig in sessionStorage ab und erzwingt einen vollen
+  // Reload - resolveActiveClub() übernimmt den Override beim Neustart über consumeClubSwitchOverride(),
+  // BEVOR die reguläre Auswahl-Logik greift. Ein voller Reload (statt In-App-Umbau) ist bewusst
+  // gewählt, damit alle clubspezifischen Firestore-Listener/-Caches sauber neu aufgebaut werden,
+  // genau wie bei einem normalen Login-Wechsel.
+  async function switchClub(){
+    const clubId = await showClubSelectionScreen(AVAILABLE_CLUB_IDS);
+    try{ sessionStorage.setItem(CLUB_SWITCH_STORAGE_KEY, clubId); }catch(e){ /* Storage gesperrt - Reload greift trotzdem, Auswahl wird beim Neustart erneut gezeigt */ }
+    location.reload();
+  }
+
   async function renderSetPasswordScreen(oobCode){
     document.getElementById('app').innerHTML = `<div class="loading"><div class="loading-spinner"></div>Link wird geprüft…</div>`;
     let email;
@@ -10063,6 +10121,7 @@
         state._lastFetched = {};
         CURRENT_CLUB_ID = null;
         CURRENT_CLUB_DATA = null;
+        AVAILABLE_CLUB_IDS = null;
         renderLoginScreen();
       }
     });
