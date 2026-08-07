@@ -2614,6 +2614,19 @@
         <path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
       </svg>`
     }) : '';
+    // Nur bei Zugehörigkeit zu mehr als einem Club (Issue #88) - AVAILABLE_CLUB_IDS wird von
+    // resolveActiveClub() beim Login/Reload gecacht (gleiche Quelle/Logik für Mitglied und Admin),
+    // damit hier kein neuer Token-Request nötig ist.
+    const switchClubItem = (AVAILABLE_CLUB_IDS && AVAILABLE_CLUB_IDS.length > 1) ? settingsMenuItemHtml({
+      id:'settings-menu-switch-club-btn', colorClass:'cat-purple', label:'Club wechseln',
+      subtitle: clubDisplayName(),
+      iconSvg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 3l4 4-4 4"/>
+        <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+        <path d="M7 21l-4-4 4-4"/>
+        <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+      </svg>`
+    }) : '';
     return `
       <div class="card">
         <h2 class="section-title">Einstellungen</h2>
@@ -2629,6 +2642,7 @@
           ${termineItem}
           <div class="group-label">Kontenübersicht</div>
           ${accountItem}
+          ${switchClubItem}
           <button type="button" class="profile-item" id="settings-menu-logout-btn">
             <svg class="profile-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -7034,6 +7048,8 @@
     if(termineBtn) termineBtn.addEventListener('click', goToEventManagement);
     const accountBtn = document.getElementById('settings-menu-account-btn');
     if(accountBtn) accountBtn.addEventListener('click', goToAccountSettings);
+    const switchClubBtn = document.getElementById('settings-menu-switch-club-btn');
+    if(switchClubBtn) switchClubBtn.addEventListener('click', switchClub);
     const logoutBtn = document.getElementById('settings-menu-logout-btn');
     if(logoutBtn) logoutBtn.addEventListener('click', logout);
   }
