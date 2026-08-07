@@ -1012,7 +1012,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.67';
+  const APP_VERSION = '1.1.68';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -9684,9 +9684,10 @@
       });
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
-      // Lädt Strafen-/Spielekatalog einmalig im Hintergrund (nicht blockierend fürs Hauptbild),
-      // damit die entsprechenden Untertitel im Einstellungen-Menü (siehe viewSettingsMenu()) direkt
-      // verfügbar sind, ohne dass der Nutzer vorher die jeweilige Verwaltungsseite besucht haben muss.
+      // Lädt Strafen-/Spielekatalog und Finanzkonten einmalig im Hintergrund (nicht blockierend
+      // fürs Hauptbild), damit die entsprechenden Untertitel im Einstellungen-Menü (siehe
+      // viewSettingsMenu()) direkt verfügbar sind, ohne dass der Nutzer vorher die jeweilige
+      // Verwaltungsseite besucht haben muss.
       prefetchSettingsMenuCatalogs();
     }catch(e){
       state.view = 'main';
@@ -9694,21 +9695,25 @@
     }
   }
 
-  // Lädt fines-catalog/games-catalog einmalig direkt nach dem Start im Hintergrund (nicht Teil des
-  // kritischen Promise.all in init(), um das erste Rendern des Hauptbildschirms nicht zu verzögern).
-  // Ergebnis landet in state.finesCatalog/gamesCatalog inkl. markFetched(), sodass hasLoaded() in
-  // viewSettingsMenu() den Untertitel schon beim allerersten Öffnen des Einstellungen-Menüs zeigt,
-  // ohne dass der Nutzer zuvor die Strafen-/Spieleverwaltung besucht haben muss.
+  // Lädt fines-catalog/games-catalog/finance-accounts einmalig direkt nach dem Start im Hintergrund
+  // (nicht Teil des kritischen Promise.all in init(), um das erste Rendern des Hauptbildschirms
+  // nicht zu verzögern). Ergebnis landet in state.finesCatalog/gamesCatalog/financeAccounts inkl.
+  // markFetched(), sodass hasLoaded() in viewSettingsMenu() die jeweiligen Untertitel schon beim
+  // allerersten Öffnen des Einstellungen-Menüs zeigt, ohne dass der Nutzer zuvor die Strafen-/
+  // Spiele-/Finanzverwaltung besucht haben muss.
   async function prefetchSettingsMenuCatalogs(){
     try{
-      const [finesCatalog, gamesCatalog] = await Promise.all([
+      const [finesCatalog, gamesCatalog, financeAccounts] = await Promise.all([
         getClubJSONOrThrow('fines-catalog', []),
-        getClubJSONOrThrow('games-catalog', [])
+        getClubJSONOrThrow('games-catalog', []),
+        getClubJSONOrThrow('finance-accounts', [])
       ]);
       state.finesCatalog = finesCatalog;
       state.gamesCatalog = gamesCatalog;
+      state.financeAccounts = financeAccounts;
       markFetched('finesCatalog');
       markFetched('gamesCatalog');
+      markFetched('financeAccounts');
       if(state.view==='settingsMenu') render();
     }catch(e){ console.warn('Hintergrund-Refresh fehlgeschlagen: settingsMenuCatalogs', e); }
   }
