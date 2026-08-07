@@ -6986,6 +6986,8 @@
   function attachAccountSettingsListeners(){
     const resetPwBtn = document.getElementById('account-reset-password-btn');
     if(resetPwBtn) resetPwBtn.addEventListener('click', showPasswordResetModal);
+    const changeEmailBtn = document.getElementById('account-change-email-btn');
+    if(changeEmailBtn) changeEmailBtn.addEventListener('click', showChangeEmailModal);
     const unlinkBtn = document.getElementById('account-unlink-btn');
     if(unlinkBtn) unlinkBtn.addEventListener('click', showUnlinkOwnAccountModal);
   }
@@ -8006,6 +8008,57 @@
         hideModalLoadingOverlay();
         btn.disabled = false; btn.textContent = 'Verknüpfung aufheben';
         errEl.textContent = 'Konnte nicht entfernt werden. Bitte später erneut versuchen.';
+      }
+    });
+  }
+
+  function showChangeEmailModal(){
+    const member = getCurrentMember();
+    const currentEmail = member ? member.email : '';
+    showModal(`
+      <h3>E-Mail-Adresse ändern</h3>
+      <p>Aus Sicherheitsgründen benötigen wir dein aktuelles Passwort. Nach dem Speichern erhältst du einen Bestätigungslink an die neue Adresse - erst danach wird sie aktiv.</p>
+      <label for="change-email-new">Neue E-Mail-Adresse</label>
+      <input type="email" id="change-email-new" placeholder="neue@email.de" autocomplete="email">
+      <label for="change-email-password">Aktuelles Passwort</label>
+      <input type="password" id="change-email-password" placeholder="••••••••" autocomplete="current-password">
+      <p class="form-error" id="change-email-error"></p>
+      <div class="confirm-row-buttons" id="change-email-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel-btn">Abbrechen</button>
+        <button type="button" class="btn-primary" id="confirm-change-email-btn">Bestätigungslink senden</button>
+      </div>
+    `);
+    document.getElementById('modal-cancel-btn').addEventListener('click', closeGenericModal);
+    document.getElementById('confirm-change-email-btn').addEventListener('click', async ()=>{
+      const newEmail = document.getElementById('change-email-new').value.trim();
+      const password = document.getElementById('change-email-password').value;
+      const errEl = document.getElementById('change-email-error');
+      errEl.textContent = '';
+      if(!newEmail || !newEmail.includes('@')){ errEl.textContent = 'Bitte eine gültige E-Mail-Adresse eingeben.'; return; }
+      if(!password){ errEl.textContent = 'Bitte dein aktuelles Passwort eingeben.'; return; }
+      const btn = document.getElementById('confirm-change-email-btn');
+      btn.disabled = true; btn.textContent = 'Wird gesendet…';
+      showModalLoadingOverlay('Bestätigungslink wird gesendet…');
+      try{
+        const user = auth.currentUser;
+        const credential = EmailAuthProvider.credential(currentEmail, password);
+        await reauthenticateWithCredential(user, credential);
+        await verifyBeforeUpdateEmail(user, newEmail);
+        localStorage.setItem('pendingEmailChange', JSON.stringify({ oldEmail: currentEmail, newEmail }));
+        hideModalLoadingOverlay();
+        document.getElementById('change-email-actions').outerHTML = `<p class="form-success">Bestätigungslink wurde an ${escapeHtml(newEmail)} gesendet. Prüfe dein Postfach.</p>`;
+      }catch(e){
+        hideModalLoadingOverlay();
+        btn.disabled = false; btn.textContent = 'Bestätigungslink senden';
+        if(e.code==='auth/wrong-password' || e.code==='auth/invalid-credential'){
+          errEl.textContent = 'Passwort ist falsch.';
+        }else if(e.code==='auth/email-already-in-use'){
+          errEl.textContent = 'Diese E-Mail-Adresse wird bereits verwendet.';
+        }else if(e.code==='auth/requires-recent-login'){
+          errEl.textContent = 'Bitte melde dich erneut an und versuche es noch einmal.';
+        }else{
+          errEl.textContent = 'Konnte nicht gesendet werden. Bitte später erneut versuchen.';
+        }
       }
     });
   }
@@ -9833,6 +9886,7 @@
       });
       setTimeout(checkForUpdate, 2000);
       updateOwnLastLogin();
+      checkPendingEmailChange();
       // Lädt Strafen-/Spielekatalog und Finanzkonten einmalig im Hintergrund (nicht blockierend
       // fürs Hauptbild), damit die entsprechenden Untertitel im Einstellungen-Menü (siehe
       // viewSettingsMenu()) direkt verfügbar sind, ohne dass der Nutzer vorher die jeweilige
@@ -9880,6 +9934,34 @@
       await updateOwnLastLoginFn({ clubId: CURRENT_CLUB_ID });
       invalidate('members');
     }catch(e){ /* nicht kritisch, einfach ignorieren */ }
+  }
+
+  // Prüft bei jedem App-Start, ob eine per showChangeEmailModal() angestoßene E-Mail-Änderung
+  // (Issue #60) inzwischen bestätigt wurde. verifyBeforeUpdateEmail() ändert auth.currentUser.email
+  // erst NACH Klick auf den von Firebase verschickten Bestätigungslink - der Link wird typischerweise
+  // in einer separaten Mail-App geöffnet, daher steht der Eintrag in localStorage (nicht
+  // sessionStorage) und übersteht einen App-Neustart. user.reload() holt den aktuellen Stand vom
+  // Server; stimmt die E-Mail noch nicht mit der erwarteten neuen überein, wurde der Link noch
+  // nicht angeklickt - der Eintrag bleibt dann einfach stehen und wird beim nächsten Start erneut
+  // geprüft.
+  async function checkPendingEmailChange(){
+    const raw = localStorage.getItem('pendingEmailChange');
+    if(!raw) return;
+    let pending;
+    try{ pending = JSON.parse(raw); }catch(e){ localStorage.removeItem('pendingEmailChange'); return; }
+    if(!pending || !pending.oldEmail || !pending.newEmail) { localStorage.removeItem('pendingEmailChange'); return; }
+    const user = auth.currentUser;
+    if(!user) return;
+    try{ await user.reload(); }catch(e){ return; }
+    if((auth.currentUser.email||'').toLowerCase() !== pending.newEmail.toLowerCase()) return;
+    try{
+      const syncFn = httpsCallable(functions, 'syncOwnEmailAcrossClubs');
+      await syncFn({ oldEmail: pending.oldEmail });
+      const m = state.members.find(x=> (x.email||'').toLowerCase()===pending.oldEmail.toLowerCase());
+      if(m) m.email = pending.newEmail;
+      invalidate('members');
+    }catch(e){ return; }
+    localStorage.removeItem('pendingEmailChange');
   }
 
   (function bootstrapAuth(){
