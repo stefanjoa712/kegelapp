@@ -1816,6 +1816,40 @@ exports.unlinkMemberAccount = onCall({}, async (request) => {
   return { success: true };
 });
 
+// Self-Service-Pendant zu unlinkMemberAccount (Issue #60): trennt NUR den Zugang des Aufrufers
+// selbst zu GENAU DEM Club, den er übergibt - keine Rollen-Prüfung wie requireManageMembersRole,
+// nur requireCallerBelongsToClub (Vorbild: updateOwnLastLogin). Setzt zusätzlich hasAccount/
+// lastLogin am eigenen Mitgliedsdokument zurück (per Admin-SDK, da firestore.rules normalen
+// Mitgliedern das direkte Schreiben auf members/{id} verbietet) - identisch zum Verhalten, das
+// das Admin-Pendant über showUnlinkAccountModal()/saveMember() im Client erreicht.
+exports.unlinkOwnAccount = onCall({}, async (request) => {
+  const { clubId } = request.data || {};
+  if (!clubId || typeof clubId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Club-ID fehlt.');
+  }
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Bitte zuerst anmelden.');
+  }
+  requireCallerBelongsToClub(request, clubId);
+  const callerEmail = request.auth.token.email;
+  if (!callerEmail) {
+    throw new HttpsError('failed-precondition', 'Keine E-Mail-Adresse am Account hinterlegt.');
+  }
+
+  await removeMemberClubAuthAccess(callerEmail, clubId);
+
+  const members = await loadMembers(clubId);
+  const member = members && members.find(m => (m.email || '').toLowerCase() === callerEmail.toLowerCase());
+  if (member) {
+    member.hasAccount = false;
+    member.lastLogin = null;
+    await db.collection('clubs').doc(clubId).collection('members').doc(member.id)
+      .set({ value: JSON.stringify(member) });
+  }
+
+  return { success: true };
+});
+
 // -------- Rollen-Rechte: Custom Claim 'roles' synchron zum Mitgliedsdokument halten --------
 // Die Firestore Rules können die Rolle eines eingeloggten Nutzers nicht direkt aus dem
 // Mitgliedsdokument lesen (das würde für JEDE Regel-Auswertung einen extra Read kosten) -
