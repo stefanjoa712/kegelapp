@@ -198,6 +198,57 @@
   @media (prefers-reduced-motion: reduce){
     .update-modal-overlay, .update-modal{ animation:none; }
   }
+
+  /* Sprechblasen-Hinweis "Als App installieren": erscheint nur, wenn die Seite im
+     Browser-Tab läuft (nicht als installierte Web-App, siehe isRunningStandalone()).
+     Zwei-Elemente-Aufbau (Pfeil zuerst, Box danach im DOM) statt Pseudo-Element-Dreieck:
+     die spaeter gezeichnete, deckende .install-hint-box überlappt so automatisch drei
+     Seiten des rotierten Pfeil-Quadrats und legt nur die zur Browser-Stelle zeigende
+     Spitze frei, ganz ohne z-index-Klimmzüge.  */
+  .install-hint{ position:fixed; z-index:1100; width:266px; max-width:calc(100vw - 24px); }
+  .install-hint[hidden]{ display:none; }
+  .install-hint-arrow{
+    position:absolute; width:16px; height:16px;
+    background:var(--surface); border:2.5px solid var(--ink);
+    transform:rotate(45deg);
+  }
+  .install-hint-box{
+    position:relative;
+    background:var(--surface); color:var(--ink);
+    border:2.5px solid var(--ink); border-radius:14px;
+    padding:14px 30px 12px 15px;
+    box-shadow:4px 4px 0 var(--ink);
+    opacity:0; transform:scale(0.95);
+    transition:opacity 0.2s ease, transform 0.2s ease;
+  }
+  .install-hint.is-visible .install-hint-box{ opacity:1; transform:scale(1); }
+  .install-hint-title{ font-family:var(--font-display); font-weight:700; font-size:14.5px; margin:0 0 4px; }
+  .install-hint-text{ font-size:13px; color:var(--ink-soft); line-height:1.5; margin:0; }
+  .install-hint-text strong{ color:var(--ink); }
+  .install-hint-icon{ width:15px; height:15px; vertical-align:-3px; margin:0 1px; }
+  .install-hint-close{
+    position:absolute; top:8px; right:8px; width:20px; height:20px; padding:0;
+    border:none; background:none; color:var(--muted); cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .install-hint-close svg{ width:14px; height:14px; display:block; }
+  .install-hint-forever{
+    display:inline-block; margin-top:8px; padding:0; border:none; background:none;
+    font-family:var(--font-body); font-size:12px; font-weight:700; color:var(--wine);
+    text-decoration:underline; cursor:pointer;
+  }
+  @media (prefers-reduced-motion: reduce){
+    .install-hint-box{ transition:none; }
+  }
+  /* iOS Safari/Chrome/Firefox: Teilen-Symbol sitzt unten in der Werkzeugleiste -> Blase
+     darüber, Pfeil zeigt nach unten. */
+  .install-hint--ios{ left:50%; margin-left:-133px; bottom:calc(70px + env(safe-area-inset-bottom)); }
+  .install-hint--ios .install-hint-arrow{ bottom:-8px; left:50%; margin-left:-8px; }
+  /* Android Chrome/Edge & Desktop Chrome/Edge: Menü bzw. Installieren-Symbol sitzt oben
+     rechts -> Blase darunter, Pfeil zeigt nach oben. */
+  .install-hint--android, .install-hint--desktop{ right:10px; top:calc(14px + env(safe-area-inset-top)); }
+  .install-hint--android .install-hint-arrow, .install-hint--desktop .install-hint-arrow{ top:-8px; right:16px; }
+
   .bottom-nav-item.active{color:var(--felt);}
 
   .loading{padding:60px 20px; text-align:center; font-family:var(--font-mono); color:var(--ink-soft);}
@@ -1055,7 +1106,7 @@
 
   // Aktuelle Version. Wird unten angezeigt UND für die Update-Prüfung genutzt (wichtig für
   // zum Home-Bildschirm hinzugefügte Seiten auf iOS, die Updates sonst nicht zuverlässig bemerken).
-  const APP_VERSION = '1.1.70';
+  const APP_VERSION = '1.1.71';
 
   // Icons für die Teilnehmer-Kennzahlen und den Abgeschlossen-Status in der Übersichtsliste.
   const ICON_MEMBER_PRESENT = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
@@ -9868,6 +9919,91 @@
   window.addEventListener('focus', checkForUpdate);
   window.addEventListener('pageshow', checkForUpdate);
   setInterval(checkForUpdate, 5 * 60 * 1000);
+
+  // ---------- Installationshinweis (App zum Startbildschirm hinzufügen) ----------
+  // manifest.json ist bereits als installierbare PWA konfiguriert (display:"standalone"),
+  // aber v.a. auf iOS gibt es dafür keinen automatischen Browser-Prompt wie unter
+  // Android/Chrome - Nutzer:innen wissen oft gar nicht, dass/wie das geht (#92). Läuft die
+  // Seite bereits als installierte Web-App, ist kein Hinweis nötig; sonst wird - abhängig
+  // von Plattform/Browser - eine Sprechblase mit Pfeil auf die jeweilige Browser-Stelle
+  // gezeigt (Teilen-Symbol auf iOS, Browser-Menü auf Android, Installieren-Symbol in der
+  // Adressleiste auf dem Desktop). Für nicht sicher unterstützte Browser (z.B. Firefox)
+  // wird bewusst nichts angezeigt statt einer möglicherweise falschen Anleitung.
+  const INSTALL_HINT_DISMISSED_KEY = 'installHintDismissedForever';
+
+  function isRunningStandalone(){
+    return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true // iOS Safari: matchMedia greift hier nicht zuverlässig
+      || document.referrer.startsWith('android-app://');
+  }
+
+  // Best-effort User-Agent-Erkennung, nur um zu entscheiden, WELCHER Browser-Bereich per
+  // Pfeil markiert wird - keine sicherheitsrelevante Weiche, daher genügt eine grobe Heuristik.
+  function detectInstallHintPlatform(){
+    const ua = navigator.userAgent || '';
+    const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if(isIOS) return 'ios'; // Teilen-Icon sitzt bei allen iOS-Browsern (WebKit-Pflicht) unten
+    const isAndroid = /Android/.test(ua);
+    const isChromium = /Chrome\/|Chromium\/|Edg\//.test(ua) && !/OPR\//.test(ua);
+    if(isAndroid) return isChromium ? 'android' : null;
+    return isChromium ? 'desktop' : null;
+  }
+
+  const INSTALL_HINT_COPY = {
+    ios: {
+      cls: 'ios',
+      title:'App installieren',
+      html:'Tippe unten auf <strong>Teilen</strong> '
+        + '<svg class="install-hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0-13l4 4m-4-4l-4 4"/><path d="M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>'
+        + ' und dann auf <strong>„Zum Home-Bildschirm“</strong>.'
+    },
+    android: {
+      cls: 'android',
+      title:'App installieren',
+      html:'Tippe oben rechts auf das Menü '
+        + '<svg class="install-hint-icon" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>'
+        + ' und dann auf <strong>„App installieren“</strong>.'
+    },
+    desktop: {
+      cls: 'desktop',
+      title:'App installieren',
+      html:'Klicke oben rechts in der Adressleiste auf das Installieren-Symbol, um die App zu installieren.'
+    }
+  };
+
+  function initInstallHint(){
+    if(isRunningStandalone()) return;
+    try{
+      if(localStorage.getItem(INSTALL_HINT_DISMISSED_KEY) === '1') return;
+    }catch(e){ /* z.B. Privatmodus ohne localStorage - Hinweis dann einfach jedes Mal zeigen */ }
+    const platform = detectInstallHintPlatform();
+    if(!platform) return;
+    const copy = INSTALL_HINT_COPY[platform];
+
+    const el = document.createElement('div');
+    el.id = 'install-hint';
+    el.className = `install-hint install-hint--${copy.cls}`;
+    el.innerHTML = `
+      <div class="install-hint-arrow"></div>
+      <div class="install-hint-box" role="dialog" aria-live="polite">
+        <button type="button" class="install-hint-close" aria-label="Schließen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </button>
+        <p class="install-hint-title">${escapeHtml(copy.title)}</p>
+        <p class="install-hint-text">${copy.html}</p>
+        <button type="button" class="install-hint-forever">Nicht mehr anzeigen</button>
+      </div>
+    `;
+    document.body.appendChild(el);
+    requestAnimationFrame(()=> el.classList.add('is-visible'));
+
+    el.querySelector('.install-hint-close').addEventListener('click', ()=> el.remove());
+    el.querySelector('.install-hint-forever').addEventListener('click', ()=>{
+      try{ localStorage.setItem(INSTALL_HINT_DISMISSED_KEY, '1'); }catch(e){}
+      el.remove();
+    });
+  }
+  window.addEventListener('load', ()=> setTimeout(initInstallHint, 1200));
 
   // ---------- Auth: Login, "eingeloggt bleiben", Einladungslink zum Passwort-Setzen ----------
   // Einfacher, von state.view unabhängiger Browser-Zurück-Mechanismus für den Wechsel
